@@ -1,0 +1,114 @@
+{
+  "inbounds" : [
+    {
+      "listen" : "127.0.0.1",
+      "port" : 10808,
+      "protocol" : "socks",
+      "settings" : {
+        "accounts" : [
+          {
+            "pass" : "94kx9t2CwoEZ",
+            "user" : "happ-socks"
+          }
+        ],
+        "auth" : "password",
+        "udp" : true
+      },
+      "sniffing" : {
+        "destOverride" : [
+          "tls",
+          "quic",
+          "http"
+        ],
+        "domainsExcluded" : [
+
+        ],
+        "enabled" : true,
+        "metadataOnly" : false,
+        "routeOnly" : true
+      },
+      "tag" : "socks-in"
+    },
+    {
+      "listen" : "127.0.0.1",
+      "port" : 10820,
+      "protocol" : "socks",
+      "settings" : {
+        "auth" : "noauth",
+        "udp" : true
+      },
+      "sniffing" : {
+        "destOverride" : [
+          "tls",
+          "quic",
+          "http"
+        ],
+        "domainsExcluded" : [
+
+        ],
+        "enabled" : true,
+        "metadataOnly" : false,
+        "routeOnly" : true
+      },
+      "tag" : "socks-direct"
+    }
+  ],
+  "log" : {
+    "access" : "\/private\/var\/mobile\/Containers\/Shared\/AppGroup\/48B8E560-DC94-41CD-9A94-6DD756ADF881\/Library\/Application Support\/Xray\/logs\/access.log",
+    "dnsLog" : true,
+    "error" : "\/private\/var\/mobile\/Containers\/Shared\/AppGroup\/48B8E560-DC94-41CD-9A94-6DD756ADF881\/Library\/Application Support\/Xray\/logs\/connectionLogs\/2026-08-05_10-17-38.log",
+    "loglevel" : "Warning"
+  },
+  "outbounds" : [
+    {
+      "protocol" : "vless",
+      "settings" : {
+        "testpre" : null,
+        "testseed" : null,
+        "vnext" : [
+          {
+            "address" : "176.109.85.97",
+            "port" : 53120,
+            "users" : [
+              {
+                "encryption" : "none",
+                "flow" : "xtls-rprx-vision",
+                "id" : "9b7d7204-5bc2-417f-b2c3-014511433c9d",
+                "level" : 8,
+                "security" : "auto"
+              }
+            ]
+          }
+        ]
+      },
+      "streamSettings" : {
+        "isCustomFinalmask" : false,
+        "network" : "tcp",
+        "realitySettings" : {
+          "fingerprint" : "firefox",
+          "publicKey" : "Sx6bJWPbDlwuMfKjcz-sUyJxZkuks4uLqqLa-1uyjH4",
+          "serverName" : "",
+          "shortId" : "64453e4fd9fa562d",
+          "show" : false,
+          "spiderX" : ""
+        },
+        "security" : "reality",
+        "tcpSettings" : {
+          "header" : {
+            "type" : "none"
+          }
+        }
+      },
+      "tag" : "proxy"
+    },
+    {
+      "protocol" : "freedom",
+      "tag" : "direct"
+    },
+    {
+      "protocol" : "blackhole",
+      "tag" : "block"
+    }
+  ],
+  "remarks" : "🇩🇪LTE Torrent✅"
+}

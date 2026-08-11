@@ -1,0 +1,44 @@
+{
+  "domainStrategy": "IPIfNonMatch",
+  "rules": [
+    {
+    "type": "field",
+    "domain": [
+        "geosite:category-ads-all"
+    ],
+    "outboundTag": "block"
+    },
+    {
+      "type": "field",
+      "domain": [
+        "domain:.ru",
+        "domain:.xn--p1ai"
+      ],
+      "outboundTag": "direct"
+    },
+    {
+      "type": "field",
+      "ip": [
+        "geoip:private"
+      ],
+      "outboundTag": "direct"
+    },
+    {
+      "type": "field",
+      "ip": [
+        "10.0.0.0/8",
+        "172.16.0.0/12",
+        "192.168.0.0/16",
+        "169.254.0.0/16",
+        "224.0.0.0/4",
+        "255.255.255.255/32"
+      ],
+      "outboundTag": "direct"
+    },
+    {
+      "type": "field",
+      "network": "tcp,udp",
+      "outboundTag": "proxy"
+    }
+  ]
+}
