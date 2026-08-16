@@ -1,36 +1,67 @@
 # Keyline updater
 
-This is an intentionally isolated adapter for the Keyline source. The VPN Worker does not need to know about it. Removing the files listed below removes the automation without changing the client-facing config format.
+This is an intentionally isolated temporary adapter for Keyline. `enter-main` does not need to know anything about it: the Worker continues to read `config/links/index.json` and the individual `.link` files.
+
+## Keyline URLs
+
+The updater supports **any number of Keyline subscription URLs**.
+
+Preferred GitHub Actions Secret:
+
+`KEYLINE_URLS`
+
+Put one already-issued Keyline `/sub/...` URL per line. For example, 10 URLs means **10 Keyline HTTP reads per eligible refresh**. Duplicates are removed, so the same URL is read only once.
+
+A JSON array is also accepted in `KEYLINE_URLS`.
+
+For backward compatibility, a single `KEYLINE_URL` is accepted when `KEYLINE_URLS` is not set.
+
+Optional:
+
+`KEYLINE_WHITE_LIST_URLS`
+
+This is another multiline list. Every entry from these subscriptions is treated as White List automatically.
+
+CAPTCHA is not handled by this updater. It consumes already-issued `/sub/...` subscription URLs.
 
 ## Pools
 
-### Protected manual servers
+### Manual / permanent servers
 
-- `europe-*.link` — your five permanent Europe servers. They are never touched by the updater and do not count toward the Keyline regular limit.
-- `whitelist-*.link` — your permanent White List servers. They are never touched by the updater and do not count toward the Keyline White List limit.
+Every existing entry whose ID is **not** `keyline-regular-*` or `keyline-whitelist-*` is preserved.
 
-To add another permanent White List server, add another `whitelist-N.link` file and its matching `whitelist-N` entry to `config/links/index.json`. The updater will preserve it on every successful refresh.
+That includes:
 
-### Keyline-managed servers
+- the five permanent `europe-*.link` servers;
+- your manual `whitelist-*.link` servers;
+- any other manual `.link` servers already present in `config/links/` and listed in `index.json`.
 
-- `keyline-regular-01.link` ... `keyline-regular-40.link` — maximum 40 regular locations.
-- `keyline-whitelist-01.link` ... `keyline-whitelist-20.link` — maximum 20 Keyline White List locations.
+Manual entries do not count toward the Keyline limits and are never removed by the updater.
 
-Fewer than 40 or 20 is valid. Missing slots are simply left empty.
+### Keyline-managed pools
 
-## Failure behavior
+- `keyline-regular-01.link` ... `keyline-regular-40.link` — maximum **40 regular servers across all configured Keyline URLs combined**.
+- `keyline-whitelist-01.link` ... `keyline-whitelist-20.link` — maximum **20 automatic White List servers across all configured Keyline URLs combined**.
 
-A successful refresh replaces only the Keyline-managed pool. Manual Europe and manual White List files remain untouched.
+If there are fewer usable servers, fewer entries are created. Nothing is padded or duplicated to reach the limit.
 
-If the Keyline URL is unavailable, expired, invalid, returns no usable regular servers, or another validation step fails, the updater exits with an error and does not update the repository. The existing working pool therefore remains in place.
+A regular Keyline source entry is treated as Auto White List when its `remarks` identifies it as White List. Entries from `KEYLINE_WHITE_LIST_URLS` are always treated as Auto White List.
 
-The workflow runs once per hour. After a successful refresh it waits 12 hours before doing another refresh. After a failed refresh it tries again on the next hourly run.
+Auto White List names are rendered as:
 
-## Keyline URL
+`🇷🇺 🤖 🏳️ Auto White List 1`
 
-The CAPTCHA is not automated here. Put the already-issued Keyline `/sub/...` URL into the GitHub repository Secret `KEYLINE_URL`.
+The flag is taken from the original Keyline remark when available.
 
-An optional second secret `KEYLINE_WHITE_LIST_URL` is supported for a separate Keyline White List subscription. If it is not set, the regular source is used on its own.
+## Refresh and failure behavior
+
+On every eligible refresh, each configured Keyline URL is fetched exactly once.
+
+If **any** configured URL fails, is expired, returns invalid JSON, or fails validation, the updater does not replace the pool. The existing Keyline servers remain untouched and the next hourly workflow run tries again.
+
+After a successful refresh, the updater waits 12 hours before another real refresh. The GitHub Actions workflow still wakes every hour so failures are retried after about one hour.
+
+The write is staged before the live `config/links` directory is replaced, so a normal write failure does not leave the live pool half-deleted.
 
 ## Removal
 
@@ -40,5 +71,6 @@ The temporary adapter consists of:
 - `scripts/update-keyline.mjs`
 - `.keyline-state.json`
 - this documentation file
+- generated `keyline-*.link` entries
 
-Deleting those files removes the automation. The existing `.link` files and `index.json` format used by `enter-main` remain unchanged.
+Deleting these removes the automation without requiring changes to `enter-main`.

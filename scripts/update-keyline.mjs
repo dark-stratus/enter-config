@@ -8,31 +8,34 @@ const INDEX_FILE = path.join(LINKS_DIR, "index.json");
 const STATE_FILE = path.join(ROOT, ".keyline-state.json");
 
 const REGULAR_LIMIT = 40;
-const WHITE_LIST_LIMIT = 20;
+const AUTO_WHITE_LIST_LIMIT = 20;
 const SUCCESS_INTERVAL_MS = 12 * 60 * 60 * 1000;
 
-const PROTECTED_ID_PATTERNS = [
-  /^europe-\d+$/i,
-  /^whitelist-\d+$/i,
-];
+const MANAGED_REGULAR_RE = /^keyline-regular-\d+$/i;
+const MANAGED_WHITE_LIST_RE = /^keyline-whitelist-\d+$/i;
 
-function isProtectedId(id) {
-  return PROTECTED_ID_PATTERNS.some(pattern => pattern.test(id));
+function isManagedId(id) {
+  return MANAGED_REGULAR_RE.test(id) || MANAGED_WHITE_LIST_RE.test(id);
 }
 
 function isWhiteListRemark(remarks = "") {
   const value = String(remarks).toLowerCase();
+
   return (
     /white[\s_-]*list/.test(value) ||
     /whitelist/.test(value) ||
-    /бел(ый|ого)?[\s_-]*(список|лист)/.test(value) ||
-    value.includes("🏳️")
+    /бел(ый|ого|ому|ым|ом)?[\s_-]*(список|лист)/.test(value) ||
+    value.includes("🏳️") ||
+    value.includes("🏳")
   );
 }
 
 function extractFlag(remarks = "") {
-  const flagMatch = String(remarks).match(/(?:^|\s)([\u{1F1E6}-\u{1F1FF}]{2})(?=\s|$)/u);
-  return flagMatch?.[1] || "🏳️";
+  const match = String(remarks).match(
+    /(?:^|\s)([\u{1F1E6}-\u{1F1FF}]{2})(?=\s|$)/u
+  );
+
+  return match?.[1] || "🏳️";
 }
 
 function safeJsonParse(text, source) {
@@ -47,6 +50,7 @@ async function readState() {
   try {
     const text = await fs.readFile(STATE_FILE, "utf8");
     const state = safeJsonParse(text, STATE_FILE);
+
     return Number.isFinite(state.lastSuccessfulUpdateAt)
       ? state
       : { lastSuccessfulUpdateAt: 0 };
@@ -59,19 +63,63 @@ async function readState() {
 async function shouldSkip() {
   const state = await readState();
   const elapsed = Date.now() - state.lastSuccessfulUpdateAt;
-  if (state.lastSuccessfulUpdateAt > 0 && elapsed < SUCCESS_INTERVAL_MS) {
-    const nextAt = new Date(state.lastSuccessfulUpdateAt + SUCCESS_INTERVAL_MS);
-    console.log(`Keyline update skipped until ${nextAt.toISOString()}.`);
+
+  if (
+    state.lastSuccessfulUpdateAt > 0 &&
+    elapsed < SUCCESS_INTERVAL_MS
+  ) {
+    const nextAt = new Date(
+      state.lastSuccessfulUpdateAt + SUCCESS_INTERVAL_MS
+    );
+
+    console.log(
+      `Keyline update skipped until ${nextAt.toISOString()}.`
+    );
+
     return true;
   }
+
   return false;
+}
+
+function parseUrlList(value) {
+  if (!value) return [];
+
+  return String(value)
+    .split(/\r?\n/)
+    .map(item => item.trim())
+    .filter(Boolean);
+}
+
+function parseConfiguredUrls(value) {
+  if (!value) return [];
+
+  const raw = String(value).trim();
+
+  if (raw.startsWith("[")) {
+    const parsed = safeJsonParse(raw, "KEYLINE_URLS");
+
+    if (!Array.isArray(parsed)) {
+      throw new Error("KEYLINE_URLS JSON value must be an array.");
+    }
+
+    return parsed
+      .map(item => String(item).trim())
+      .filter(Boolean);
+  }
+
+  return parseUrlList(raw);
+}
+
+function uniqueUrls(urls) {
+  return [...new Set(urls)];
 }
 
 async function fetchJsonUrl(url, label) {
   const response = await fetch(url, {
     headers: {
       accept: "application/json,text/plain;q=0.9,*/*;q=0.8",
-      "user-agent": "enter-config-keyline-updater/1.0",
+      "user-agent": "enter-config-keyline-updater/2.0",
     },
     redirect: "follow",
     cache: "no-store",
@@ -79,51 +127,100 @@ async function fetchJsonUrl(url, label) {
   });
 
   const text = await response.text();
+
   if (!response.ok) {
-    throw new Error(`${label} HTTP ${response.status}: ${text.slice(0, 300)}`);
+    throw new Error(
+      `${label} HTTP ${response.status}: ${text.slice(0, 300)}`
+    );
   }
 
   return safeJsonParse(text, url);
 }
 
 async function fetchKeylineSources() {
-  const fixture = process.env.KEYLINE_FIXTURE;
-  if (fixture) {
-    const fixturePath = path.resolve(process.cwd(), fixture);
-    const text = await fs.readFile(fixturePath, "utf8");
-    return {
-      primary: safeJsonParse(text, fixturePath),
-      whiteList: [],
-    };
+  const fixtureJson = process.env.KEYLINE_FIXTURE_JSON;
+
+  if (fixtureJson) {
+    return [{
+      label: "fixture",
+      data: safeJsonParse(fixtureJson, "KEYLINE_FIXTURE_JSON"),
+      forceWhiteList: false,
+    }];
   }
 
-  const primaryUrl = process.env.KEYLINE_URL?.trim();
-  if (!primaryUrl) {
-    throw new Error("KEYLINE_URL is not configured.");
+  const fixturePath = process.env.KEYLINE_FIXTURE;
+
+  if (fixturePath) {
+    const resolved = path.resolve(process.cwd(), fixturePath);
+    const text = await fs.readFile(resolved, "utf8");
+
+    return [{
+      label: resolved,
+      data: safeJsonParse(text, resolved),
+      forceWhiteList: false,
+    }];
   }
 
-  const whiteListUrl = process.env.KEYLINE_WHITE_LIST_URL?.trim();
+  const regularUrls = uniqueUrls(
+    parseConfiguredUrls(process.env.KEYLINE_URLS).length > 0
+      ? parseConfiguredUrls(process.env.KEYLINE_URLS)
+      : parseUrlList(process.env.KEYLINE_URL)
+  );
 
-  const primary = await fetchJsonUrl(primaryUrl, "Keyline regular source");
-  const whiteList = whiteListUrl
-    ? await fetchJsonUrl(whiteListUrl, "Keyline White List source")
-    : [];
+  const dedicatedWhiteListUrls = uniqueUrls(
+    parseUrlList(process.env.KEYLINE_WHITE_LIST_URLS)
+  );
 
-  return { primary, whiteList };
+  const sources = [];
+
+  // Every configured subscription is read exactly once per eligible refresh.
+  for (let index = 0; index < regularUrls.length; index += 1) {
+    const url = regularUrls[index];
+
+    sources.push({
+      label: `Keyline source ${index + 1}`,
+      data: await fetchJsonUrl(url, `Keyline source ${index + 1}`),
+      forceWhiteList: false,
+    });
+  }
+
+  for (let index = 0; index < dedicatedWhiteListUrls.length; index += 1) {
+    const url = dedicatedWhiteListUrls[index];
+
+    sources.push({
+      label: `Keyline White List source ${index + 1}`,
+      data: await fetchJsonUrl(
+        url,
+        `Keyline White List source ${index + 1}`
+      ),
+      forceWhiteList: true,
+    });
+  }
+
+  if (sources.length === 0) {
+    throw new Error(
+      "No Keyline URLs configured. Set KEYLINE_URLS with one /sub/... URL per line."
+    );
+  }
+
+  return sources;
 }
 
 function encodeQuery(params) {
   return Object.entries(params)
     .filter(([, value]) => value !== undefined && value !== null && value !== "")
-    .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`)
+    .map(([key, value]) => (
+      `${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`
+    ))
     .join("&");
 }
 
 function buildVlessLink(entry) {
-  const outbound = entry?.outbounds?.find(item => item?.tag === "proxy");
-  if (!outbound || outbound.protocol !== "vless") {
-    return null;
-  }
+  const outbound = entry?.outbounds?.find(
+    item => item?.tag === "proxy"
+  );
+
+  if (!outbound || outbound.protocol !== "vless") return null;
 
   const server = outbound.settings?.vnext?.[0];
   const user = server?.users?.[0];
@@ -132,10 +229,9 @@ function buildVlessLink(entry) {
   if (!server?.address || !server?.port || !user?.id) return null;
   if (!stream.network || !stream.security) return null;
 
-  // enter-main currently serializes VLESS TCP/GRPC links correctly.
-  // XHTTP requires xhttpSettings, which the current parser/builder do not preserve,
-  // so those entries are deliberately skipped instead of generating a broken link.
-  if (!['tcp', 'grpc'].includes(stream.network)) return null;
+  // enter-main currently preserves TCP/GRPC VLESS fields correctly.
+  // Other transports are skipped rather than emitted as broken links.
+  if (!["tcp", "grpc"].includes(stream.network)) return null;
 
   const reality = stream.realitySettings || {};
   const query = encodeQuery({
@@ -151,28 +247,33 @@ function buildVlessLink(entry) {
     mode: stream.grpcSettings?.multiMode ? "multi" : "",
   });
 
-  return `vless://${encodeURIComponent(user.id)}@${server.address}:${server.port}?${query}`;
+  return (
+    `vless://${encodeURIComponent(user.id)}@${server.address}:${server.port}?${query}`
+  );
 }
 
 function buildSupportedLink(entry) {
-  const outbound = entry?.outbounds?.find(item => item?.tag === "proxy");
+  const outbound = entry?.outbounds?.find(
+    item => item?.tag === "proxy"
+  );
+
   if (!outbound) return null;
+  if (outbound.protocol === "vless") return buildVlessLink(entry);
 
-  if (outbound.protocol === "vless") {
-    return buildVlessLink(entry);
-  }
-
-  // The current Keyline feed is VLESS-only, but keep the adapter honest:
-  // unsupported protocols are skipped rather than writing links the app cannot parse.
   return null;
 }
 
 function normalizeEntry(entry, index, source) {
   if (!entry || typeof entry !== "object") return null;
 
-  const outbounds = Array.isArray(entry.outbounds) ? entry.outbounds : [];
+  const outbounds = Array.isArray(entry.outbounds)
+    ? entry.outbounds
+    : [];
+
   const proxy = outbounds.find(item => item?.tag === "proxy");
-  const remarks = typeof entry.remarks === "string" ? entry.remarks.trim() : "";
+  const remarks = typeof entry.remarks === "string"
+    ? entry.remarks.trim()
+    : "";
   const link = buildSupportedLink(entry);
 
   if (!proxy || !remarks || !link) return null;
@@ -193,6 +294,7 @@ function dedupe(entries) {
 
   for (const item of entries) {
     if (seen.has(item.link)) continue;
+
     seen.add(item.link);
     result.push(item);
   }
@@ -200,137 +302,223 @@ function dedupe(entries) {
   return result;
 }
 
-function sortKeylineEntries(entries) {
+function sortEntries(entries) {
   return [...entries].sort((a, b) => {
-    const flagCompare = extractFlag(a.remarks).localeCompare(extractFlag(b.remarks), "ru");
+    const flagCompare = extractFlag(a.remarks).localeCompare(
+      extractFlag(b.remarks),
+      "ru"
+    );
+
     if (flagCompare !== 0) return flagCompare;
+
+    const sourceCompare = a.source.localeCompare(b.source, "ru");
+
+    if (sourceCompare !== 0) return sourceCompare;
+
     return a.remarks.localeCompare(b.remarks, "ru");
   });
 }
 
-function buildRemarks(entry, number, fallbackPrefix) {
-  if (entry.whiteList) {
-    return `${extractFlag(entry.remarks)} 🏳️ White List ${number}`;
-  }
+function buildAutoWhiteListRemarks(entry, number) {
+  const flag = extractFlag(entry.remarks);
 
-  const cleaned = entry.remarks.replace(/\s+/g, " ").trim();
-  return cleaned || `${fallbackPrefix} ${number}`;
-}
-
-async function listLinkFiles() {
-  return (await fs.readdir(LINKS_DIR, { withFileTypes: true }))
-    .filter(item => item.isFile() && item.name.endsWith(".link"))
-    .map(item => item.name);
+  return `${flag} 🤖 🏳️ Auto White List ${number}`;
 }
 
 async function loadIndex() {
   const text = await fs.readFile(INDEX_FILE, "utf8");
   const index = safeJsonParse(text, INDEX_FILE);
-  if (!Array.isArray(index)) throw new Error("config/links/index.json must contain an array.");
+
+  if (!Array.isArray(index)) {
+    throw new Error(
+      "config/links/index.json must contain an array."
+    );
+  }
+
   return index;
 }
 
 async function writeAtomic(file, content) {
   const temp = `${file}.tmp-${process.pid}`;
+
   await fs.writeFile(temp, content, "utf8");
   await fs.rename(temp, file);
 }
 
-async function removeManagedFiles() {
-  const files = await listLinkFiles();
-  for (const name of files) {
-    const id = name.slice(0, -".link".length);
-    if (!isProtectedId(id)) {
-      await fs.unlink(path.join(LINKS_DIR, name));
-    }
+async function buildStagedLinks(currentIndex, regular, autoWhiteList) {
+  const stageDir = path.join(
+    ROOT,
+    `.keyline-stage-${process.pid}`
+  );
+
+  await fs.rm(stageDir, { recursive: true, force: true });
+  await fs.cp(LINKS_DIR, stageDir, { recursive: true });
+
+  const stagedIndexFile = path.join(stageDir, "index.json");
+  const stagedManagedFiles = await fs.readdir(stageDir, {
+    withFileTypes: true,
+  });
+
+  for (const item of stagedManagedFiles) {
+    if (!item.isFile() || !item.name.endsWith(".link")) continue;
+
+    const id = item.name.slice(0, -".link".length);
+
+    if (!isManagedId(id)) continue;
+
+    await fs.unlink(path.join(stageDir, item.name));
   }
+
+  const manualEntries = currentIndex.filter(item => (
+    item &&
+    typeof item.id === "string" &&
+    !isManagedId(item.id)
+  ));
+
+  const nextEntries = [...manualEntries];
+
+  for (let index = 0; index < regular.length; index += 1) {
+    const id = `keyline-regular-${String(index + 1).padStart(2, "0")}`;
+    const item = regular[index];
+
+    await fs.writeFile(
+      path.join(stageDir, `${id}.link`),
+      `${item.link}\n`,
+      "utf8"
+    );
+
+    nextEntries.push({
+      id,
+      remarks: item.remarks.replace(/\s+/g, " ").trim(),
+    });
+  }
+
+  for (let index = 0; index < autoWhiteList.length; index += 1) {
+    const id = `keyline-whitelist-${String(index + 1).padStart(2, "0")}`;
+    const item = autoWhiteList[index];
+    const flag = extractFlag(item.remarks);
+
+    await fs.writeFile(
+      path.join(stageDir, `${id}.link`),
+      `${item.link}\n`,
+      "utf8"
+    );
+
+    nextEntries.push({
+      id,
+      remarks: `${flag} 🤖 🏳️ Auto White List ${index + 1}`,
+    });
+  }
+
+  await fs.writeFile(
+    stagedIndexFile,
+    `${JSON.stringify(nextEntries, null, 2)}\n`,
+    "utf8"
+  );
+
+  return {
+    stageDir,
+    nextEntries,
+  };
+}
+
+async function replaceLinksDirectory(stageDir) {
+  const backupDir = `${LINKS_DIR}.keyline-backup-${process.pid}`;
+
+  await fs.rm(backupDir, { recursive: true, force: true });
+  await fs.rename(LINKS_DIR, backupDir);
+
+  try {
+    await fs.rename(stageDir, LINKS_DIR);
+  } catch (error) {
+    await fs.rename(backupDir, LINKS_DIR);
+    throw error;
+  }
+
+  await fs.rm(backupDir, { recursive: true, force: true });
 }
 
 async function main() {
   if (await shouldSkip()) return;
 
-  const { primary, whiteList: whiteListSource } = await fetchKeylineSources();
+  const sources = await fetchKeylineSources();
+  const allEntries = [];
+  let totalRawEntries = 0;
 
-  if (!Array.isArray(primary)) {
-    throw new Error("Keyline regular response must be a JSON array.");
+  for (const source of sources) {
+    if (!Array.isArray(source.data)) {
+      throw new Error(
+        `${source.label}: response must be a JSON array.`
+      );
+    }
+
+    totalRawEntries += source.data.length;
+
+    for (let index = 0; index < source.data.length; index += 1) {
+      const normalized = normalizeEntry(
+        source.data[index],
+        index,
+        source.label
+      );
+
+      if (!normalized) continue;
+      if (source.forceWhiteList) normalized.whiteList = true;
+
+      allEntries.push(normalized);
+    }
   }
-  if (!Array.isArray(whiteListSource)) {
-    throw new Error("Keyline White List response must be a JSON array.");
-  }
 
-  const regularSourceEntries = primary
-    .map((entry, index) => normalizeEntry(entry, index, "regular"))
-    .filter(Boolean);
+  const deduped = dedupe(allEntries);
 
-  const whiteListSourceEntries = whiteListSource
-    .map((entry, index) => normalizeEntry(entry, index, "whitelist"))
-    .filter(Boolean)
-    .map(entry => ({ ...entry, whiteList: true }));
-
-  const allEntries = dedupe([
-    ...regularSourceEntries,
-    ...whiteListSourceEntries,
-  ]);
-
-  const regular = sortKeylineEntries(
-    allEntries.filter(item => !item.whiteList)
+  const regular = sortEntries(
+    deduped.filter(item => !item.whiteList)
   ).slice(0, REGULAR_LIMIT);
 
-  const whiteList = sortKeylineEntries(
-    allEntries.filter(item => item.whiteList)
-  ).slice(0, WHITE_LIST_LIMIT);
+  const autoWhiteList = sortEntries(
+    deduped.filter(item => item.whiteList)
+  ).slice(0, AUTO_WHITE_LIST_LIMIT);
 
-  if (regular.length === 0) {
-    throw new Error("Keyline returned zero supported regular servers; keeping the existing pool.");
+  if (regular.length === 0 && autoWhiteList.length === 0) {
+    throw new Error(
+      "Configured Keyline sources returned zero supported servers. Existing pool is preserved."
+    );
   }
 
   const currentIndex = await loadIndex();
-  const protectedEntries = currentIndex.filter(
-    item => item && typeof item.id === "string" && isProtectedId(item.id)
+  const { stageDir } = await buildStagedLinks(
+    currentIndex,
+    regular,
+    autoWhiteList
   );
 
-  await removeManagedFiles();
-
-  const manualWhiteLists = protectedEntries.filter(item => /^whitelist-\d+$/i.test(item.id));
-  const europeEntries = protectedEntries.filter(item => /^europe-\d+$/i.test(item.id));
-  const nextEntries = [...europeEntries, ...protectedEntries.filter(item => !/^europe-\d+$/i.test(item.id) && !/^whitelist-\d+$/i.test(item.id))];
-
-  for (let i = 0; i < regular.length; i += 1) {
-    const id = `keyline-regular-${String(i + 1).padStart(2, "0")}`;
-    const item = regular[i];
-    await writeAtomic(path.join(LINKS_DIR, `${id}.link`), `${item.link}\n`);
-    nextEntries.push({
-      id,
-      remarks: buildRemarks(item, i + 1, "Keyline"),
-    });
+  try {
+    await replaceLinksDirectory(stageDir);
+  } catch (error) {
+    await fs.rm(stageDir, { recursive: true, force: true });
+    throw error;
   }
-
-  nextEntries.push(...manualWhiteLists);
-
-  for (let i = 0; i < whiteList.length; i += 1) {
-    const id = `keyline-whitelist-${String(i + 1).padStart(2, "0")}`;
-    const item = whiteList[i];
-    await writeAtomic(path.join(LINKS_DIR, `${id}.link`), `${item.link}\n`);
-    nextEntries.push({
-      id,
-      remarks: buildRemarks(item, i + 1, "White List"),
-    });
-  }
-
-  await writeAtomic(
-    INDEX_FILE,
-    `${JSON.stringify(nextEntries, null, 2)}\n`
-  );
 
   await writeAtomic(
     STATE_FILE,
-    `${JSON.stringify({ lastSuccessfulUpdateAt: Date.now() }, null, 2)}\n`
+    `${JSON.stringify({
+      lastSuccessfulUpdateAt: Date.now(),
+      sourceCount: sources.length,
+      rawEntryCount: totalRawEntries,
+      regularCount: regular.length,
+      autoWhiteListCount: autoWhiteList.length,
+    }, null, 2)}\n`
   );
 
-  console.log(`Keyline update complete: ${regular.length} regular, ${whiteList.length} white-list servers.`);
+  console.log(
+    `Keyline update complete: ${sources.length} sources, ` +
+    `${regular.length} regular, ${autoWhiteList.length} auto-white-list.`
+  );
 }
 
 main().catch(error => {
-  console.error(`Keyline update failed: ${error.message}`);
+  console.error(
+    `Keyline update failed: ${error.message}`
+  );
+
   process.exitCode = 1;
 });
