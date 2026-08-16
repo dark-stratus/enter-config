@@ -78,3 +78,18 @@ Deleting these removes the automation without requiring changes to `enter-main`.
 ## GitHub Actions runtime
 
 The workflow uses `actions/checkout@v7` and `actions/setup-node@v7` with Node.js 24 to avoid the Node.js 20 deprecation warning on current GitHub-hosted runners.
+
+
+## Keyline request client identity
+
+Keyline `/sub/...` endpoints are fetched using the same public request-header shape observed from a normal Windows Happ client:
+
+- `User-Agent: Happ/2.16.2/Windows/2605221224503`
+- `X-App-Version: 2.16.2`
+- `X-Device-Locale: RU`
+- `X-Device-Os: Windows`
+- `X-Device-Model: LAPTOP-<generated>_x86_64`
+- `X-Hwid: <generated UUID>`
+- `X-Ver-Os: 10_10.0.19045`
+
+The generated HWID and device model are stored in `.keyline-state.json` after a successful refresh, so all configured Keyline sources are fetched as the same logical Happ device. The generated device identity contains no project/brand name.

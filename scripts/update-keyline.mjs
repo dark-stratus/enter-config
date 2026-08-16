@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
+import crypto from "node:crypto";
 
 const ROOT = path.resolve(new URL("..", import.meta.url).pathname);
 const LINKS_DIR = path.join(ROOT, "config", "links");
@@ -14,6 +15,12 @@ const SUCCESS_INTERVAL_MS = 12 * 60 * 60 * 1000;
 const FETCH_TIMEOUT_MS = 30_000;
 const FETCH_RETRIES = 3;
 const FETCH_RETRY_DELAY_MS = 2_000;
+
+const HAPP_APP_VERSION = "2.16.2";
+const HAPP_BUILD_ID = "2605221224503";
+const HAPP_DEVICE_LOCALE = "RU";
+const HAPP_DEVICE_OS = "Windows";
+const HAPP_OS_VERSION = "10_10.0.19045";
 
 const MANAGED_REGULAR_RE = /^keyline-regular-\d+$/i;
 const MANAGED_WHITE_LIST_RE = /^keyline-whitelist-\d+$/i;
@@ -75,6 +82,38 @@ async function readState() {
     if (error.code === "ENOENT") return { lastSuccessfulUpdateAt: 0 };
     throw error;
   }
+}
+
+function isUuid(value) {
+  return (
+    typeof value === "string" &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
+  );
+}
+
+function createHappDeviceModel() {
+  const suffix = crypto.randomBytes(4).toString("hex").toUpperCase();
+  return `LAPTOP-${suffix}_x86_64`;
+}
+
+async function getHappClientIdentity() {
+  const state = await readState();
+
+  const hwid = isUuid(state.happHwid)
+    ? state.happHwid
+    : crypto.randomUUID();
+
+  const deviceModel = (
+    typeof state.happDeviceModel === "string" &&
+    /^LAPTOP-[A-Z0-9]+_x86_64$/.test(state.happDeviceModel)
+  )
+    ? state.happDeviceModel
+    : createHappDeviceModel();
+
+  return {
+    hwid,
+    deviceModel,
+  };
 }
 
 async function shouldSkip() {
@@ -147,16 +186,26 @@ function responsePreview(text) {
     .replace(/\s+/g, " ");
 }
 
-async function fetchJsonUrl(url, label) {
+async function fetchJsonUrl(url, label, clientIdentity) {
   let lastError = null;
+
+  const headers = {
+    "user-agent": `Happ/${HAPP_APP_VERSION}/${HAPP_DEVICE_OS}/${HAPP_BUILD_ID}`,
+    "x-app-version": HAPP_APP_VERSION,
+    "x-device-locale": HAPP_DEVICE_LOCALE,
+    "x-device-os": HAPP_DEVICE_OS,
+    "x-device-model": clientIdentity.deviceModel,
+    "x-hwid": clientIdentity.hwid,
+    "x-ver-os": HAPP_OS_VERSION,
+    accept: "*/*",
+    "accept-language": "ru-RU,en,*",
+    "accept-encoding": "gzip, deflate",
+  };
 
   for (let attempt = 1; attempt <= FETCH_RETRIES; attempt += 1) {
     try {
       const response = await fetch(url, {
-        headers: {
-          accept: "application/json,text/plain;q=0.9,*/*;q=0.8",
-          "user-agent": "enter-config-keyline-updater/2.1",
-        },
+        headers,
         redirect: "follow",
         cache: "no-store",
         signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
@@ -199,14 +248,24 @@ async function fetchJsonUrl(url, label) {
 }
 
 async function fetchKeylineSources() {
+  const clientIdentity = await getHappClientIdentity();
+
+  console.log(
+    `Using Happ client identity: device=${clientIdentity.deviceModel}, ` +
+    `hwid=${clientIdentity.hwid.slice(0, 8)}…`
+  );
+
   const fixtureJson = process.env.KEYLINE_FIXTURE_JSON;
 
   if (fixtureJson) {
-    return [{
-      label: "fixture",
-      data: safeJsonParse(fixtureJson, "KEYLINE_FIXTURE_JSON"),
-      forceWhiteList: false,
-    }];
+    return {
+      clientIdentity,
+      sources: [{
+        label: "fixture",
+        data: safeJsonParse(fixtureJson, "KEYLINE_FIXTURE_JSON"),
+        forceWhiteList: false,
+      }],
+    };
   }
 
   const fixturePath = process.env.KEYLINE_FIXTURE;
@@ -215,11 +274,14 @@ async function fetchKeylineSources() {
     const resolved = path.resolve(process.cwd(), fixturePath);
     const text = await fs.readFile(resolved, "utf8");
 
-    return [{
-      label: resolved,
-      data: safeJsonParse(text, resolved),
-      forceWhiteList: false,
-    }];
+    return {
+      clientIdentity,
+      sources: [{
+        label: resolved,
+        data: safeJsonParse(text, resolved),
+        forceWhiteList: false,
+      }],
+    };
   }
 
   const configuredRegularUrls = parseConfiguredUrls(
@@ -239,14 +301,14 @@ async function fetchKeylineSources() {
   const sources = [];
   const failures = [];
 
-  // Every configured subscription is read exactly once per attempt,
-  // with bounded retries for transient/partial HTTP responses.
+  // Every configured subscription is read once per attempt, using the
+  // same client identity and headers as a normal Windows Happ client.
   for (let index = 0; index < regularUrls.length; index += 1) {
     const url = regularUrls[index];
     const label = `Keyline source ${index + 1}`;
 
     try {
-      const data = await fetchJsonUrl(url, label);
+      const data = await fetchJsonUrl(url, label, clientIdentity);
 
       sources.push({
         label,
@@ -270,7 +332,11 @@ async function fetchKeylineSources() {
     const label = `Keyline White List source ${index + 1}`;
 
     try {
-      const data = await fetchJsonUrl(url, label);
+      const data = await fetchJsonUrl(
+        url,
+        label,
+        clientIdentity
+      );
 
       sources.push({
         label,
@@ -306,7 +372,10 @@ async function fetchKeylineSources() {
     );
   }
 
-  return sources;
+  return {
+    clientIdentity,
+    sources,
+  };
 }
 
 function encodeQuery(params) {
@@ -541,7 +610,10 @@ async function replaceLinksDirectory(stageDir) {
 async function main() {
   if (await shouldSkip()) return;
 
-  const sources = await fetchKeylineSources();
+  const {
+    clientIdentity,
+    sources,
+  } = await fetchKeylineSources();
   const allEntries = [];
   let totalRawEntries = 0;
 
@@ -608,6 +680,8 @@ async function main() {
       rawEntryCount: totalRawEntries,
       regularCount: regular.length,
       autoWhiteListCount: autoWhiteList.length,
+      happHwid: clientIdentity.hwid,
+      happDeviceModel: clientIdentity.deviceModel,
     }, null, 2)}\n`
   );
 
