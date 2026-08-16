@@ -61,6 +61,11 @@ async function readState() {
 }
 
 async function shouldSkip() {
+  if (process.env.FORCE_KEYLINE_REFRESH === "1") {
+    console.log("Forced Keyline refresh requested; ignoring update interval.");
+    return false;
+  }
+
   const state = await readState();
   const elapsed = Date.now() - state.lastSuccessfulUpdateAt;
 
