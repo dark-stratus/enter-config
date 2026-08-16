@@ -55,9 +55,9 @@ The flag is taken from the original Keyline remark when available.
 
 ## Refresh and failure behavior
 
-On every eligible refresh, each configured Keyline URL is fetched exactly once.
+On every eligible refresh, each configured Keyline URL is fetched once normally. If a request is transiently broken, times out, or returns invalid JSON, that same URL is retried up to 2 additional times (3 attempts total). URLs are still deduplicated, so the same configured URL is not processed as separate sources.
 
-If **any** configured URL fails, is expired, returns invalid JSON, or fails validation, the updater does not replace the pool. The existing Keyline servers remain untouched and the next hourly workflow run tries again.
+If **any** configured URL fails after its retries, is expired, returns invalid JSON, or fails validation, the updater does not replace the pool. The existing Keyline servers remain untouched and the next hourly workflow run tries again. The workflow log identifies the failing source and includes response length/content-type/a short response preview without printing the secret URL itself.
 
 After a successful refresh, the updater waits 12 hours before another real refresh. The GitHub Actions workflow still wakes every hour so failures are retried after about one hour.
 
@@ -74,3 +74,7 @@ The temporary adapter consists of:
 - generated `keyline-*.link` entries
 
 Deleting these removes the automation without requiring changes to `enter-main`.
+
+## GitHub Actions runtime
+
+The workflow uses `actions/checkout@v7` and `actions/setup-node@v7` with Node.js 24 to avoid the Node.js 20 deprecation warning on current GitHub-hosted runners.

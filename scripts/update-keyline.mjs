@@ -11,6 +11,10 @@ const REGULAR_LIMIT = 40;
 const AUTO_WHITE_LIST_LIMIT = 20;
 const SUCCESS_INTERVAL_MS = 12 * 60 * 60 * 1000;
 
+const FETCH_TIMEOUT_MS = 30_000;
+const FETCH_RETRIES = 3;
+const FETCH_RETRY_DELAY_MS = 2_000;
+
 const MANAGED_REGULAR_RE = /^keyline-regular-\d+$/i;
 const MANAGED_WHITE_LIST_RE = /^keyline-whitelist-\d+$/i;
 
@@ -38,11 +42,24 @@ function extractFlag(remarks = "") {
   return match?.[1] || "🏳️";
 }
 
+function normalizeJsonText(text) {
+  return String(text).replace(/^\uFEFF/, "").trim();
+}
+
 function safeJsonParse(text, source) {
   try {
-    return JSON.parse(text);
+    return JSON.parse(normalizeJsonText(text));
   } catch (error) {
-    throw new Error(`${source}: invalid JSON (${error.message})`);
+    const normalized = normalizeJsonText(text);
+    const preview = normalized
+      .slice(0, 240)
+      .replace(/\s+/g, " ");
+
+    throw new Error(
+      `${source}: invalid JSON (${error.message}); ` +
+      `response length=${normalized.length}; ` +
+      `preview=${JSON.stringify(preview)}`
+    );
   }
 }
 
@@ -120,26 +137,65 @@ function uniqueUrls(urls) {
   return [...new Set(urls)];
 }
 
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function responsePreview(text) {
+  return normalizeJsonText(text)
+    .slice(0, 240)
+    .replace(/\s+/g, " ");
+}
+
 async function fetchJsonUrl(url, label) {
-  const response = await fetch(url, {
-    headers: {
-      accept: "application/json,text/plain;q=0.9,*/*;q=0.8",
-      "user-agent": "enter-config-keyline-updater/2.0",
-    },
-    redirect: "follow",
-    cache: "no-store",
-    signal: AbortSignal.timeout(30_000),
-  });
+  let lastError = null;
 
-  const text = await response.text();
+  for (let attempt = 1; attempt <= FETCH_RETRIES; attempt += 1) {
+    try {
+      const response = await fetch(url, {
+        headers: {
+          accept: "application/json,text/plain;q=0.9,*/*;q=0.8",
+          "user-agent": "enter-config-keyline-updater/2.1",
+        },
+        redirect: "follow",
+        cache: "no-store",
+        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      });
 
-  if (!response.ok) {
-    throw new Error(
-      `${label} HTTP ${response.status}: ${text.slice(0, 300)}`
-    );
+      const text = await response.text();
+
+      if (!response.ok) {
+        throw new Error(
+          `${label}: HTTP ${response.status}; ` +
+          `response length=${text.length}; ` +
+          `preview=${JSON.stringify(responsePreview(text))}`
+        );
+      }
+
+      try {
+        return safeJsonParse(text, label);
+      } catch (error) {
+        const contentType = response.headers.get("content-type") || "unknown";
+
+        throw new Error(
+          `${error.message}; content-type=${contentType}`
+        );
+      }
+    } catch (error) {
+      lastError = error;
+
+      if (attempt < FETCH_RETRIES) {
+        console.warn(
+          `${label}: attempt ${attempt}/${FETCH_RETRIES} failed: ` +
+          `${error.message}. Retrying in ${FETCH_RETRY_DELAY_MS} ms...`
+        );
+
+        await sleep(FETCH_RETRY_DELAY_MS);
+      }
+    }
   }
 
-  return safeJsonParse(text, url);
+  throw lastError || new Error(`${label}: unknown fetch error`);
 }
 
 async function fetchKeylineSources() {
@@ -166,9 +222,13 @@ async function fetchKeylineSources() {
     }];
   }
 
+  const configuredRegularUrls = parseConfiguredUrls(
+    process.env.KEYLINE_URLS
+  );
+
   const regularUrls = uniqueUrls(
-    parseConfiguredUrls(process.env.KEYLINE_URLS).length > 0
-      ? parseConfiguredUrls(process.env.KEYLINE_URLS)
+    configuredRegularUrls.length > 0
+      ? configuredRegularUrls
       : parseUrlList(process.env.KEYLINE_URL)
   );
 
@@ -177,34 +237,72 @@ async function fetchKeylineSources() {
   );
 
   const sources = [];
+  const failures = [];
 
-  // Every configured subscription is read exactly once per eligible refresh.
+  // Every configured subscription is read exactly once per attempt,
+  // with bounded retries for transient/partial HTTP responses.
   for (let index = 0; index < regularUrls.length; index += 1) {
     const url = regularUrls[index];
+    const label = `Keyline source ${index + 1}`;
 
-    sources.push({
-      label: `Keyline source ${index + 1}`,
-      data: await fetchJsonUrl(url, `Keyline source ${index + 1}`),
-      forceWhiteList: false,
-    });
+    try {
+      const data = await fetchJsonUrl(url, label);
+
+      sources.push({
+        label,
+        data,
+        forceWhiteList: false,
+      });
+
+      console.log(`${label}: OK`);
+    } catch (error) {
+      failures.push({
+        label,
+        message: error.message,
+      });
+
+      console.error(`${label}: FAILED — ${error.message}`);
+    }
   }
 
   for (let index = 0; index < dedicatedWhiteListUrls.length; index += 1) {
     const url = dedicatedWhiteListUrls[index];
+    const label = `Keyline White List source ${index + 1}`;
 
-    sources.push({
-      label: `Keyline White List source ${index + 1}`,
-      data: await fetchJsonUrl(
-        url,
-        `Keyline White List source ${index + 1}`
-      ),
-      forceWhiteList: true,
-    });
+    try {
+      const data = await fetchJsonUrl(url, label);
+
+      sources.push({
+        label,
+        data,
+        forceWhiteList: true,
+      });
+
+      console.log(`${label}: OK`);
+    } catch (error) {
+      failures.push({
+        label,
+        message: error.message,
+      });
+
+      console.error(`${label}: FAILED — ${error.message}`);
+    }
   }
 
-  if (sources.length === 0) {
+  if (sources.length === 0 && failures.length === 0) {
     throw new Error(
       "No Keyline URLs configured. Set KEYLINE_URLS with one /sub/... URL per line."
+    );
+  }
+
+  if (failures.length > 0) {
+    const details = failures
+      .map(item => `- ${item.label}: ${item.message}`)
+      .join("\n");
+
+    throw new Error(
+      `Keyline refresh aborted: ${failures.length} source(s) failed.\n${details}\n` +
+      "Existing Keyline pool is preserved."
     );
   }
 
@@ -213,7 +311,11 @@ async function fetchKeylineSources() {
 
 function encodeQuery(params) {
   return Object.entries(params)
-    .filter(([, value]) => value !== undefined && value !== null && value !== "")
+    .filter(([, value]) => (
+      value !== undefined &&
+      value !== null &&
+      value !== ""
+    ))
     .map(([key, value]) => (
       `${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`
     ))
@@ -324,12 +426,6 @@ function sortEntries(entries) {
   });
 }
 
-function buildAutoWhiteListRemarks(entry, number) {
-  const flag = extractFlag(entry.remarks);
-
-  return `${flag} 🤖 🏳️ Auto White List ${number}`;
-}
-
 async function loadIndex() {
   const text = await fs.readFile(INDEX_FILE, "utf8");
   const index = safeJsonParse(text, INDEX_FILE);
@@ -359,7 +455,6 @@ async function buildStagedLinks(currentIndex, regular, autoWhiteList) {
   await fs.rm(stageDir, { recursive: true, force: true });
   await fs.cp(LINKS_DIR, stageDir, { recursive: true });
 
-  const stagedIndexFile = path.join(stageDir, "index.json");
   const stagedManagedFiles = await fs.readdir(stageDir, {
     withFileTypes: true,
   });
@@ -416,7 +511,7 @@ async function buildStagedLinks(currentIndex, regular, autoWhiteList) {
   }
 
   await fs.writeFile(
-    stagedIndexFile,
+    path.join(stageDir, "index.json"),
     `${JSON.stringify(nextEntries, null, 2)}\n`,
     "utf8"
   );
@@ -453,7 +548,8 @@ async function main() {
   for (const source of sources) {
     if (!Array.isArray(source.data)) {
       throw new Error(
-        `${source.label}: response must be a JSON array.`
+        `${source.label}: response must be a JSON array. ` +
+        "Existing Keyline pool is preserved."
       );
     }
 
@@ -485,7 +581,8 @@ async function main() {
 
   if (regular.length === 0 && autoWhiteList.length === 0) {
     throw new Error(
-      "Configured Keyline sources returned zero supported servers. Existing pool is preserved."
+      "Configured Keyline sources returned zero supported servers. " +
+      "Existing Keyline pool is preserved."
     );
   }
 
@@ -521,9 +618,6 @@ async function main() {
 }
 
 main().catch(error => {
-  console.error(
-    `Keyline update failed: ${error.message}`
-  );
-
+  console.error(`Keyline update failed: ${error.message}`);
   process.exitCode = 1;
 });
