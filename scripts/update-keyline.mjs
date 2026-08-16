@@ -70,6 +70,150 @@ function safeJsonParse(text, source) {
   }
 }
 
+function looksLikeBase64(text) {
+  const normalized = String(text).replace(/\s+/g, "");
+
+  if (!normalized || normalized.length < 16) return false;
+  if (!/^[A-Za-z0-9+/_=-]+$/.test(normalized)) return false;
+
+  return normalized.length % 4 === 0 || normalized.endsWith("=");
+}
+
+function decodeBase64Text(text) {
+  const normalized = String(text)
+    .replace(/\s+/g, "")
+    .replace(/-/g, "+")
+    .replace(/_/g, "/");
+
+  const buffer = Buffer.from(normalized, "base64");
+
+  if (!buffer.length) {
+    throw new Error("base64 payload decoded to an empty response");
+  }
+
+  const decoded = buffer.toString("utf8");
+  const printable = [...decoded].filter(char => (
+    char === "\n" ||
+    char === "\r" ||
+    char === "\t" ||
+    char >= " "
+  )).length;
+
+  if (decoded.length === 0 || printable / decoded.length < 0.85) {
+    throw new Error("base64 payload is not valid UTF-8 text");
+  }
+
+  return decoded;
+}
+
+function stripProfileMetadata(text) {
+  return String(text)
+    .split(/\r?\n/)
+    .filter(line => !line.trim().startsWith("#"))
+    .join("\n")
+    .trim();
+}
+
+function extractProfileLinks(text) {
+  const links = [];
+  const lines = String(text).split(/\r?\n/);
+
+  for (const line of lines) {
+    const value = line.trim();
+
+    if (!value || value.startsWith("#")) continue;
+
+    const matches = value.match(
+      /(?:vless|trojan|hysteria2):\/\/[^\s]+/gi
+    );
+
+    if (!matches) continue;
+
+    for (const link of matches) {
+      links.push(link.replace(/[\]}>\],;]+$/, ""));
+    }
+  }
+
+  return [...new Set(links)];
+}
+
+function extractJsonAfterMetadata(text, source) {
+  const payload = stripProfileMetadata(text);
+
+  if (!payload.startsWith("[") && !payload.startsWith("{")) {
+    return null;
+  }
+
+  return safeJsonParse(payload, source);
+}
+
+function parseSubscriptionPayload(text, contentType, source) {
+  const raw = normalizeJsonText(text);
+
+  if (!raw) {
+    throw new Error(
+      `${source}: empty response; content-type=${contentType || "unknown"}`
+    );
+  }
+
+  try {
+    const parsed = safeJsonParse(raw, source);
+
+    return {
+      kind: "json",
+      data: parsed,
+    };
+  } catch {}
+
+  const candidates = [raw];
+
+  if (looksLikeBase64(raw)) {
+    try {
+      candidates.push(decodeBase64Text(raw));
+    } catch {}
+  }
+
+  let lastError = null;
+
+  for (let index = 1; index < candidates.length; index += 1) {
+    const candidate = candidates[index];
+
+    try {
+      const parsed = extractJsonAfterMetadata(candidate, source);
+
+      if (parsed !== null) {
+        return {
+          kind: "json",
+          data: parsed,
+        };
+      }
+    } catch (error) {
+      lastError = error;
+    }
+
+    const links = extractProfileLinks(candidate);
+
+    if (links.length > 0) {
+      return {
+        kind: "links",
+        data: links,
+      };
+    }
+  }
+
+  const preview = raw
+    .slice(0, 240)
+    .replace(/\s+/g, " ");
+
+  throw new Error(
+    `${source}: unsupported subscription response; ` +
+    `content-type=${contentType || "unknown"}; ` +
+    `response length=${raw.length}; ` +
+    `preview=${JSON.stringify(preview)}` +
+    (lastError ? `; ${lastError.message}` : "")
+  );
+}
+
 async function readState() {
   try {
     const text = await fs.readFile(STATE_FILE, "utf8");
@@ -221,15 +365,14 @@ async function fetchJsonUrl(url, label, clientIdentity) {
         );
       }
 
-      try {
-        return safeJsonParse(text, label);
-      } catch (error) {
-        const contentType = response.headers.get("content-type") || "unknown";
+      const contentType = response.headers.get("content-type") || "unknown";
+      const payload = parseSubscriptionPayload(text, contentType, label);
 
-        throw new Error(
-          `${error.message}; content-type=${contentType}`
-        );
+      if (payload.kind === "json") {
+        return payload;
       }
+
+      return payload;
     } catch (error) {
       lastError = error;
 
@@ -263,6 +406,7 @@ async function fetchKeylineSources() {
       sources: [{
         label: "fixture",
         data: safeJsonParse(fixtureJson, "KEYLINE_FIXTURE_JSON"),
+        payloadKind: "json",
         forceWhiteList: false,
       }],
     };
@@ -279,6 +423,7 @@ async function fetchKeylineSources() {
       sources: [{
         label: resolved,
         data: safeJsonParse(text, resolved),
+        payloadKind: "json",
         forceWhiteList: false,
       }],
     };
@@ -312,7 +457,8 @@ async function fetchKeylineSources() {
 
       sources.push({
         label,
-        data,
+        data: data.data,
+        payloadKind: data.kind,
         forceWhiteList: false,
       });
 
@@ -340,7 +486,8 @@ async function fetchKeylineSources() {
 
       sources.push({
         label,
-        data,
+        data: data.data,
+        payloadKind: data.kind,
         forceWhiteList: true,
       });
 
@@ -437,6 +584,73 @@ function buildSupportedLink(entry) {
   if (outbound.protocol === "vless") return buildVlessLink(entry);
 
   return null;
+}
+
+function normalizeProfileLink(link, index, source, forceWhiteList = false) {
+  if (typeof link !== "string" || !link.trim()) return null;
+
+  const value = link.trim();
+  const protocol = value.split("://")[0]?.toLowerCase();
+
+  if (!["vless", "trojan", "hysteria2"].includes(protocol)) {
+    return null;
+  }
+
+  let remarks = "";
+
+  try {
+    const url = new URL(value);
+    remarks = decodeURIComponent(url.hash.replace(/^#/, "")).trim();
+  } catch {}
+
+  if (!remarks) {
+    remarks = `${source} ${index + 1}`;
+  }
+
+  return {
+    sourceIndex: index,
+    source,
+    remarks,
+    whiteList: forceWhiteList || isWhiteListRemark(remarks),
+    link: value,
+  };
+}
+
+function normalizeSourceData(source) {
+  if (source.payloadKind === "links") {
+    return source.data
+      .map((link, index) => normalizeProfileLink(
+        link,
+        index,
+        source.label,
+        source.forceWhiteList
+      ))
+      .filter(Boolean);
+  }
+
+  if (!Array.isArray(source.data)) {
+    throw new Error(
+      `${source.label}: response must be a JSON array. ` +
+      "Existing Keyline pool is preserved."
+    );
+  }
+
+  const result = [];
+
+  for (let index = 0; index < source.data.length; index += 1) {
+    const normalized = normalizeEntry(
+      source.data[index],
+      index,
+      source.label
+    );
+
+    if (!normalized) continue;
+    if (source.forceWhiteList) normalized.whiteList = true;
+
+    result.push(normalized);
+  }
+
+  return result;
 }
 
 function normalizeEntry(entry, index, source) {
@@ -618,27 +832,15 @@ async function main() {
   let totalRawEntries = 0;
 
   for (const source of sources) {
-    if (!Array.isArray(source.data)) {
-      throw new Error(
-        `${source.label}: response must be a JSON array. ` +
-        "Existing Keyline pool is preserved."
-      );
-    }
+    const normalized = normalizeSourceData(source);
 
     totalRawEntries += source.data.length;
+    allEntries.push(...normalized);
 
-    for (let index = 0; index < source.data.length; index += 1) {
-      const normalized = normalizeEntry(
-        source.data[index],
-        index,
-        source.label
-      );
-
-      if (!normalized) continue;
-      if (source.forceWhiteList) normalized.whiteList = true;
-
-      allEntries.push(normalized);
-    }
+    console.log(
+      `${source.label}: parsed ${normalized.length} supported entries` +
+      ` (${source.payloadKind})`
+    );
   }
 
   const deduped = dedupe(allEntries);

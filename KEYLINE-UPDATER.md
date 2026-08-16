@@ -93,3 +93,8 @@ Keyline `/sub/...` endpoints are fetched using the same public request-header sh
 - `X-Ver-Os: 10_10.0.19045`
 
 The generated HWID and device model are stored in `.keyline-state.json` after a successful refresh, so all configured Keyline sources are fetched as the same logical Happ device. The generated device identity contains no project/brand name.
+
+
+### Keyline subscription response formats
+
+Keyline may return a subscription as either a JSON array or a `text/plain` Base64-encoded profile. The updater detects both formats. For Base64 profiles it decodes the payload, removes `#profile-*` metadata lines, and accepts supported URI lines (`vless://`, `trojan://`, `hysteria2://`). Unsupported protocols are ignored rather than emitted as broken `.link` files.
