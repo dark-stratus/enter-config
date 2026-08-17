@@ -47,6 +47,31 @@ const REQUEST_TIMEOUT_MS =
 const REQUEST_RETRIES =
     2;
 
+// Connectivity-only probes can report success even when real traffic is
+// effectively unusable. Run a small real download through every candidate
+// after the 3 HTTPS connectivity probes.
+const QUALITY_DOWNLOAD_URL =
+    process.env.HEALTHCHECK_QUALITY_URL ||
+    "https://speed.cloudflare.com/__down?bytes=262144";
+
+const QUALITY_DOWNLOAD_TIMEOUT_MS =
+    Math.max(
+        5000,
+        Number(process.env.HEALTHCHECK_QUALITY_TIMEOUT_MS) || 12000
+    );
+
+const QUALITY_MIN_BYTES =
+    Math.max(
+        16384,
+        Number(process.env.HEALTHCHECK_QUALITY_MIN_BYTES) || 65536
+    );
+
+const QUALITY_MIN_KBPS =
+    Math.max(
+        16,
+        Number(process.env.HEALTHCHECK_QUALITY_MIN_KBPS) || 64
+    );
+
 const HEALTH_CONCURRENCY =
     Math.max(
         1,
@@ -550,6 +575,131 @@ async function runCurl(
     );
 }
 
+async function runQualityDownload(
+    socksPort
+) {
+    const startedAt =
+        Date.now();
+
+    return await new Promise(resolve => {
+        const args = [
+            "--silent",
+            "--show-error",
+            "--fail-with-body",
+            "--connect-timeout",
+            "4",
+            "--max-time",
+            String(
+                Math.ceil(
+                    QUALITY_DOWNLOAD_TIMEOUT_MS / 1000
+                )
+            ),
+            "--proxy",
+            `socks5h://127.0.0.1:${socksPort}`,
+            "--output",
+            "/dev/null",
+            "--write-out",
+            "%{http_code} %{size_download} %{time_total}",
+            QUALITY_DOWNLOAD_URL,
+        ];
+
+        const child =
+            spawn(
+                "curl",
+                args,
+                {
+                    stdio: [
+                        "ignore",
+                        "pipe",
+                        "pipe"
+                    ]
+                }
+            );
+
+        let stdout = "";
+        let stderr = "";
+
+        child.stdout.on(
+            "data",
+            chunk => {
+                stdout += String(chunk);
+            }
+        );
+
+        child.stderr.on(
+            "data",
+            chunk => {
+                stderr += String(chunk);
+            }
+        );
+
+        const timeout =
+            setTimeout(
+                () => {
+                    child.kill("SIGKILL");
+                },
+                QUALITY_DOWNLOAD_TIMEOUT_MS
+            );
+
+        child.once(
+            "exit",
+            code => {
+                clearTimeout(timeout);
+
+                const [httpCodeRaw, bytesRaw, timeRaw] =
+                    stdout.trim().split(/\s+/);
+
+                const httpCode =
+                    Number(httpCodeRaw);
+
+                const bytes =
+                    Number(bytesRaw);
+
+                const curlSeconds =
+                    Number(timeRaw);
+
+                const elapsedSeconds =
+                    Number.isFinite(curlSeconds) && curlSeconds > 0
+                        ? curlSeconds
+                        : Math.max(
+                            (Date.now() - startedAt) / 1000,
+                            0.001
+                        );
+
+                const kbps =
+                    Number.isFinite(bytes)
+                        ? (bytes / 1024) / elapsedSeconds
+                        : 0;
+
+                const ok =
+                    code === 0 &&
+                    httpCode >= 200 &&
+                    httpCode < 400 &&
+                    bytes >= QUALITY_MIN_BYTES &&
+                    kbps >= QUALITY_MIN_KBPS;
+
+                resolve({
+                    ok,
+                    url: QUALITY_DOWNLOAD_URL,
+                    httpCode,
+                    bytes: Number.isFinite(bytes) ? bytes : 0,
+                    elapsedMs: Math.round(elapsedSeconds * 1000),
+                    kbps: Math.round(kbps * 10) / 10,
+                    error: ok
+                        ? ""
+                        : (
+                            stderr.trim() ||
+                            `quality threshold failed: ` +
+                            `${bytes || 0} bytes, ` +
+                            `${Math.round(kbps * 10) / 10} KB/s, ` +
+                            `HTTP ${httpCodeRaw || "?"}`
+                        ).slice(0, 600)
+                });
+            }
+        );
+    });
+}
+
 function isManagedKeylineId(
     id
 ) {
@@ -948,11 +1098,33 @@ async function main() {
                 };
             }
 
+            const quality =
+                await runQualityDownload(
+                    xray.socksPort
+                );
+
+            if (!quality.ok) {
+                return {
+                    item,
+                    ok: false,
+                    reason:
+                        `TCP + Xray + ${targets.length}/${targets.length} HTTPS passed, ` +
+                        `but real traffic quality failed: ` +
+                        `${quality.bytes} bytes, ${quality.kbps} KB/s, ` +
+                        `HTTP ${quality.httpCode || "?"}; ` +
+                        `${quality.error || "download threshold not met"}`,
+                    quality,
+                };
+            }
+
             return {
                 item,
                 ok: true,
                 protocol,
-                stages: `TCP + Xray + ${targets.length}/${targets.length} HTTPS`,
+                stages:
+                    `TCP + Xray + ${targets.length}/${targets.length} HTTPS + ` +
+                    `quality ${quality.kbps} KB/s`,
+                quality,
             };
 
         } catch (error) {
@@ -992,7 +1164,8 @@ async function main() {
                 ok: result.ok,
                 protocol: result.protocol || "",
                 stages: result.stages || "",
-                reason: result.reason || ""
+                reason: result.reason || "",
+                quality: result.quality || null
             });
 
             if (result.ok) {
@@ -1132,9 +1305,42 @@ async function main() {
         failed,
         concurrency: HEALTH_CONCURRENCY,
         targets: HEALTH_TARGET_URLS,
+        qualityProbe: {
+            url: QUALITY_DOWNLOAD_URL,
+            timeoutMs: QUALITY_DOWNLOAD_TIMEOUT_MS,
+            minBytes: QUALITY_MIN_BYTES,
+            minKbps: QUALITY_MIN_KBPS,
+        },
         results: healthResults,
     };
     report.finalManagedServers = normalizedIndex.filter(item => isManagedKeylineId(item?.id)).length;
+
+    const finalFingerprints = new Set(
+        normalizedIndex
+            .filter(item => isManagedKeylineId(item?.id))
+            .map(item => fingerprintLink(item.link || ""))
+            .filter(Boolean)
+    );
+
+    const removedByHealth = healthResults.filter(
+        item => !item.ok
+    );
+
+    report.stageComparison = {
+        candidatesBeforeHealthCheck:
+            report.totalBeforeHealthCheck ?? 0,
+        checked,
+        healthPassed:
+            passed,
+        healthFailed:
+            failed,
+        finalManagedServers:
+            report.finalManagedServers,
+        removedByHealthCheck:
+            removedByHealth,
+        finalLinkFingerprints:
+            [...finalFingerprints],
+    };
 
     if (process.env.GITHUB_STEP_SUMMARY) {
         const byReason = new Map();
@@ -1172,6 +1378,8 @@ async function main() {
             `- Retained from previous pool: ${report.retainedFromPreviousPool ?? "?"}`,
             `- Before health-check: ${report.totalBeforeHealthCheck ?? "?"}`,
             `- Health-check: **${passed} passed / ${failed} failed**`,
+            `- Quality probe: ${QUALITY_DOWNLOAD_URL}`,
+            `- Quality threshold: >= ${QUALITY_MIN_BYTES} bytes and >= ${QUALITY_MIN_KBPS} KB/s`,
             `- Final managed servers: **${report.finalManagedServers}**`,
         ];
         if (Array.isArray(report.sourceFailures) && report.sourceFailures.length) {

@@ -1520,6 +1520,64 @@ function canonicalAutoWhiteList(entries) {
   }];
 }
 
+function endpointFingerprint(link) {
+  try {
+    const url = new URL(String(link));
+
+    const normalizedParams = [...url.searchParams.entries()]
+      .filter(([key]) => !["fragment", "remarks"].includes(key))
+      .sort(([a], [b]) => a.localeCompare(b));
+
+    return crypto
+      .createHash("sha256")
+      .update(JSON.stringify({
+        protocol: url.protocol.toLowerCase(),
+        host: url.hostname.toLowerCase(),
+        port: Number(url.port || 0),
+        username: url.username,
+        password: url.password,
+        params: normalizedParams,
+      }))
+      .digest("hex")
+      .slice(0, 12);
+  } catch {
+    return fingerprintUrl(link);
+  }
+}
+
+function buildEndpointCloneGroups(entries) {
+  const groups = new Map();
+
+  for (const item of entries) {
+    const key = endpointFingerprint(item.link);
+    const group = groups.get(key) || {
+      fingerprint: key,
+      count: 0,
+      countries: new Set(),
+      remarks: [],
+      links: [],
+    };
+
+    group.count += 1;
+    if (item.country) group.countries.add(item.country);
+    if (item.remarks || item.originalRemarks) {
+      group.remarks.push(item.remarks || item.originalRemarks);
+    }
+    group.links.push(fingerprintUrl(item.link));
+    groups.set(key, group);
+  }
+
+  return [...groups.values()]
+    .filter(group => group.count > 1)
+    .map(group => ({
+      fingerprint: group.fingerprint,
+      count: group.count,
+      countries: [...group.countries],
+      remarks: group.remarks.slice(0, 10),
+      linkFingerprints: group.links.slice(0, 10),
+    }));
+}
+
 function dedupe(entries) {
   const seen = new Set();
   const result = [];
@@ -2011,6 +2069,9 @@ async function main() {
     ])
   );
 
+  const endpointCloneGroups =
+    buildEndpointCloneGroups(deduped);
+
   const report = {
     generatedAt: new Date().toISOString(),
     sourceCount: sources.length,
@@ -2024,6 +2085,8 @@ async function main() {
     sourceReports,
     freshBeforeDedupe: allEntries.length,
     afterDedupe: deduped.length,
+    endpointCloneGroups,
+    endpointCloneGroupCount: endpointCloneGroups.length,
     freshRegular: freshRegularCount,
     freshWhiteList: freshWhiteListCount,
     retainedFromPreviousPool: merged.retainedCount,
