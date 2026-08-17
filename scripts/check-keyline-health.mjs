@@ -138,6 +138,15 @@ function fingerprintLink(link) {
     return crypto.createHash("sha256").update(String(link)).digest("hex").slice(0, 12);
 }
 
+const MANAGED_REGULAR_RE = /^keyline-regular-\d+$/i;
+const MANAGED_WHITE_LIST_RE = /^keyline-whitelist-\d+$/i;
+
+function isManagedKeylineId(id) {
+    const value = String(id ?? "").trim();
+    return MANAGED_REGULAR_RE.test(value) || MANAGED_WHITE_LIST_RE.test(value);
+}
+
+
 const HEALTH_STATE_FILE = path.join(ROOT, ".keyline-state.json");
 
 async function updateHealthHistory(results) {
