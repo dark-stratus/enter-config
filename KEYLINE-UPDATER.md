@@ -174,3 +174,6 @@ Stage 2 tries several independent connectivity endpoints with retries. A server 
 Only Keyline-managed country servers are balanced. Manual `europe-*` entries are excluded.
 Three servers form one `Country Balance N`.
 A remainder is kept as ordinary country entries and is renumbered from 1, so there is no `Country 10` after three balances.
+
+
+Health-check: сервер проходит проверку, если успешно завершены минимум 2 из 3 этапов: TCP, запуск Xray, HTTPS через SOCKS5. Отсутствие флага в remarks не влияет на health-check.
