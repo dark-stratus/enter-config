@@ -1414,6 +1414,34 @@ async function writeAtomic(file, content) {
   await fs.rename(temp, file);
 }
 
+
+async function readManagedLinkFromDisk(id, fallbackIndexItem = null) {
+  if (
+    fallbackIndexItem &&
+    typeof fallbackIndexItem.link === "string" &&
+    fallbackIndexItem.link.trim()
+  ) {
+    return fallbackIndexItem.link.trim();
+  }
+
+  const file =
+    path.join(
+      LINKS_DIR,
+      `${id}.link`
+    );
+
+  try {
+    return (
+      await fs.readFile(
+        file,
+        "utf8"
+      )
+    ).trim();
+  } catch {
+    return "";
+  }
+}
+
 async function buildStagedLinks(
   currentIndex,
   regular,
@@ -1458,8 +1486,20 @@ async function buildStagedLinks(
   );
 
   // Permanent/manual non-White-List locations remain first.
-  nextEntries.push(...manualEuropeFirst);
-  nextEntries.push(...manualOther);
+  const manualOrdered = [
+    ...manualEuropeFirst,
+    ...manualOther,
+  ];
+
+  for (const item of manualOrdered) {
+    const link = await readManagedLinkFromDisk(item.id, item);
+
+    nextEntries.push(
+      link
+        ? { ...item, link }
+        : { ...item }
+    );
+  }
 
   // All Keyline regular locations go above the permanent White List 1.
   for (let index = 0; index < regular.length; index += 1) {
@@ -1477,6 +1517,7 @@ async function buildStagedLinks(
     nextEntries.push({
       id,
       remarks: item.remarks,
+      link: item.link,
     });
   }
 
@@ -1495,8 +1536,11 @@ async function buildStagedLinks(
         stagedFile
       );
 
+      const link = await readManagedLinkFromDisk(id, item);
+
       nextEntries.push({
         ...item,
+        ...(link ? { link } : {}),
         ...(id.toLowerCase() === "whitelist-1"
           ? {
               remarks:
@@ -1531,6 +1575,7 @@ async function buildStagedLinks(
     nextEntries.push({
       id,
       remarks: item.remarks,
+      link: item.link,
     });
   }
 

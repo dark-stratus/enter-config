@@ -1081,82 +1081,142 @@ function renumberIndex(
 
     let whiteListNumber = 2;
 
-    return index.map(
-        item => {
-            if (
-                !isManagedKeylineId(
-                    item.id
-                )
-            ) {
-                return item;
-            }
+    const normalized =
+        index.map(
+            item => {
+                if (
+                    !isManagedKeylineId(
+                        item?.id
+                    )
+                ) {
+                    return item;
+                }
 
-            if (
-                isAutomaticWhiteListId(
-                    item.id
-                )
-            ) {
+                if (
+                    isAutomaticWhiteListId(
+                        item.id
+                    )
+                ) {
+                    const flag =
+                        extractFlag(
+                            item.remarks
+                        );
+
+                    const next = {
+                        ...item,
+                        remarks:
+                            `${flag ? `${flag} ` : ""}🏳️ White List ${whiteListNumber}`
+                                .trim()
+                    };
+
+                    whiteListNumber +=
+                        1;
+
+                    return next;
+                }
+
                 const flag =
                     extractFlag(
                         item.remarks
                     );
 
-                const next = {
-                    ...item,
-                    remarks:
-                        `${flag ? `${flag} ` : ""}🏳️ White List ${whiteListNumber}`.trim()
-                };
+                const raw =
+                    stripFlag(
+                        item.remarks
+                    )
+                    .replace(
+                        /\b(?:White List|Whitelist|Balance)\b.*$/i,
+                        ""
+                    )
+                    .replace(
+                        /\s+\d+\s*$/u,
+                        ""
+                    )
+                    .trim();
 
-                whiteListNumber +=
-                    1;
+                if (!raw) {
+                    return item;
+                }
 
-                return next;
-            }
+                const count =
+                    (
+                        countryCounters.get(
+                            raw
+                        ) ||
+                        0
+                    ) + 1;
 
-            const flag =
-                extractFlag(
-                    item.remarks
+                countryCounters.set(
+                    raw,
+                    count
                 );
 
-            const raw =
-                stripFlag(
-                    item.remarks
-                )
-                .replace(
-                    /\b(?:White List|Whitelist|Balance)\b.*$/i,
-                    ""
-                )
-                .replace(
-                    /\s+\d+\s*$/u,
-                    ""
-                )
-                .trim();
+                return {
+                    ...item,
 
-            if (!raw) {
-                return item;
+                    remarks:
+                        `${flag} ${raw} ${count}`.trim()
+                };
             }
+        );
 
-            const count =
-                (
-                    countryCounters.get(
-                        raw
-                    ) ||
-                    0
-                ) + 1;
+    // Canonical ordering is important for Happ:
+    // Europe/manual locations first, then all Keyline regulars,
+    // then permanent White List 1, then automatically discovered White Lists.
+    const europe =
+        normalized.filter(
+            item =>
+                /^europe-\d+$/i.test(
+                    item?.id
+                )
+        );
 
-            countryCounters.set(
-                raw,
-                count
-            );
+    const manual =
+        normalized.filter(
+            item =>
+                item &&
+                !isManagedKeylineId(
+                    item.id
+                ) &&
+                !/^europe-\d+$/i.test(
+                    item?.id
+                ) &&
+                !/^whitelist-\d+$/i.test(
+                    item?.id
+                )
+        );
 
-            return {
-                ...item,
+    const permanentWhite =
+        normalized.filter(
+            item =>
+                /^whitelist-\d+$/i.test(
+                    item?.id
+                )
+        );
 
-                remarks:
-                    `${flag} ${raw} ${count}`.trim()
-            };
-        }
-    );
+    const managedRegular =
+        normalized.filter(
+            item =>
+                /^keyline-regular-\d+$/i.test(
+                    item?.id
+                )
+        );
+
+    const managedWhite =
+        normalized.filter(
+            item =>
+                /^keyline-whitelist-\d+$/i.test(
+                    item?.id
+                )
+        );
+
+    return [
+        ...europe,
+        ...manual,
+        ...managedRegular,
+        ...permanentWhite,
+        ...managedWhite,
+    ];
 }
 
 async function main() {
