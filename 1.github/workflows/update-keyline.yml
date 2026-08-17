@@ -1,0 +1,151 @@
+name: Update Keyline configs
+
+on:
+  schedule:
+    - cron: "7 * * * *"
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Ignore the 1-hour success interval and refresh now"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: keyline-update
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      - name: Update Keyline configs
+        env:
+          KEYLINE_WHITE_LIST_URLS: ${{ secrets.KEYLINE_WHITE_LIST_URLS }}
+          KEYLINE_URL_1: ${{ secrets.KEYLINE_URL_1 }}
+          KEYLINE_URL_2: ${{ secrets.KEYLINE_URL_2 }}
+          KEYLINE_URL_3: ${{ secrets.KEYLINE_URL_3 }}
+          KEYLINE_URL_4: ${{ secrets.KEYLINE_URL_4 }}
+          KEYLINE_URL_5: ${{ secrets.KEYLINE_URL_5 }}
+          KEYLINE_URL_6: ${{ secrets.KEYLINE_URL_6 }}
+          KEYLINE_URL_7: ${{ secrets.KEYLINE_URL_7 }}
+          KEYLINE_URL_8: ${{ secrets.KEYLINE_URL_8 }}
+          KEYLINE_URL_9: ${{ secrets.KEYLINE_URL_9 }}
+          KEYLINE_URL_10: ${{ secrets.KEYLINE_URL_10 }}
+          KEYLINE_URL_11: ${{ secrets.KEYLINE_URL_11 }}
+          KEYLINE_URL_12: ${{ secrets.KEYLINE_URL_12 }}
+          KEYLINE_URL_13: ${{ secrets.KEYLINE_URL_13 }}
+          KEYLINE_URL_14: ${{ secrets.KEYLINE_URL_14 }}
+          KEYLINE_URL_15: ${{ secrets.KEYLINE_URL_15 }}
+          FORCE_KEYLINE_REFRESH: ${{ inputs.force == true && '1' || '0' }}
+
+        run: node scripts/update-keyline.mjs
+
+      - name: Install Xray for three-stage health check
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mkdir -p .xray
+
+          curl -fsSL \
+            https://api.github.com/repos/XTLS/Xray-core/releases/latest \
+            -o .xray/release.json
+
+          ASSET_URL="$(
+            node -e '
+              const fs = require("node:fs");
+              const release = JSON.parse(
+                fs.readFileSync(".xray/release.json", "utf8")
+              );
+              const asset = release.assets.find(
+                item => item.name === "Xray-linux-64.zip"
+              );
+              if (!asset) {
+                throw new Error("Xray-linux-64.zip asset not found");
+              }
+              process.stdout.write(asset.browser_download_url);
+            '
+          )"
+
+          curl -fsSL \
+            "$ASSET_URL" \
+            -o .xray/xray.zip
+
+          unzip -o \
+            .xray/xray.zip \
+            -d .xray
+
+          chmod +x .xray/xray
+
+          .xray/xray version
+
+      - name: Check Keyline server health (TCP + Xray + HTTPS + real download)
+        id: health
+        env:
+          XRAY_BIN: ${{ github.workspace }}/.xray/xray
+          HEALTHCHECK_CONCURRENCY: 8
+          HEALTHCHECK_QUALITY_URL: https://speed.cloudflare.com/__down?bytes=262144
+          HEALTHCHECK_QUALITY_TIMEOUT_MS: 12000
+          HEALTHCHECK_QUALITY_MIN_BYTES: 65536
+          HEALTHCHECK_QUALITY_MIN_KBPS: 64
+          HEALTHCHECK_TARGET_URLS: >-
+            https://www.gstatic.com/generate_204,
+            https://www.google.com/generate_204,
+            https://cp.cloudflare.com/generate_204
+        run: node scripts/check-keyline-health.mjs
+
+      - name: Remove obsolete updater artifacts
+        if: always()
+        run: |
+          rm -rf -- .keyline-cache
+          rm -f -- KEYLINE-UPDATER.md
+          for obsolete in \
+            "update-keyline.mjs" \
+            "update-keyline (1).mjs" \
+            "update-keyline (2).mjs"
+          do
+            rm -f -- "$obsolete"
+            git rm --cached --ignore-unmatch -- "$obsolete" >/dev/null 2>&1 || true
+          done
+          git rm -r --cached --ignore-unmatch -- .keyline-cache >/dev/null 2>&1 || true
+          git rm --cached --ignore-unmatch -- KEYLINE-UPDATER.md >/dev/null 2>&1 || true
+
+      - name: Commit generated configs
+        if: ${{ steps.health.outcome == 'success' }}
+        run: |
+          if git diff --quiet; then
+            echo "No Keyline changes to commit."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A config/links .keyline-state.json .gitignore .github/workflows/update-keyline.yml scripts
+          git add -u
+          git commit -m "chore: update Keyline configs"
+          git push
+
+      - name: Upload Keyline diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: keyline-report-${{ github.run_number }}
+          path: keyline-report.json
+          if-no-files-found: ignore
+          retention-days: 7
