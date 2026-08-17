@@ -15,7 +15,6 @@ const SUCCESS_INTERVAL_MS = 1 * 60 * 60 * 1000;
 const FETCH_TIMEOUT_MS = 60_000;
 const FETCH_RETRIES = 4;
 const FETCH_RETRY_DELAY_MS = 2_000;
-const FETCH_CACHE_DIR = path.join(ROOT, ".keyline-cache");
 
 const HAPP_APP_VERSION = "2.16.2";
 const HAPP_BUILD_ID = "2605221224503";
@@ -484,6 +483,26 @@ function extractJsonAfterMetadata(text, source) {
   return safeJsonParse(payload, source);
 }
 
+function isKeylineErrorPayload(parsed) {
+  if (!parsed || typeof parsed !== "object") return false;
+
+  const title = String(parsed.title || parsed.message || "").toLowerCase();
+  const entries = Array.isArray(parsed.entries) ? parsed.entries : [];
+  if (!entries.length) {
+    return /ошибка добавления подписки|subscription (?:error|failed)|failed to add subscription/i.test(title);
+  }
+
+  const texts = entries.map(entry =>
+    typeof entry === "string"
+      ? entry
+      : `${entry?.remarks || ""} ${entry?.message || ""}`
+  ).join(" ").toLowerCase();
+
+  return /ошибка добавления подписки|напишите в @keylinevpnsupportbot|subscription (?:error|failed)|failed to add subscription/i.test(
+    `${title} ${texts}`
+  ) && !entries.some(entry => entry && typeof entry === "object" && (entry.outbounds || entry.link));
+}
+
 function parseSubscriptionPayload(text, contentType, source) {
   const raw = normalizeJsonText(text);
 
@@ -495,6 +514,14 @@ function parseSubscriptionPayload(text, contentType, source) {
 
   try {
     const parsed = safeJsonParse(raw, source);
+
+    if (isKeylineErrorPayload(parsed)) {
+      throw new Error(
+        `${source}: Keyline returned an error payload; ` +
+        `content-type=${contentType || "unknown"}; ` +
+        `preview=${JSON.stringify(responsePreview(raw))}`
+      );
+    }
 
     return {
       kind: "json",
@@ -733,105 +760,24 @@ async function fetchJsonUrl(url, label, clientIdentity) {
 }
 
 
-function sourceCacheFile(scope, index, url) {
-  const hash = crypto
-    .createHash("sha256")
-    .update(String(url))
-    .digest("hex")
-    .slice(0, 12);
-
-  return path.join(
-    FETCH_CACHE_DIR,
-    `${scope}-${String(index + 1).padStart(2, "0")}-${hash}.json`
-  );
+async function fetchOneConfiguredSource(url, label, clientIdentity) {
+  const payload = await fetchJsonUrl(url, label, clientIdentity);
+  return {
+    label,
+    data: payload.data,
+    payloadKind: payload.kind,
+    url,
+  };
 }
 
-async function writeSourceCache(scope, index, url, payload) {
-  await fs.mkdir(FETCH_CACHE_DIR, { recursive: true });
-  const file = sourceCacheFile(scope, index, url);
-
-  await writeAtomic(
-    file,
-    `${JSON.stringify({
-      cachedAt: Date.now(),
-      url,
-      payloadKind: payload.kind,
-      data: payload.data,
-    }, null, 2)}\n`
-  );
+function fingerprintUrl(url) {
+  return crypto.createHash("sha256").update(String(url)).digest("hex").slice(0, 12);
 }
 
-async function readSourceCache(scope, index, url) {
-  const file = sourceCacheFile(scope, index, url);
-
-  try {
-    const text = await fs.readFile(file, "utf8");
-    const cached = safeJsonParse(text, file);
-
-    if (cached?.url !== url) return null;
-    if (!cached?.payloadKind || cached?.data === undefined) return null;
-
-    return {
-      kind: cached.payloadKind,
-      data: cached.data,
-      cachedAt: Number(cached.cachedAt) || 0,
-    };
-  } catch (error) {
-    if (error.code === "ENOENT") return null;
-    throw error;
-  }
-}
-
-async function fetchOneConfiguredSource(url, label, clientIdentity, cacheScope, index) {
-  try {
-    const payload = await fetchJsonUrl(url, label, clientIdentity);
-    await writeSourceCache(cacheScope, index, url, payload);
-
-    return {
-      ok: true,
-      source: {
-        label,
-        data: payload.data,
-        payloadKind: payload.kind,
-        forceWhiteList: cacheScope === "whitelist",
-      },
-    };
-  } catch (error) {
-    const cached = await readSourceCache(
-      cacheScope,
-      index,
-      url
-    );
-
-    if (!cached) {
-      return {
-        ok: false,
-        failure: {
-          label,
-          message: error.message,
-        },
-      };
-    }
-
-    const ageHours = cached.cachedAt > 0
-      ? ((Date.now() - cached.cachedAt) / 3_600_000).toFixed(1)
-      : "unknown";
-
-    console.warn(
-      `${label}: live fetch failed (${error.message}); ` +
-      `using cached source from ${ageHours}h ago.`
-    );
-
-    return {
-      ok: true,
-      source: {
-        label: `${label} (cached)`,
-        data: cached.data,
-        payloadKind: cached.kind,
-        forceWhiteList: cacheScope === "whitelist",
-      },
-    };
-  }
+function sourceSlotLabel(scope, index) {
+  return scope === "whitelist"
+    ? `Keyline White List source ${index + 1}`
+    : `Keyline source ${index + 1}`;
 }
 
 async function fetchKeylineSources() {
@@ -852,6 +798,13 @@ async function fetchKeylineSources() {
         data: safeJsonParse(fixtureJson, "KEYLINE_FIXTURE_JSON"),
         payloadKind: "json",
         forceWhiteList: false,
+        url: "fixture",
+      }],
+      failures: [],
+      sourceFetches: [{
+        label: "fixture",
+        status: "fixture",
+        urlFingerprint: "fixture",
       }],
     };
   }
@@ -869,101 +822,121 @@ async function fetchKeylineSources() {
         data: safeJsonParse(text, resolved),
         payloadKind: "json",
         forceWhiteList: false,
+        url: resolved,
+      }],
+      failures: [],
+      sourceFetches: [{
+        label: resolved,
+        status: "fixture",
+        urlFingerprint: fingerprintUrl(resolved),
       }],
     };
   }
 
   const configuredRegularUrls = [];
-
-  // Regular Keyline sources are configured only as individual secrets:
-  // KEYLINE_URL_1 ... KEYLINE_URL_15. Missing numbers are allowed.
-  for (let index = 1; index <= 15; index += 1) {
-    configuredRegularUrls.push(
-      ...parseConfiguredUrls(
-        process.env[`KEYLINE_URL_${index}`]
-      )
-    );
+  for (let slot = 1; slot <= 15; slot += 1) {
+    for (const url of parseConfiguredUrls(process.env[`KEYLINE_URL_${slot}`])) {
+      configuredRegularUrls.push({ url, slot });
+    }
   }
 
-  const regularUrls = uniqueUrls(
-    configuredRegularUrls
-  );
+  const seenRegularUrls = new Set();
+  const regularRequests = configuredRegularUrls.filter(item => {
+    if (seenRegularUrls.has(item.url)) return false;
+    seenRegularUrls.add(item.url);
+    return true;
+  });
 
-  const dedicatedWhiteListUrls = uniqueUrls(
-    parseUrlList(process.env.KEYLINE_WHITE_LIST_URLS)
-  );
+  const dedicatedWhiteListUrls = parseUrlList(
+    process.env.KEYLINE_WHITE_LIST_URLS
+  ).filter((url, index, list) => list.indexOf(url) === index);
 
   const sources = [];
   const failures = [];
+  const sourceFetches = [];
 
-  const regularResults = await Promise.all(
-    regularUrls.map((url, index) =>
-      fetchOneConfiguredSource(
-        url,
-        `Keyline source ${index + 1}`,
-        clientIdentity,
-        "regular",
-        index
-      )
-    )
-  );
+  const fetchQueue = [
+    ...regularRequests.map(({ url, slot }, index) => ({
+      url,
+      label: `Keyline URL ${slot}`,
+      scope: "regular",
+      index,
+    })),
+    ...dedicatedWhiteListUrls.map((url, index) => ({
+      url,
+      label: `Keyline White List source ${index + 1}`,
+      scope: "whitelist",
+      index,
+    })),
+  ];
 
-  for (const result of regularResults) {
-    if (result.ok) {
-      sources.push(result.source);
-      console.log(`${result.source.label}: OK`);
-    } else {
-      failures.push(result.failure);
-      console.error(
-        `${result.failure.label}: FAILED — ${result.failure.message}`
+  // Fetch sequentially. Parallel subscription requests from one client/IP
+  // can look like automated scraping and provoke source-level errors.
+  for (let index = 0; index < fetchQueue.length; index += 1) {
+    const request = fetchQueue[index];
+    const urlFingerprint = fingerprintUrl(request.url);
+    const startedAt = Date.now();
+
+    try {
+      const source = await fetchOneConfiguredSource(
+        request.url,
+        request.label,
+        clientIdentity
       );
+
+      source.forceWhiteList = request.scope === "whitelist";
+      sources.push(source);
+      sourceFetches.push({
+        label: request.label,
+        scope: request.scope,
+        status: "ok",
+        urlFingerprint,
+        durationMs: Date.now() - startedAt,
+        payloadKind: source.payloadKind,
+        rawCount: Array.isArray(source.data)
+          ? source.data.length
+          : (source.data && typeof source.data === "object" ? 1 : 0),
+      });
+
+      console.log(`${request.label}: OK`);
+    } catch (error) {
+      failures.push({
+        label: request.label,
+        scope: request.scope,
+        urlFingerprint,
+        message: error.message,
+      });
+
+      sourceFetches.push({
+        label: request.label,
+        scope: request.scope,
+        status: "failed",
+        urlFingerprint,
+        durationMs: Date.now() - startedAt,
+        error: error.message,
+      });
+
+      console.error(
+        `${request.label}: FAILED — ${error.message}`
+      );
+    }
+
+    if (index < fetchQueue.length - 1) {
+      await sleep(750);
     }
   }
 
-  const whiteListResults = await Promise.all(
-    dedicatedWhiteListUrls.map((url, index) =>
-      fetchOneConfiguredSource(
-        url,
-        `Keyline White List source ${index + 1}`,
-        clientIdentity,
-        "whitelist",
-        index
-      )
-    )
-  );
-
-  for (const result of whiteListResults) {
-    if (result.ok) {
-      sources.push(result.source);
-      console.log(`${result.source.label}: OK`);
-    } else {
-      failures.push(result.failure);
-      console.error(
-        `${result.failure.label}: FAILED — ${result.failure.message}`
-      );
-    }
-  }
-
-  if (sources.length === 0 && failures.length === 0) {
+  if (sources.length === 0) {
     throw new Error(
-      "No Keyline URLs configured. Set KEYLINE_URL_1 ... KEYLINE_URL_15 as needed."
-    );
-  }
-
-  if (failures.length > 0) {
-    const details = failures
-      .map(item => `- ${item.label}: ${item.message}`)
-      .join("\n");
-
-    throw new Error(
-      `Keyline refresh aborted: ${failures.length} source(s) failed.\n${details}\n` +
-      "Existing Keyline pool is preserved."
+      "All configured Keyline sources failed. Existing Keyline pool is preserved."
     );
   }
 
   return {
     clientIdentity,
     sources,
+    failures,
+    sourceFetches,
   };
 }
 
@@ -1299,9 +1272,18 @@ function buildSupportedLink(entry) {
   return null;
 }
 
+function recordDropSample(stats, sample) {
+  if (!stats || !Array.isArray(stats.droppedSamples)) return;
+  if (stats.droppedSamples.length >= 10) return;
+  stats.droppedSamples.push(sample);
+}
+
 function normalizeProfileLink(link, index, source, forceWhiteList = false, stats = null) {
   if (typeof link !== "string" || !link.trim()) {
-    if (stats) stats.droppedInvalid += 1;
+    if (stats) {
+      stats.droppedInvalid += 1;
+      recordDropSample(stats, { index, reason: "invalid-link" });
+    }
     return null;
   }
 
@@ -1309,7 +1291,10 @@ function normalizeProfileLink(link, index, source, forceWhiteList = false, stats
   const protocol = value.split("://")[0]?.toLowerCase();
 
   if (!["vless", "trojan", "hysteria2"].includes(protocol)) {
-    if (stats) stats.droppedUnsupported += 1;
+    if (stats) {
+      stats.droppedUnsupported += 1;
+      recordDropSample(stats, { index, reason: "unsupported-protocol" });
+    }
     return null;
   }
 
@@ -1352,7 +1337,10 @@ function normalizeProfileLink(link, index, source, forceWhiteList = false, stats
   const normalized =
     normalizeCountryRemark(remarks, {});
   if (!normalized) {
-    if (stats) stats.droppedUnknownCountry += 1;
+    if (stats) {
+      stats.droppedUnknownCountry += 1;
+      recordDropSample(stats, { index, reason: "unknown-country", remarks });
+    }
     return null;
   }
   if (stats) stats.parsed += 1;
@@ -1375,7 +1363,9 @@ function normalizeSourceData(source) {
     droppedInvalid: 0,
     droppedUnsupported: 0,
     droppedUnknownCountry: 0,
+    droppedAutoSelection: 0,
     autoSelection: 0,
+    droppedSamples: [],
   };
 
   if (source.payloadKind === "links") {
@@ -1455,8 +1445,13 @@ function normalizeEntry(entry, index, source, stats = null) {
 
   if (!proxy || !remarks || !link) {
     if (stats) {
-      if (!proxy || !link) stats.droppedInvalid += 1;
-      else stats.droppedUnknownCountry += 1;
+      if (!proxy || !link) {
+        stats.droppedInvalid += 1;
+        recordDropSample(stats, { index, reason: "invalid-entry", remarks });
+      } else {
+        stats.droppedUnknownCountry += 1;
+        recordDropSample(stats, { index, reason: "unknown-country", remarks });
+      }
     }
     return null;
   }
@@ -1469,7 +1464,10 @@ function normalizeEntry(entry, index, source, stats = null) {
     );
 
   if (!normalized) {
-    if (stats) stats.droppedUnknownCountry += 1;
+    if (stats) {
+      stats.droppedUnknownCountry += 1;
+      recordDropSample(stats, { index, reason: "unknown-country", remarks });
+    }
     return null;
   }
   if (stats) stats.parsed += 1;
@@ -1869,6 +1867,8 @@ async function main() {
   const {
     clientIdentity,
     sources,
+    failures,
+    sourceFetches,
   } = await fetchKeylineSources();
   const allEntries = [];
   let totalRawEntries = 0;
@@ -1966,9 +1966,60 @@ async function main() {
     throw error;
   }
 
+  const previousState = await readState();
+  const previousSourceFingerprints = previousState.sourceFingerprints || {};
+  const currentSourceFingerprints = Object.fromEntries(
+    sourceFetches.map(item => [item.label, item.urlFingerprint])
+  );
+
+  const sourceChanges = sourceFetches
+    .filter(item => previousSourceFingerprints[item.label] && previousSourceFingerprints[item.label] !== item.urlFingerprint)
+    .map(item => ({
+      label: item.label,
+      previous: previousSourceFingerprints[item.label],
+      current: item.urlFingerprint,
+    }));
+
+  const sourceCandidateCounts = Object.fromEntries(
+    sources.map(source => [source.label, { raw: 0, parsed: 0, unique: 0 }])
+  );
+
+  for (const sourceReport of sourceReports) {
+    if (!sourceCandidateCounts[sourceReport.source]) {
+      sourceCandidateCounts[sourceReport.source] = { raw: 0, parsed: 0, unique: 0 };
+    }
+    sourceCandidateCounts[sourceReport.source].raw += Number(sourceReport.raw) || 0;
+    sourceCandidateCounts[sourceReport.source].parsed += Number(sourceReport.parsed) || 0;
+  }
+
+  for (const item of deduped) {
+    if (!sourceCandidateCounts[item.source]) {
+      sourceCandidateCounts[item.source] = { raw: 0, parsed: 0, unique: 0 };
+    }
+    sourceCandidateCounts[item.source].unique += 1;
+  }
+
+  const candidateMap = Object.fromEntries(
+    [...regular, ...automaticWhiteList].map(item => [
+      fingerprintUrl(item.link),
+      {
+        source: item.source || (item.retained ? "retained" : "unknown"),
+        country: item.country || "Unknown",
+        whiteList: Boolean(item.whiteList),
+        retained: Boolean(item.retained),
+      }
+    ])
+  );
+
   const report = {
     generatedAt: new Date().toISOString(),
     sourceCount: sources.length,
+    configuredSourceCount: sourceFetches.length,
+    sourceFetches,
+    sourceFailures: failures,
+    sourceChanges,
+    sourceCandidateCounts,
+    candidateMap,
     totalRawEntries,
     sourceReports,
     freshBeforeDedupe: allEntries.length,
@@ -1979,6 +2030,7 @@ async function main() {
     regularBeforeHealthCheck: regular.length,
     autoWhiteListBeforeHealthCheck: automaticWhiteList.length,
     totalBeforeHealthCheck: regular.length + automaticWhiteList.length,
+    retainedPolicy: "previous managed links are retained until a health-check explicitly removes them",
   };
   await writeAtomic(
     path.join(ROOT, "keyline-report.json"),
@@ -1995,6 +2047,7 @@ async function main() {
       autoWhiteListCount: automaticWhiteList.length,
       happHwid: clientIdentity.hwid,
       happDeviceModel: clientIdentity.deviceModel,
+      sourceFingerprints: currentSourceFingerprints,
     }, null, 2)}\n`
   );
 

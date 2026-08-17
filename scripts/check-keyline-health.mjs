@@ -88,6 +88,10 @@ function safeDecode(value) {
     }
 }
 
+function fingerprintLink(link) {
+    return crypto.createHash("sha256").update(String(link)).digest("hex").slice(0, 12);
+}
+
 function getProtocol(link) {
     return String(link)
         .split("://")[0]
@@ -766,6 +770,15 @@ async function main() {
         );
     }
 
+    let diagnosticReport = {};
+    try {
+        diagnosticReport = JSON.parse(
+            await fs.readFile(path.join(ROOT, "keyline-report.json"), "utf8")
+        );
+    } catch {}
+
+    const candidateMap = diagnosticReport.candidateMap || {};
+
     const nextIndex =
         [];
 
@@ -804,6 +817,8 @@ async function main() {
     let cursor =
         0;
 
+    const checkedLinkMeta = new Map();
+
     async function checkItem(
         item
     ) {
@@ -833,6 +848,12 @@ async function main() {
                     "missing link file"
             };
         }
+
+        const linkFingerprint = fingerprintLink(link);
+        checkedLinkMeta.set(item.id, {
+            linkFingerprint,
+            sourceMeta: candidateMap[linkFingerprint] || null,
+        });
 
         let url;
 
@@ -961,10 +982,13 @@ async function main() {
                     item
                 );
 
+            const meta = checkedLinkMeta.get(item.id) || {};
             healthResults.push({
                 id: item.id,
                 remarks: item.remarks || "",
-                country: String(item.remarks || "").replace(/^\S+\s*/, "").replace(/\s+\d+$/, ""),
+                country: meta.sourceMeta?.country || String(item.remarks || "").replace(/^\S+\s*/, "").replace(/\s+\d+$/, ""),
+                source: meta.sourceMeta?.source || "retained/manual",
+                linkFingerprint: meta.linkFingerprint || "",
                 ok: result.ok,
                 protocol: result.protocol || "",
                 stages: result.stages || "",
@@ -1111,31 +1135,65 @@ async function main() {
         results: healthResults,
     };
     report.finalManagedServers = normalizedIndex.filter(item => isManagedKeylineId(item?.id)).length;
-    await fs.writeFile(reportFile, `${JSON.stringify(report, null, 2)}\n`, "utf8");
 
     if (process.env.GITHUB_STEP_SUMMARY) {
         const byReason = new Map();
+        const bySource = new Map();
+        const byCountry = new Map();
         for (const item of healthResults) {
-            if (item.ok) continue;
-            const key = item.reason || "unknown";
-            byReason.set(key, (byReason.get(key) || 0) + 1);
+            if (!item.ok) {
+                const key = item.reason || "unknown";
+                byReason.set(key, (byReason.get(key) || 0) + 1);
+            }
+            const sourceKey = item.source || "retained/manual";
+            const sourceRow = bySource.get(sourceKey) || { checked: 0, passed: 0, failed: 0 };
+            sourceRow.checked += 1;
+            sourceRow[item.ok ? "passed" : "failed"] += 1;
+            bySource.set(sourceKey, sourceRow);
+            const countryKey = item.country || "Unknown";
+            const countryRow = byCountry.get(countryKey) || { checked: 0, passed: 0, failed: 0 };
+            countryRow.checked += 1;
+            countryRow[item.ok ? "passed" : "failed"] += 1;
+            byCountry.set(countryKey, countryRow);
         }
+        report.healthCheckBySource = Object.fromEntries(
+            [...bySource.entries()].map(([key, value]) => [key, value])
+        );
+        report.healthCheckByCountry = Object.fromEntries(
+            [...byCountry.entries()].map(([key, value]) => [key, value])
+        );
         const lines = [
             "## Keyline refresh report",
-            `- Sources: ${report.sourceCount ?? "?"}`,
+            `- Sources: ${report.sourceCount ?? "?"} / configured ${report.configuredSourceCount ?? "?"}`,
             `- Raw entries: ${report.totalRawEntries ?? "?"}`,
             `- Parsed before dedupe: ${report.freshBeforeDedupe ?? "?"}`,
+            `- After dedupe: ${report.afterDedupe ?? "?"}`,
+            `- Fresh regular / whitelist: ${report.freshRegular ?? "?"} / ${report.freshWhiteList ?? "?"}`,
             `- Retained from previous pool: ${report.retainedFromPreviousPool ?? "?"}`,
             `- Before health-check: ${report.totalBeforeHealthCheck ?? "?"}`,
             `- Health-check: **${passed} passed / ${failed} failed**`,
             `- Final managed servers: **${report.finalManagedServers}**`,
         ];
+        if (Array.isArray(report.sourceFailures) && report.sourceFailures.length) {
+            lines.push("", "### Source fetch failures");
+            for (const failure of report.sourceFailures) {
+                lines.push(`- **${failure.label}** — ${failure.message}`);
+            }
+        }
+        if (Array.isArray(report.sourceChanges) && report.sourceChanges.length) {
+            lines.push("", "### Source URL changes (fingerprints)");
+            for (const change of report.sourceChanges) {
+                lines.push(`- **${change.label}** — ${change.previous} → ${change.current}`);
+            }
+        }
         if (byReason.size) {
             lines.push("", "### Health failures");
             for (const [reason, count] of byReason) lines.push(`- ${count} × ${reason}`);
         }
         await fs.appendFile(process.env.GITHUB_STEP_SUMMARY, `${lines.join("\n")}\n`);
     }
+
+    await fs.writeFile(reportFile, `${JSON.stringify(report, null, 2)}\n`, "utf8");
 
     console.log(
         `Keyline health check complete: ${passed} passed, ${failed} removed.`
