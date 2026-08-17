@@ -619,6 +619,63 @@ function encodeQuery(params) {
     .join("&");
 }
 
+function encodeLinkUsername(value) {
+  return encodeURIComponent(String(value ?? ""));
+}
+
+function buildRealityQuery(reality, extra = {}) {
+  return encodeQuery({
+    security: extra.security || "reality",
+    sni: reality?.serverName || "",
+    pbk: reality?.publicKey || "",
+    sid: reality?.shortId || "",
+    fp: reality?.fingerprint || "",
+    alpn: Array.isArray(extra.alpn) ? extra.alpn.join(",") : (extra.alpn || ""),
+  });
+}
+
+function buildTransportQuery(stream) {
+  const network = stream?.network || "tcp";
+
+  const base = {
+    type: network,
+  };
+
+  if (network === "grpc") {
+    base.serviceName = stream.grpcSettings?.serviceName || "";
+    base.mode = stream.grpcSettings?.multiMode ? "multi" : "";
+  }
+
+  if (network === "ws") {
+    base.host =
+      stream.wsSettings?.headers?.Host ||
+      stream.wsSettings?.host ||
+      "";
+
+    base.path = stream.wsSettings?.path || "";
+  }
+
+  if (network === "httpupgrade") {
+    base.host =
+      stream.httpupgradeSettings?.host ||
+      stream.httpUpgradeSettings?.host ||
+      "";
+
+    base.path =
+      stream.httpupgradeSettings?.path ||
+      stream.httpUpgradeSettings?.path ||
+      "";
+  }
+
+  if (network === "xhttp") {
+    base.host = stream.xhttpSettings?.host || "";
+    base.path = stream.xhttpSettings?.path || "";
+    base.mode = stream.xhttpSettings?.mode || "";
+  }
+
+  return base;
+}
+
 function buildVlessLink(entry) {
   const outbound = entry?.outbounds?.find(
     item => item?.tag === "proxy"
@@ -633,26 +690,118 @@ function buildVlessLink(entry) {
   if (!server?.address || !server?.port || !user?.id) return null;
   if (!stream.network || !stream.security) return null;
 
-  // enter-main currently preserves TCP/GRPC VLESS fields correctly.
-  // Other transports are skipped rather than emitted as broken links.
-  if (!["tcp", "grpc"].includes(stream.network)) return null;
+  const supportedNetworks = [
+    "tcp",
+    "grpc",
+    "ws",
+    "httpupgrade",
+    "xhttp",
+  ];
+
+  if (!supportedNetworks.includes(stream.network)) return null;
 
   const reality = stream.realitySettings || {};
   const query = encodeQuery({
     encryption: user.encryption || "none",
     flow: user.flow || "",
-    type: stream.network,
-    security: stream.security,
-    sni: reality.serverName || "",
-    pbk: reality.publicKey || "",
-    sid: reality.shortId || "",
-    fp: reality.fingerprint || "",
-    serviceName: stream.grpcSettings?.serviceName || "",
-    mode: stream.grpcSettings?.multiMode ? "multi" : "",
+    ...buildTransportQuery(stream),
+    ...buildRealityQuery(reality, {
+      security: stream.security,
+    }),
   });
 
   return (
-    `vless://${encodeURIComponent(user.id)}@${server.address}:${server.port}?${query}`
+    `vless://${encodeLinkUsername(user.id)}@${server.address}:${server.port}?${query}`
+  );
+}
+
+function buildTrojanLink(entry) {
+  const outbound = entry?.outbounds?.find(
+    item => item?.tag === "proxy"
+  );
+
+  if (!outbound || outbound.protocol !== "trojan") return null;
+
+  const server =
+    outbound.settings?.servers?.[0] ||
+    outbound.settings?.vnext?.[0];
+
+  const stream = outbound.streamSettings || {};
+
+  if (!server?.address || !server?.port || !server?.password) {
+    return null;
+  }
+
+  const supportedNetworks = [
+    "tcp",
+    "grpc",
+    "ws",
+    "httpupgrade",
+  ];
+
+  if (!supportedNetworks.includes(stream.network)) return null;
+
+  const tls = stream.tlsSettings || {};
+  const query = encodeQuery({
+    ...buildTransportQuery({
+      ...stream,
+      wsSettings: stream.wsSettings,
+      grpcSettings: stream.grpcSettings,
+      httpupgradeSettings: stream.httpupgradeSettings,
+      httpUpgradeSettings: stream.httpUpgradeSettings,
+    }),
+    security: "tls",
+    sni: tls.serverName || "",
+    fp: tls.fingerprint || "",
+    alpn: Array.isArray(tls.alpn) ? tls.alpn.join(",") : "",
+  });
+
+  return (
+    `trojan://${encodeLinkUsername(server.password)}@${server.address}:${server.port}?${query}`
+  );
+}
+
+function buildHysteria2Link(entry) {
+  const outbound = entry?.outbounds?.find(
+    item => item?.tag === "proxy"
+  );
+
+  if (!outbound) return null;
+
+  const protocol = String(outbound.protocol || "").toLowerCase();
+
+  if (protocol !== "hysteria" && protocol !== "hysteria2") {
+    return null;
+  }
+
+  const settings = outbound.settings || {};
+  const stream = outbound.streamSettings || {};
+  const tls = stream.tlsSettings || {};
+  const hysteria = stream.hysteriaSettings || {};
+
+  const server =
+    settings.address
+      ? {
+          address: settings.address,
+          port: settings.port,
+        }
+      : settings.servers?.[0];
+
+  if (!server?.address || !server?.port) return null;
+
+  const auth =
+    hysteria.auth ||
+    settings.auth ||
+    server.password ||
+    "";
+
+  const query = encodeQuery({
+    sni: tls.serverName || "",
+    alpn: Array.isArray(tls.alpn) ? tls.alpn.join(",") : "",
+  });
+
+  return (
+    `hysteria2://${encodeLinkUsername(auth)}@${server.address}:${server.port}?${query}`
   );
 }
 
@@ -662,7 +811,21 @@ function buildSupportedLink(entry) {
   );
 
   if (!outbound) return null;
-  if (outbound.protocol === "vless") return buildVlessLink(entry);
+
+  if (outbound.protocol === "vless") {
+    return buildVlessLink(entry);
+  }
+
+  if (outbound.protocol === "trojan") {
+    return buildTrojanLink(entry);
+  }
+
+  if (
+    outbound.protocol === "hysteria" ||
+    outbound.protocol === "hysteria2"
+  ) {
+    return buildHysteria2Link(entry);
+  }
 
   return null;
 }
