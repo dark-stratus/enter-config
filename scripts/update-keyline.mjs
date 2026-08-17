@@ -735,14 +735,23 @@ function buildVlessLink(entry) {
   if (!supportedNetworks.includes(stream.network)) return null;
 
   const reality = stream.realitySettings || {};
-  const query = encodeQuery({
+
+  const transportQuery = encodeQuery({
     encryption: user.encryption || "none",
     flow: user.flow || "",
     ...buildTransportQuery(stream),
-    ...buildRealityQuery(reality, {
-      security: stream.security,
-    }),
   });
+
+  const realityQuery = buildRealityQuery(reality, {
+    security: stream.security,
+  });
+
+  const query = [
+    transportQuery,
+    realityQuery,
+  ]
+    .filter(Boolean)
+    .join("&");
 
   return (
     `vless://${encodeLinkUsername(user.id)}@${server.address}:${server.port}?${query}`
@@ -1047,7 +1056,7 @@ function canonicalAutoWhiteList(entries) {
 
   return [{
     ...entries[0],
-    remarks: "🏳️ ⚡ Auto White List 2",
+    remarks: "⚡ Auto White List 2",
     whiteListIndex: 2,
   }];
 }
@@ -1099,7 +1108,7 @@ function normalizeWhiteListEntries(entries, startNumber = 2) {
 
   return sorted.map((item, index) => ({
     ...item,
-    remarks: `🏳️ ${item.flag} White List ${startNumber + index}`.trim(),
+    remarks: `${item.flag} White List ${startNumber + index}`.trim(),
     whiteListIndex: startNumber + index,
   }));
 }
@@ -1210,7 +1219,7 @@ async function buildStagedLinks(
         ...(id.toLowerCase() === "whitelist-1"
           ? {
               remarks:
-                "🏳️ 🇷🇺 White List 1",
+                "🇷🇺 White List 1",
             }
           : {}),
       });

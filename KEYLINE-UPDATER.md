@@ -78,7 +78,7 @@ Their visible names use the same country normalization as the regular pool. For 
 
 `🇷🇺 Белый интернет` → `🇷🇺 Russia 1`
 
-`🇷🇺 Москва whitelist` → `🇷🇺 Russia 2`
+`🇷🇺 Москва whitelist` → `🇷🇺 White List 2`
 
 The White List keyword itself is deliberately removed from the visible name.
 
