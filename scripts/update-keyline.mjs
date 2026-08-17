@@ -1336,7 +1336,7 @@ function canonicalAutoWhiteList(entries) {
   return [{
     ...entries[0],
     remarks:
-      `${flag ? `${flag} ` : ""}🏳️ White List 2`.trim(),
+      `${flag} 🏳️ White List 2`.trim(),
     whiteListIndex: 2,
   }];
 }
@@ -1389,7 +1389,7 @@ function normalizeWhiteListEntries(entries, startNumber = 2) {
   return sorted.map((item, index) => ({
     ...item,
     remarks:
-      `${item.flag ? `${item.flag} ` : ""}🏳️ White List ${startNumber + index}`.trim(),
+      `${item.flag || "🇷🇺"} 🏳️ White List ${startNumber + index}`.trim(),
     whiteListIndex: startNumber + index,
   }));
 }
