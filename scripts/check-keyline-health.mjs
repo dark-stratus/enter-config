@@ -322,139 +322,62 @@ function runCurlOnce(
     });
 }
 
-async function runCurl(
-    socksPort
+async function probeTargetOnceWithRetries(
+    socksPort,
+    targetUrl
 ) {
     const errors = [];
 
-    const probeTarget =
-        async targetUrl => {
-            for (
-                let attempt = 1;
-                attempt <= REQUEST_RETRIES;
-                attempt += 1
-            ) {
-                const result =
-                    await runCurlOnce(
-                        socksPort,
-                        targetUrl
-                    );
+    for (
+        let attempt = 1;
+        attempt <= REQUEST_RETRIES;
+        attempt += 1
+    ) {
+        const result =
+            await runCurlOnce(
+                socksPort,
+                targetUrl
+            );
 
-                if (result.ok) {
-                    return {
-                        ok:
-                            true,
-
-                        targetUrl,
-
-                        error:
-                            ""
-                    };
-                }
-
-                errors.push(
-                    `${targetUrl} attempt ${attempt}: ${result.error || "curl failed"}`
-                );
-
-                if (
-                    attempt <
-                    REQUEST_RETRIES
-                ) {
-                    await sleep(
-                        150
-                    );
-                }
-            }
-
+        if (result.ok) {
             return {
-                ok:
-                    false,
-
+                ok: true,
                 targetUrl,
-
-                error:
-                    ""
+                error: ""
             };
-        };
+        }
 
+        errors.push(
+            `${targetUrl} attempt ${attempt}: ${result.error || "curl failed"}`
+        );
+
+        if (attempt < REQUEST_RETRIES) {
+            await sleep(150);
+        }
+    }
+
+    return {
+        ok: false,
+        targetUrl,
+        error: errors.join("; ").slice(0, 1000)
+    };
+}
+
+async function runCurl(
+    socksPort
+) {
     const probes =
         HEALTH_TARGET_URLS.map(
             targetUrl =>
-                probeTarget(
+                probeTargetOnceWithRetries(
+                    socksPort,
                     targetUrl
                 )
         );
 
-    const results =
-        await Promise.all(
-            probes
-        );
-
-    const success =
-        results.find(
-            result =>
-                result.ok
-        );
-
-    if (success) {
-        return success;
-    }
-
-    return {
-        ok:
-            false,
-
-        error:
-            errors
-                .slice(-6)
-                .join("; ")
-                .slice(
-                    0,
-                    1000
-                )
-    };
-}
-
-async function startXray(link) {
-    const socksPort = await getFreePort();
-    const tempDir = await fs.mkdtemp(
-        path.join(os.tmpdir(), "keyline-health-")
+    return await Promise.all(
+        probes
     );
-    const configFile = path.join(tempDir, "config.json");
-    const config = buildXrayConfig(link, socksPort);
-
-    await fs.writeFile(configFile, JSON.stringify(config), "utf8");
-
-    const child = spawn(
-        XRAY_BIN,
-        ["run", "-c", configFile],
-        { stdio: ["ignore", "ignore", "pipe"] }
-    );
-
-    let stderr = "";
-    child.stderr.on("data", chunk => { stderr += String(chunk); });
-
-    const stop = async () => {
-        if (!child.killed) child.kill("SIGTERM");
-        await sleep(100);
-        if (!child.killed) child.kill("SIGKILL");
-        await fs.rm(tempDir, { recursive: true, force: true });
-    };
-
-    const ready = await waitForPort(socksPort);
-    if (!ready) {
-        await stop();
-        return {
-            ok: false,
-            error: `xray socks inbound did not start${stderr ? `: ${stderr.trim().slice(0, 400)}` : ""}`,
-        };
-    }
-
-    return {
-        ok: true,
-        socksPort,
-        stop,
-    };
 }
 
 function isManagedKeylineId(
