@@ -928,6 +928,21 @@ async function runCurl(
     };
 }
 
+async function probeTargetOnceWithRetries(
+    socksPort,
+    targetUrl
+) {
+    const errors = [];
+
+    for (let attempt = 1; attempt <= REQUEST_RETRIES; attempt += 1) {
+        const result = await runCurlOnce(socksPort, targetUrl);
+        if (result.ok) return { ok: true, error: "" };
+        errors.push(`${targetUrl} attempt ${attempt}: ${result.error || "curl failed"}`);
+        if (attempt < REQUEST_RETRIES) await sleep(150);
+    }
+    return { ok: false, error: errors.join("; ").slice(0, 600) };
+}
+
 async function xrayProbe(
     link
 ) {
@@ -995,17 +1010,12 @@ async function xrayProbe(
             };
         }
 
-        const httpResult =
-            await runCurl(
-                socksPort
-            );
-
         return {
             startupOk: true,
-            httpOk: Boolean(httpResult.ok),
+            httpOk: false,
             startupError: "",
-            httpError:
-                httpResult.error || ""
+            httpError: "",
+            socksPort
         };
     } finally {
         child.kill(
@@ -1364,39 +1374,41 @@ async function main() {
                     link
                 );
 
-            const stages = [
-                Boolean(stage1),
-                Boolean(stage2.startupOk),
-                Boolean(stage2.httpOk),
-            ];
+            // Only remote checks count as health stages. Xray startup is diagnostic only.
+            const targets = HEALTH_TARGET_URLS.slice(0, 2);
+            const remote = stage2.startupOk
+                ? await Promise.all(
+                    targets.map(target =>
+                        probeTargetOnceWithRetries(
+                            stage2.socksPort,
+                            target
+                        )
+                    )
+                )
+                : [];
 
-            const passedStages =
-                stages.filter(Boolean).length;
+            const stage1Passed = Boolean(stage1);
+            const stage2Passed = Boolean(remote[0]?.ok);
+            const stage3Passed = Boolean(remote[1]?.ok);
+            const passedStages = [stage1Passed, stage2Passed, stage3Passed]
+                .filter(Boolean).length;
 
             if (passedStages < 2) {
                 const failedStages = [];
-
-                if (!stage1) {
-                    failedStages.push("tcp");
-                }
-
+                if (!stage1Passed) failedStages.push("tcp");
                 if (!stage2.startupOk) {
-                    failedStages.push(
-                        `xray-startup: ${stage2.startupError || "failed"}`
-                    );
+                    failedStages.push(`xray-startup: ${stage2.startupError || "failed"}`);
                 }
-
-                if (!stage2.httpOk) {
-                    failedStages.push(
-                        `https-probe: ${stage2.httpError || "failed"}`
-                    );
+                if (!stage2Passed) {
+                    failedStages.push(`https-probe-1: ${remote[0]?.error || "failed"}`);
                 }
-
+                if (!stage3Passed) {
+                    failedStages.push(`https-probe-2: ${remote[1]?.error || "failed"}`);
+                }
                 return {
                     item,
                     ok: false,
-                    reason:
-                        `${passedStages}/3 stages passed; failed: ${failedStages.join(" | ")}`
+                    reason: `${passedStages}/3 real stages passed; ${failedStages.join(" | ")}`
                 };
             }
 
