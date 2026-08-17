@@ -46,6 +46,15 @@ const REQUEST_TIMEOUT_MS =
 const REQUEST_RETRIES =
     2;
 
+const HEALTH_CONCURRENCY =
+    Math.max(
+        1,
+        Math.min(
+            12,
+            Number(process.env.HEALTHCHECK_CONCURRENCY) || 8
+        )
+    );
+
 const HEALTH_TARGET_URLS = String(
     process.env.HEALTHCHECK_TARGET_URLS ||
     [
@@ -831,44 +840,77 @@ async function runCurl(
 ) {
     const errors = [];
 
-    // One successful target is enough. This is deliberate:
-    // a working VPN must not be rejected because one public
-    // connectivity endpoint is blocked or temporarily unavailable.
-    for (
-        const targetUrl of
-        HEALTH_TARGET_URLS
-    ) {
-        for (
-            let attempt = 1;
-            attempt <= REQUEST_RETRIES;
-            attempt += 1
-        ) {
-            const result =
-                await runCurlOnce(
-                    socksPort,
-                    targetUrl
+    const probeTarget =
+        async targetUrl => {
+            for (
+                let attempt = 1;
+                attempt <= REQUEST_RETRIES;
+                attempt += 1
+            ) {
+                const result =
+                    await runCurlOnce(
+                        socksPort,
+                        targetUrl
+                    );
+
+                if (result.ok) {
+                    return {
+                        ok:
+                            true,
+
+                        targetUrl,
+
+                        error:
+                            ""
+                    };
+                }
+
+                errors.push(
+                    `${targetUrl} attempt ${attempt}: ${result.error || "curl failed"}`
                 );
 
-            if (result.ok) {
-                return {
-                    ok:
-                        true,
-
-                    targetUrl,
-
-                    error:
-                        ""
-                };
+                if (
+                    attempt <
+                    REQUEST_RETRIES
+                ) {
+                    await sleep(
+                        150
+                    );
+                }
             }
 
-            errors.push(
-                `${targetUrl} attempt ${attempt}: ${result.error || "curl failed"}`
-            );
+            return {
+                ok:
+                    false,
 
-            await sleep(
-                150
-            );
-        }
+                targetUrl,
+
+                error:
+                    ""
+            };
+        };
+
+    const probes =
+        HEALTH_TARGET_URLS.map(
+            targetUrl =>
+                probeTarget(
+                    targetUrl
+                )
+        );
+
+    const results =
+        await Promise.all(
+            probes
+        );
+
+    const success =
+        results.find(
+            result =>
+                result.ok
+        );
+
+    if (success) {
+        return success;
     }
 
     return {
@@ -877,11 +919,11 @@ async function runCurl(
 
         error:
             errors
-                .slice(-3)
+                .slice(-6)
                 .join("; ")
                 .slice(
                     0,
-                    700
+                    1000
                 )
     };
 }
@@ -1150,25 +1192,36 @@ async function main() {
     let failed =
         0;
 
-    let checked =
-        0;
+    const managedItems =
+        [];
 
     for (
         const item of index
     ) {
         if (
-            !isManagedKeylineId(
+            isManagedKeylineId(
                 item?.id
             )
         ) {
+            managedItems.push(
+                item
+            );
+        } else {
             nextIndex.push(
                 item
             );
-            continue;
         }
+    }
 
-        checked += 1;
+    const checked =
+        managedItems.length;
 
+    let cursor =
+        0;
+
+    async function checkItem(
+        item
+    ) {
         const linkFile =
             path.join(
                 LINKS_DIR,
@@ -1186,9 +1239,14 @@ async function main() {
                     )
                 ).trim();
         } catch {
-            failed +=
-                1;
-            continue;
+            return {
+                item,
+                ok:
+                    false,
+
+                reason:
+                    "missing link file"
+            };
         }
 
         let url;
@@ -1199,22 +1257,14 @@ async function main() {
                     link
                 );
         } catch {
-            console.log(
-                `HEALTH FAIL ${item.id}: invalid URL`
-            );
+            return {
+                item,
+                ok:
+                    false,
 
-            failed +=
-                1;
-
-            await fs.rm(
-                linkFile,
-                {
-                    force:
-                        true
-                }
-            );
-
-            continue;
+                reason:
+                    "invalid URL"
+            };
         }
 
         const protocol =
@@ -1229,74 +1279,123 @@ async function main() {
             );
 
         if (!stage1) {
-            console.log(
-                `HEALTH FAIL ${item.id}: TCP unreachable`
-            );
-
-            failed +=
-                1;
-
-            await fs.rm(
-                linkFile,
-                {
-                    force:
-                        true
-                }
-            );
-
-            continue;
-        }
-
-        let stage2;
-
-        try {
-            stage2 =
-                await xrayProbe(
-                    link
-                );
-        } catch (
-            error
-        ) {
-            stage2 = {
+            return {
+                item,
                 ok:
                     false,
 
-                error:
+                reason:
+                    "TCP unreachable"
+            };
+        }
+
+        try {
+            const stage2 =
+                await xrayProbe(
+                    link
+                );
+
+            if (!stage2.ok) {
+                return {
+                    item,
+                    ok:
+                        false,
+
+                    reason:
+                        `protocol probe failed (${stage2.error || "unknown"})`
+                };
+            }
+
+            return {
+                item,
+                ok:
+                    true,
+
+                protocol
+            };
+        } catch (
+            error
+        ) {
+            return {
+                item,
+                ok:
+                    false,
+
+                reason:
                     error?.message ||
                     "xray health probe error"
             };
         }
+    }
 
-        if (!stage2.ok) {
+    async function worker() {
+        while (true) {
+            const item =
+                managedItems[
+                    cursor++
+                ];
+
+            if (!item) {
+                return;
+            }
+
+            const result =
+                await checkItem(
+                    item
+                );
+
+            if (result.ok) {
+                console.log(
+                    `HEALTH PASS ${item.id}: ${result.protocol}`
+                );
+
+                passed +=
+                    1;
+
+                nextIndex.push(
+                    item
+                );
+
+                continue;
+            }
+
             console.log(
-                `HEALTH FAIL ${item.id}: protocol probe failed (${stage2.error || "unknown"})`
+                `HEALTH FAIL ${item.id}: ${result.reason}`
             );
 
             failed +=
                 1;
 
             await fs.rm(
-                linkFile,
+                path.join(
+                    LINKS_DIR,
+                    `${item.id}.link`
+                ),
                 {
                     force:
                         true
                 }
             );
-
-            continue;
         }
-
-        console.log(
-            `HEALTH PASS ${item.id}: ${protocol}`
-        );
-
-        passed +=
-            1;
-
-        nextIndex.push(
-            item
-        );
     }
+
+    const workerCount =
+        Math.min(
+            HEALTH_CONCURRENCY,
+            managedItems.length ||
+            1
+        );
+
+    await Promise.all(
+        Array.from(
+            {
+                length:
+                    workerCount
+            },
+            () =>
+                worker()
+        )
+    );
 
     if (
         checked > 0 &&
