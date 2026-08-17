@@ -12,9 +12,10 @@ const REGULAR_LIMIT = Number.POSITIVE_INFINITY;
 const AUTO_WHITE_LIST_LIMIT = 20;
 const SUCCESS_INTERVAL_MS = 1 * 60 * 60 * 1000;
 
-const FETCH_TIMEOUT_MS = 30_000;
-const FETCH_RETRIES = 3;
+const FETCH_TIMEOUT_MS = 60_000;
+const FETCH_RETRIES = 4;
 const FETCH_RETRY_DELAY_MS = 2_000;
+const FETCH_CACHE_DIR = path.join(ROOT, ".keyline-cache");
 
 const HAPP_APP_VERSION = "2.16.2";
 const HAPP_BUILD_ID = "2605221224503";
@@ -667,6 +668,108 @@ async function fetchJsonUrl(url, label, clientIdentity) {
   throw lastError || new Error(`${label}: unknown fetch error`);
 }
 
+
+function sourceCacheFile(scope, index, url) {
+  const hash = crypto
+    .createHash("sha256")
+    .update(String(url))
+    .digest("hex")
+    .slice(0, 12);
+
+  return path.join(
+    FETCH_CACHE_DIR,
+    `${scope}-${String(index + 1).padStart(2, "0")}-${hash}.json`
+  );
+}
+
+async function writeSourceCache(scope, index, url, payload) {
+  await fs.mkdir(FETCH_CACHE_DIR, { recursive: true });
+  const file = sourceCacheFile(scope, index, url);
+
+  await writeAtomic(
+    file,
+    `${JSON.stringify({
+      cachedAt: Date.now(),
+      url,
+      payloadKind: payload.kind,
+      data: payload.data,
+    }, null, 2)}\n`
+  );
+}
+
+async function readSourceCache(scope, index, url) {
+  const file = sourceCacheFile(scope, index, url);
+
+  try {
+    const text = await fs.readFile(file, "utf8");
+    const cached = safeJsonParse(text, file);
+
+    if (cached?.url !== url) return null;
+    if (!cached?.payloadKind || cached?.data === undefined) return null;
+
+    return {
+      kind: cached.payloadKind,
+      data: cached.data,
+      cachedAt: Number(cached.cachedAt) || 0,
+    };
+  } catch (error) {
+    if (error.code === "ENOENT") return null;
+    throw error;
+  }
+}
+
+async function fetchOneConfiguredSource(url, label, clientIdentity, cacheScope, index) {
+  try {
+    const payload = await fetchJsonUrl(url, label, clientIdentity);
+    await writeSourceCache(cacheScope, index, url, payload);
+
+    return {
+      ok: true,
+      source: {
+        label,
+        data: payload.data,
+        payloadKind: payload.kind,
+        forceWhiteList: cacheScope === "whitelist",
+      },
+    };
+  } catch (error) {
+    const cached = await readSourceCache(
+      cacheScope,
+      index,
+      url
+    );
+
+    if (!cached) {
+      return {
+        ok: false,
+        failure: {
+          label,
+          message: error.message,
+        },
+      };
+    }
+
+    const ageHours = cached.cachedAt > 0
+      ? ((Date.now() - cached.cachedAt) / 3_600_000).toFixed(1)
+      : "unknown";
+
+    console.warn(
+      `${label}: live fetch failed (${error.message}); ` +
+      `using cached source from ${ageHours}h ago.`
+    );
+
+    return {
+      ok: true,
+      source: {
+        label: `${label} (cached)`,
+        data: cached.data,
+        payloadKind: cached.kind,
+        forceWhiteList: cacheScope === "whitelist",
+      },
+    };
+  }
+}
+
 async function fetchKeylineSources() {
   const clientIdentity = await getHappClientIdentity();
 
@@ -729,59 +832,51 @@ async function fetchKeylineSources() {
   const sources = [];
   const failures = [];
 
-  // Every configured subscription is read once per attempt, using the
-  // same client identity and headers as a normal Windows Happ client.
-  for (let index = 0; index < regularUrls.length; index += 1) {
-    const url = regularUrls[index];
-    const label = `Keyline source ${index + 1}`;
+  const regularResults = await Promise.all(
+    regularUrls.map((url, index) =>
+      fetchOneConfiguredSource(
+        url,
+        `Keyline source ${index + 1}`,
+        clientIdentity,
+        "regular",
+        index
+      )
+    )
+  );
 
-    try {
-      const data = await fetchJsonUrl(url, label, clientIdentity);
-
-      sources.push({
-        label,
-        data: data.data,
-        payloadKind: data.kind,
-        forceWhiteList: false,
-      });
-
-      console.log(`${label}: OK`);
-    } catch (error) {
-      failures.push({
-        label,
-        message: error.message,
-      });
-
-      console.error(`${label}: FAILED — ${error.message}`);
+  for (const result of regularResults) {
+    if (result.ok) {
+      sources.push(result.source);
+      console.log(`${result.source.label}: OK`);
+    } else {
+      failures.push(result.failure);
+      console.error(
+        `${result.failure.label}: FAILED — ${result.failure.message}`
+      );
     }
   }
 
-  for (let index = 0; index < dedicatedWhiteListUrls.length; index += 1) {
-    const url = dedicatedWhiteListUrls[index];
-    const label = `Keyline White List source ${index + 1}`;
-
-    try {
-      const data = await fetchJsonUrl(
+  const whiteListResults = await Promise.all(
+    dedicatedWhiteListUrls.map((url, index) =>
+      fetchOneConfiguredSource(
         url,
-        label,
-        clientIdentity
+        `Keyline White List source ${index + 1}`,
+        clientIdentity,
+        "whitelist",
+        index
+      )
+    )
+  );
+
+  for (const result of whiteListResults) {
+    if (result.ok) {
+      sources.push(result.source);
+      console.log(`${result.source.label}: OK`);
+    } else {
+      failures.push(result.failure);
+      console.error(
+        `${result.failure.label}: FAILED — ${result.failure.message}`
       );
-
-      sources.push({
-        label,
-        data: data.data,
-        payloadKind: data.kind,
-        forceWhiteList: true,
-      });
-
-      console.log(`${label}: OK`);
-    } catch (error) {
-      failures.push({
-        label,
-        message: error.message,
-      });
-
-      console.error(`${label}: FAILED — ${error.message}`);
     }
   }
 

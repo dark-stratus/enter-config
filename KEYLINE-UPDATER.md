@@ -177,3 +177,10 @@ A remainder is kept as ordinary country entries and is renumbered from 1, so the
 
 
 Health-check: сервер проходит проверку, если успешно завершены минимум 2 из 3 этапов: TCP, запуск Xray, HTTPS через SOCKS5. Отсутствие флага в remarks не влияет на health-check.
+
+
+### Source resilience
+Live Keyline sources are fetched in parallel. A temporary source failure uses that source's last successful cached payload from `.keyline-cache` when available.
+
+### File layout
+The updater entry point is `scripts/update-keyline.mjs`. There is no duplicate root-level updater.
