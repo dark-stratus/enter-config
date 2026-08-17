@@ -33,25 +33,68 @@ Every existing entry whose ID is **not** `keyline-regular-*` or `keyline-whiteli
 That includes:
 
 - the five permanent `europe-*.link` servers;
-- your manual `whitelist-*.link` servers;
+- the permanent manual `whitelist-*.link` servers;
 - any other manual `.link` servers already present in `config/links/` and listed in `index.json`.
 
 Manual entries do not count toward the Keyline limits and are never removed by the updater.
 
-### Keyline-managed pools
+The active index is ordered so the permanent Europe entries and other normal manual entries remain before the permanent manual White List entries. The manual `whitelist-1` therefore remains the first White List item in the visible subscription.
 
-- `keyline-regular-01.link` ... `keyline-regular-40.link` — maximum **40 regular servers across all configured Keyline URLs combined**.
-- `keyline-whitelist-01.link` ... `keyline-whitelist-20.link` — maximum **20 automatic White List servers across all configured Keyline URLs combined**.
+### Keyline-managed regular pool
 
-If there are fewer usable servers, fewer entries are created. Nothing is padded or duplicated to reach the limit.
+`keyline-regular-01.link` ... `keyline-regular-40.link` — maximum **40 regular servers across all configured Keyline URLs combined**.
 
-A regular Keyline source entry is treated as Auto White List when its `remarks` identifies it as White List. Entries from `KEYLINE_WHITE_LIST_URLS` are always treated as Auto White List.
+Only locations that do **not** look like White List / bypass locations enter this pool.
 
-Auto White List names are rendered as:
+For every regular server, Keyline's original descriptive text is discarded for the visible name. The name is normalized to:
 
-`🇷🇺 🤖 🏳️ Auto White List 1`
+`🇦🇱 Albania 1`
 
-The flag is taken from the original Keyline remark when available.
+If another Albania server is present, it becomes:
+
+`🇦🇱 Albania 2`
+
+and so on. The numbering is based on the normalized country name, so `🇦🇱 Албания N1 (YouTube без рекламы)` becomes exactly `🇦🇱 Albania 1`, with no extra feature text.
+
+The same rule applies to all countries. Unsupported promotional/noise-only names without a recognizable country flag are ignored.
+
+### Automatic White List pool
+
+`keyline-whitelist-01.link` ... `keyline-whitelist-20.link` — maximum **20 automatic White List entries across all configured Keyline URLs combined**.
+
+A Keyline entry is classified as White List when its source `remarks` contains a relevant marker such as:
+
+- `white list` / `whitelist`;
+- `Белые`, `Белый`, `Белого`, etc.;
+- `Обход...`;
+- `Глушилки...`;
+- `LTE`;
+- other configured White List markers;
+- an explicit White Flag marker.
+
+These entries are placed **after the permanent `whitelist-1`**.
+
+Their visible names use the same country normalization as the regular pool. For example:
+
+`🇷🇺 Белый интернет` → `🇷🇺 Russia 1`
+
+`🇷🇺 Москва whitelist` → `🇷🇺 Russia 2`
+
+The White List keyword itself is deliberately removed from the visible name.
+
+### Auto White List
+
+If a source contains the Keyline `🚀 Авто выбор` profile and that same source also contains at least one White List entry, the updater adds one extra automatic White List entry:
+
+`⚡ Auto White List`
+
+It is placed immediately after the permanent manual White List and before the individual automatic White List locations.
+
+This special Auto White List entry counts toward the same 20-entry automatic White List limit.
+
+### Limits
+
+If fewer than 40 regular or fewer than 20 automatic White List entries are available, the updater simply creates fewer entries. Nothing is padded, duplicated, or fabricated to reach the limit.
 
 ## Refresh and failure behavior
 
