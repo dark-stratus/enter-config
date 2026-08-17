@@ -10,7 +10,7 @@ const STATE_FILE = path.join(ROOT, ".keyline-state.json");
 
 const REGULAR_LIMIT = Number.POSITIVE_INFINITY;
 const AUTO_WHITE_LIST_LIMIT = 20;
-const SUCCESS_INTERVAL_MS = 12 * 60 * 60 * 1000;
+const SUCCESS_INTERVAL_MS = 1 * 60 * 60 * 1000;
 
 const FETCH_TIMEOUT_MS = 30_000;
 const FETCH_RETRIES = 3;
@@ -568,6 +568,31 @@ function parseUrlList(value) {
     .filter(Boolean);
 }
 
+function parseConfiguredUrls(value) {
+  if (!value) return [];
+
+  const raw = String(value).trim();
+
+  if (raw.startsWith("[")) {
+    const parsed = safeJsonParse(raw, "configured Keyline URL value");
+
+    if (!Array.isArray(parsed)) {
+      throw new Error(
+        "Configured Keyline URL value must be an array."
+      );
+    }
+
+    return parsed
+      .map(item => String(item).trim())
+      .filter(Boolean);
+  }
+
+  return raw
+    .split(/[\r\n,;]+/)
+    .map(item => item.trim())
+    .filter(Boolean);
+}
+
 function uniqueUrls(urls) {
   return [...new Set(urls)];
 }
@@ -683,15 +708,11 @@ async function fetchKeylineSources() {
 
   const configuredRegularUrls = [];
 
-  // Regular Keyline sources are configured only through
-  // KEYLINE_URL_1 ... KEYLINE_URL_15.
-  //
-  // Gaps are intentionally allowed. For example, if
-  // KEYLINE_URL_6 is missing and KEYLINE_URL_10 exists,
-  // URL_10 is still processed normally.
+  // Regular Keyline sources are configured only as individual secrets:
+  // KEYLINE_URL_1 ... KEYLINE_URL_15. Missing numbers are allowed.
   for (let index = 1; index <= 15; index += 1) {
     configuredRegularUrls.push(
-      ...parseUrlList(
+      ...parseConfiguredUrls(
         process.env[`KEYLINE_URL_${index}`]
       )
     );
@@ -1143,7 +1164,7 @@ function normalizeProfileLink(link, index, source, forceWhiteList = false) {
   const normalized =
     normalizeCountryRemark(
       remarks,
-      entry
+      {}
     );
   if (!normalized) return null;
 
@@ -1267,7 +1288,7 @@ function normalizeEntry(entry, index, source) {
   const normalized =
     normalizeCountryRemark(
       remarks,
-      entry
+      {}
     );
 
   if (!normalized) return null;

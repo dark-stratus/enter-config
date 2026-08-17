@@ -8,13 +8,13 @@ The updater supports **any number of Keyline subscription URLs**.
 
 Preferred GitHub Actions Secret:
 
-`KEYLINE_URLS`
+`KEYLINE_URL_1 ... KEYLINE_URL_15`
 
 Put one already-issued Keyline `/sub/...` URL per line. For example, 10 URLs means **10 Keyline HTTP reads per eligible refresh**. Duplicates are removed, so the same URL is read only once.
 
-A JSON array is also accepted in `KEYLINE_URLS`.
+A JSON array is also accepted in `KEYLINE_URL_1 ... KEYLINE_URL_15`.
 
-For backward compatibility, a single `KEYLINE_URL` is accepted when `KEYLINE_URLS` is not set.
+For backward compatibility, a single `KEYLINE_URL_1` is accepted when `KEYLINE_URL_1 ... KEYLINE_URL_15` is not set.
 
 Optional:
 
@@ -102,7 +102,7 @@ On every eligible refresh, each configured Keyline URL is fetched once normally.
 
 If **any** configured URL fails after its retries, is expired, returns invalid JSON, or fails validation, the updater does not replace the pool. The existing Keyline servers remain untouched and the next hourly workflow run tries again. The workflow log identifies the failing source and includes response length/content-type/a short response preview without printing the secret URL itself.
 
-After a successful refresh, the updater waits 12 hours before another real refresh. The GitHub Actions workflow still wakes every hour so failures are retried after about one hour.
+After a successful refresh, the updater waits 1 hour before another real refresh. The GitHub Actions workflow still wakes every hour so failures are retried after about one hour.
 
 The write is staged before the live `config/links` directory is replaced, so a normal write failure does not leave the live pool half-deleted.
 
@@ -158,7 +158,7 @@ The former hard regular-server limit is removed: all supported Keyline servers a
 
 ## Multiple Keyline sources
 
-Set `KEYLINE_URLS` as a JSON array or as one URL per line. Commas and semicolons are also accepted.
+Set `KEYLINE_URL_1 ... KEYLINE_URL_15` as a JSON array or as one URL per line. Commas and semicolons are also accepted.
 For convenience the workflow also supports `KEYLINE_URL_2` through `KEYLINE_URL_10` as separate GitHub Secrets.
 
 ## Health check
