@@ -52,7 +52,7 @@ const REQUEST_RETRIES =
 // after the 3 HTTPS connectivity probes.
 const QUALITY_DOWNLOAD_URL =
     process.env.HEALTHCHECK_QUALITY_URL ||
-    "https://speed.cloudflare.com/__down?bytes=262144";
+    "https://speed.cloudflare.com/__down?bytes=1048576";
 
 const QUALITY_DOWNLOAD_TIMEOUT_MS =
     Math.max(
@@ -69,7 +69,28 @@ const QUALITY_MIN_BYTES =
 const QUALITY_MIN_KBPS =
     Math.max(
         16,
-        Number(process.env.HEALTHCHECK_QUALITY_MIN_KBPS) || 512
+        Number(process.env.HEALTHCHECK_QUALITY_MIN_KBPS) || 640
+    );
+
+const QUALITY_PROBE_COUNT =
+    Math.max(
+        1,
+        Number(process.env.HEALTHCHECK_QUALITY_PROBE_COUNT) || 3
+    );
+
+const QUALITY_MIN_PASSES =
+    Math.max(
+        1,
+        Math.min(
+            QUALITY_PROBE_COUNT,
+            Number(process.env.HEALTHCHECK_QUALITY_MIN_PASSES) || 2
+        )
+    );
+
+const QUALITY_PROBE_INTERVAL_MS =
+    Math.max(
+        1000,
+        Number(process.env.HEALTHCHECK_QUALITY_PROBE_INTERVAL_MS) || 5000
     );
 
 const HEALTH_CONCURRENCY =
@@ -635,11 +656,27 @@ async function runCurl(
     );
 }
 
-async function runQualityDownload(
-    socksPort
+function buildQualityProbeUrl(probeIndex) {
+    try {
+        const url = new URL(QUALITY_DOWNLOAD_URL);
+        url.searchParams.set(
+            "hc_probe",
+            `${Date.now()}-${process.pid}-${probeIndex}-${Math.random().toString(36).slice(2)}`
+        );
+        return url.toString();
+    } catch {
+        return `${QUALITY_DOWNLOAD_URL}${QUALITY_DOWNLOAD_URL.includes("?") ? "&" : "?"}hc_probe=${Date.now()}-${probeIndex}-${Math.random().toString(36).slice(2)}`;
+    }
+}
+
+async function runSingleQualityDownload(
+    socksPort,
+    probeIndex
 ) {
     const startedAt =
         Date.now();
+
+    const probeUrl = buildQualityProbeUrl(probeIndex);
 
     return await new Promise(resolve => {
         const args = [
@@ -660,7 +697,7 @@ async function runQualityDownload(
             "/dev/null",
             "--write-out",
             "%{http_code} %{size_download} %{time_total}",
-            QUALITY_DOWNLOAD_URL,
+            probeUrl,
         ];
 
         const child =
@@ -739,8 +776,9 @@ async function runQualityDownload(
                     kbps >= QUALITY_MIN_KBPS;
 
                 resolve({
+                    probeIndex,
                     ok,
-                    url: QUALITY_DOWNLOAD_URL,
+                    url: probeUrl,
                     httpCode,
                     bytes: Number.isFinite(bytes) ? bytes : 0,
                     elapsedMs: Math.round(elapsedSeconds * 1000),
@@ -760,200 +798,89 @@ async function runQualityDownload(
     });
 }
 
-function isManagedKeylineId(
-    id
+async function runQualityDownload(
+    socksPort
 ) {
-    return (
-        /^keyline-regular-\d+$/i.test(id) ||
-        /^keyline-whitelist-\d+$/i.test(id)
-    );
-}
+    const probes = [];
 
-function isAutomaticWhiteListId(
-    id
-) {
-    return /^keyline-whitelist-\d+$/i.test(id);
-}
+    for (
+        let probeIndex = 1;
+        probeIndex <= QUALITY_PROBE_COUNT;
+        probeIndex += 1
+    ) {
+        const result =
+            await runSingleQualityDownload(
+                socksPort,
+                probeIndex
+            );
 
-function extractFlag(
-    remarks = ""
-) {
-    const match =
-        String(remarks).match(
-            /[\u{1F1E6}-\u{1F1FF}]{2}/u
+        probes.push(result);
+
+        if (
+            probeIndex < QUALITY_PROBE_COUNT
+        ) {
+            await sleep(
+                QUALITY_PROBE_INTERVAL_MS
+            );
+        }
+    }
+
+    const passed =
+        probes.filter(
+            probe => probe?.ok
         );
 
-    return match?.[0] || "";
-}
+    const ok =
+        passed.length >= QUALITY_MIN_PASSES;
 
-function stripFlag(
-    remarks = ""
-) {
-    return String(remarks)
-        .replace(
-            /[\u{1F1E6}-\u{1F1FF}]{2}/gu,
-            ""
-        )
-        .replace(
-            /\s+/g,
-            " "
-        )
-        .trim();
-}
+    const kbpsValues =
+        probes
+            .map(probe => Number(probe?.kbps))
+            .filter(Number.isFinite);
 
-function renumberIndex(
-    index
-) {
-    const countryCounters =
-        new Map();
+    const passingKbps =
+        passed
+            .map(probe => Number(probe?.kbps))
+            .filter(Number.isFinite);
 
-    const whiteListItems =
-        index.filter(
-            item =>
-                isAutomaticWhiteListId(
-                    item.id
-                )
-        );
-
-    let whiteListNumber = 2;
-
-    const normalized =
-        index.map(
-            item => {
-                if (
-                    !isManagedKeylineId(
-                        item?.id
-                    )
-                ) {
-                    return item;
-                }
-
-                if (
-                    isAutomaticWhiteListId(
-                        item.id
-                    )
-                ) {
-                    const flag =
-                        extractFlag(
-                            item.remarks
-                        ) ||
-                        "🇷🇺";
-
-                    const next = {
-                        ...item,
-                        remarks:
-                            `${flag} 🏳️ White List ${whiteListNumber}`
-                                .trim()
-                    };
-
-                    whiteListNumber +=
-                        1;
-
-                    return next;
-                }
-
-                const flag =
-                    extractFlag(
-                        item.remarks
-                    );
-
-                const raw =
-                    stripFlag(
-                        item.remarks
-                    )
-                    .replace(
-                        /\b(?:White List|Whitelist|Balance)\b.*$/i,
-                        ""
-                    )
-                    .replace(
-                        /\s+\d+\s*$/u,
-                        ""
-                    )
-                    .trim();
-
-                if (!raw) {
-                    return item;
-                }
-
-                const count =
-                    (
-                        countryCounters.get(
-                            raw
-                        ) ||
+    return {
+        ok,
+        url: QUALITY_DOWNLOAD_URL,
+        probeCount: probes.length,
+        requiredPasses: QUALITY_MIN_PASSES,
+        intervalMs: QUALITY_PROBE_INTERVAL_MS,
+        passedCount: passed.length,
+        failedCount: probes.length - passed.length,
+        kbps: passingKbps.length
+            ? Math.round(
+                (
+                    passingKbps.reduce(
+                        (sum, value) => sum + value,
                         0
-                    ) + 1;
-
-                countryCounters.set(
-                    raw,
-                    count
-                );
-
-                return {
-                    ...item,
-
-                    remarks:
-                        `${flag} ${raw} ${count}`.trim()
-                };
-            }
-        );
-
-    // Canonical ordering is important for Happ:
-    // Europe/manual locations first, then all Keyline regulars,
-    // then permanent White List 1, then automatically discovered White Lists.
-    const europe =
-        normalized.filter(
-            item =>
-                /^europe-\d+$/i.test(
-                    item?.id
-                )
-        );
-
-    const manual =
-        normalized.filter(
-            item =>
-                item &&
-                !isManagedKeylineId(
-                    item.id
-                ) &&
-                !/^europe-\d+$/i.test(
-                    item?.id
-                ) &&
-                !/^whitelist-\d+$/i.test(
-                    item?.id
-                )
-        );
-
-    const permanentWhite =
-        normalized.filter(
-            item =>
-                /^whitelist-\d+$/i.test(
-                    item?.id
-                )
-        );
-
-    const managedRegular =
-        normalized.filter(
-            item =>
-                /^keyline-regular-\d+$/i.test(
-                    item?.id
-                )
-        );
-
-    const managedWhite =
-        normalized.filter(
-            item =>
-                /^keyline-whitelist-\d+$/i.test(
-                    item?.id
-                )
-        );
-
-    return [
-        ...europe,
-        ...manual,
-        ...managedRegular,
-        ...permanentWhite,
-        ...managedWhite,
-    ];
+                    ) / passingKbps.length
+                ) * 10
+            ) / 10
+            : (
+                kbpsValues.length
+                    ? Math.round(
+                        (
+                            kbpsValues.reduce(
+                                (sum, value) => sum + value,
+                                0
+                            ) / kbpsValues.length
+                        ) * 10
+                    ) / 10
+                    : 0
+            ),
+        probes,
+        error: ok
+            ? ""
+            : (
+                `quality threshold failed: ` +
+                `${passed.length}/${probes.length} probes passed; ` +
+                `required ${QUALITY_MIN_PASSES}/${QUALITY_PROBE_COUNT}`
+            ).slice(0, 600)
+    };
 }
 
 async function main() {
@@ -1183,7 +1110,8 @@ async function main() {
                 protocol,
                 stages:
                     `TCP + Xray + ${targets.length}/${targets.length} HTTPS + ` +
-                    `quality ${quality.kbps} KB/s`,
+                    `quality ${quality.passedCount}/${quality.probeCount} probes passed ` +
+                    `(avg passing ${quality.kbps} KB/s)`,
                 quality,
             };
 
@@ -1372,6 +1300,9 @@ async function main() {
             timeoutMs: QUALITY_DOWNLOAD_TIMEOUT_MS,
             minBytes: QUALITY_MIN_BYTES,
             minKbps: QUALITY_MIN_KBPS,
+            probeCount: QUALITY_PROBE_COUNT,
+            requiredPasses: QUALITY_MIN_PASSES,
+            intervalMs: QUALITY_PROBE_INTERVAL_MS,
         },
         quarantine: {
             durationMinutes: 90,
@@ -1446,6 +1377,7 @@ async function main() {
             `- Health-check: **${passed} passed / ${failed} failed**`,
             `- Quality probe: ${QUALITY_DOWNLOAD_URL}`,
             `- Quality threshold: >= ${QUALITY_MIN_BYTES} bytes and >= ${QUALITY_MIN_KBPS} KB/s`,
+            `- Quality probes: ${QUALITY_PROBE_COUNT} total; ${QUALITY_MIN_PASSES} must pass; ${QUALITY_PROBE_INTERVAL_MS / 1000}s between probes`,
             `- Temporary quarantine: 90 minutes after a failed health check`,
             `- Final managed servers: **${report.finalManagedServers}**`,
         ];
