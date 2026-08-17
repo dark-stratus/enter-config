@@ -63,28 +63,10 @@ jobs:
 
           mkdir -p .xray
 
-          curl -fsSL \
-            https://api.github.com/repos/XTLS/Xray-core/releases/latest \
-            -o .xray/release.json
+          XRAY_URL="https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-64.zip"
 
-          ASSET_URL="$(
-            node -e '
-              const fs = require("node:fs");
-              const release = JSON.parse(
-                fs.readFileSync(".xray/release.json", "utf8")
-              );
-              const asset = release.assets.find(
-                item => item.name === "Xray-linux-64.zip"
-              );
-              if (!asset) {
-                throw new Error("Xray-linux-64.zip asset not found");
-              }
-              process.stdout.write(asset.browser_download_url);
-            '
-          )"
-
-          curl -fsSL \
-            "$ASSET_URL" \
+          curl -fL --retry 4 --retry-delay 2 --retry-connrefused \
+            "$XRAY_URL" \
             -o .xray/xray.zip
 
           unzip -o \
