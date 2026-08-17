@@ -2439,10 +2439,10 @@
   "totalBeforeHealthCheck": 376,
   "retainedPolicy": "previous managed links are retained until a health-check explicitly removes them",
   "healthCheck": {
-    "generatedAt": "2026-08-17T20:28:05.820Z",
-    "checked": 87,
-    "passed": 82,
-    "failed": 5,
+    "generatedAt": "2026-08-17T20:32:19.576Z",
+    "checked": 82,
+    "passed": 42,
+    "failed": 40,
     "concurrency": 8,
     "targets": [
       "https://www.gstatic.com/generate_204",
@@ -2450,10 +2450,10 @@
       "https://cp.cloudflare.com/generate_204"
     ],
     "qualityProbe": {
-      "url": "https://speed.cloudflare.com/__down?bytes=262144",
-      "timeoutMs": 12000,
-      "minBytes": 65536,
-      "minKbps": 64
+      "url": "https://speed.cloudflare.com/__down?bytes=1048576",
+      "timeoutMs": 20000,
+      "minBytes": 1048576,
+      "minKbps": 512
     },
     "quarantine": {
       "durationMinutes": 90,
@@ -2461,122 +2461,22 @@
     },
     "results": [
       {
-        "id": "keyline-regular-34",
-        "remarks": "🇩🇰 Denmark 1",
-        "country": "Denmark",
-        "source": "Keyline URL 3",
-        "linkFingerprint": "75884ef007bb",
+        "id": "keyline-regular-65",
+        "remarks": "🇫🇷 France 2",
+        "country": "France",
+        "source": "Keyline URL 2",
+        "linkFingerprint": "d61fed205c21",
         "ok": true,
         "protocol": "vless",
-        "stages": "TCP + Xray + 3/3 HTTPS + quality 198.7 KB/s",
+        "stages": "TCP + Xray + 3/3 HTTPS + quality 622.8 KB/s",
         "reason": "",
         "quality": {
           "ok": true,
-          "url": "https://speed.cloudflare.com/__down?bytes=262144",
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
           "httpCode": 200,
-          "bytes": 262144,
-          "elapsedMs": 1288,
-          "kbps": 198.7,
-          "error": ""
-        }
-      },
-      {
-        "id": "keyline-regular-39",
-        "remarks": "🇪🇺 European Union 1",
-        "country": "European Union",
-        "source": "Keyline URL 5",
-        "linkFingerprint": "a7b9701fcbc2",
-        "ok": true,
-        "protocol": "vless",
-        "stages": "TCP + Xray + 3/3 HTTPS + quality 177.5 KB/s",
-        "reason": "",
-        "quality": {
-          "ok": true,
-          "url": "https://speed.cloudflare.com/__down?bytes=262144",
-          "httpCode": 200,
-          "bytes": 262144,
-          "elapsedMs": 1442,
-          "kbps": 177.5,
-          "error": ""
-        }
-      },
-      {
-        "id": "keyline-regular-21",
-        "remarks": "🇨🇦 Canada 1",
-        "country": "Canada",
-        "source": "retained",
-        "linkFingerprint": "c41e459f44af",
-        "ok": true,
-        "protocol": "vless",
-        "stages": "TCP + Xray + 3/3 HTTPS + quality 170 KB/s",
-        "reason": "",
-        "quality": {
-          "ok": true,
-          "url": "https://speed.cloudflare.com/__down?bytes=262144",
-          "httpCode": 200,
-          "bytes": 262144,
-          "elapsedMs": 1506,
-          "kbps": 170,
-          "error": ""
-        }
-      },
-      {
-        "id": "keyline-regular-20",
-        "remarks": "🇨🇦 Canada 2",
-        "country": "Canada",
-        "source": "Keyline URL 3",
-        "linkFingerprint": "91113326f3fc",
-        "ok": true,
-        "protocol": "trojan",
-        "stages": "TCP + Xray + 3/3 HTTPS + quality 141.8 KB/s",
-        "reason": "",
-        "quality": {
-          "ok": true,
-          "url": "https://speed.cloudflare.com/__down?bytes=262144",
-          "httpCode": 200,
-          "bytes": 262144,
-          "elapsedMs": 1806,
-          "kbps": 141.8,
-          "error": ""
-        }
-      },
-      {
-        "id": "keyline-regular-01",
-        "remarks": "🇦🇱 Albania 1",
-        "country": "Albania",
-        "source": "Keyline URL 5",
-        "linkFingerprint": "21fe44421f57",
-        "ok": true,
-        "protocol": "vless",
-        "stages": "TCP + Xray + 3/3 HTTPS + quality 151 KB/s",
-        "reason": "",
-        "quality": {
-          "ok": true,
-          "url": "https://speed.cloudflare.com/__down?bytes=262144",
-          "httpCode": 200,
-          "bytes": 262144,
-          "elapsedMs": 1695,
-          "kbps": 151,
-          "error": ""
-        }
-      },
-      {
-        "id": "keyline-regular-06",
-        "remarks": "🇦🇹 Austria 1",
-        "country": "Austria",
-        "source": "Keyline URL 3",
-        "linkFingerprint": "3881eed7801e",
-        "ok": true,
-        "protocol": "vless",
-        "stages": "TCP + Xray + 3/3 HTTPS + quality 101.7 KB/s",
-        "reason": "",
-        "quality": {
-          "ok": true,
-          "url": "https://speed.cloudflare.com/__down?bytes=262144",
-          "httpCode": 200,
-          "bytes": 262144,
-          "elapsedMs": 2517,
-          "kbps": 101.7,
+          "bytes": 1048576,
+          "elapsedMs": 1644,
+          "kbps": 622.8,
           "error": ""
         }
       },
@@ -2588,75 +2488,115 @@
         "linkFingerprint": "5594fbc31d72",
         "ok": true,
         "protocol": "trojan",
-        "stages": "TCP + Xray + 3/3 HTTPS + quality 221.5 KB/s",
+        "stages": "TCP + Xray + 3/3 HTTPS + quality 631 KB/s",
         "reason": "",
         "quality": {
           "ok": true,
-          "url": "https://speed.cloudflare.com/__down?bytes=262144",
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
           "httpCode": 200,
-          "bytes": 262144,
-          "elapsedMs": 1156,
-          "kbps": 221.5,
+          "bytes": 1048576,
+          "elapsedMs": 1623,
+          "kbps": 631,
           "error": ""
         }
       },
       {
-        "id": "keyline-regular-65",
-        "remarks": "🇫🇷 France 4",
-        "country": "France",
-        "source": "Keyline URL 2",
-        "linkFingerprint": "d61fed205c21",
+        "id": "keyline-regular-20",
+        "remarks": "🇨🇦 Canada 2",
+        "country": "Canada",
+        "source": "Keyline URL 3",
+        "linkFingerprint": "91113326f3fc",
         "ok": true,
-        "protocol": "vless",
-        "stages": "TCP + Xray + 3/3 HTTPS + quality 224.2 KB/s",
+        "protocol": "trojan",
+        "stages": "TCP + Xray + 3/3 HTTPS + quality 575.4 KB/s",
         "reason": "",
         "quality": {
           "ok": true,
-          "url": "https://speed.cloudflare.com/__down?bytes=262144",
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
           "httpCode": 200,
-          "bytes": 262144,
-          "elapsedMs": 1142,
-          "kbps": 224.2,
+          "bytes": 1048576,
+          "elapsedMs": 1780,
+          "kbps": 575.4,
           "error": ""
+        }
+      },
+      {
+        "id": "keyline-regular-34",
+        "remarks": "🇩🇰 Denmark 1",
+        "country": "Denmark",
+        "source": "Keyline URL 3",
+        "linkFingerprint": "75884ef007bb",
+        "ok": true,
+        "protocol": "vless",
+        "stages": "TCP + Xray + 3/3 HTTPS + quality 558 KB/s",
+        "reason": "",
+        "quality": {
+          "ok": true,
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
+          "httpCode": 200,
+          "bytes": 1048576,
+          "elapsedMs": 1835,
+          "kbps": 558,
+          "error": ""
+        }
+      },
+      {
+        "id": "keyline-regular-01",
+        "remarks": "🇦🇱 Albania 1",
+        "country": "Albania",
+        "source": "Keyline URL 5",
+        "linkFingerprint": "21fe44421f57",
+        "ok": false,
+        "protocol": "",
+        "stages": "",
+        "reason": "TCP + Xray + 3/3 HTTPS passed, but real traffic quality failed: 1048576 bytes, 443.1 KB/s, HTTP 200; quality threshold failed: 1048576 bytes, 443.1 KB/s, HTTP 200",
+        "quality": {
+          "ok": false,
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
+          "httpCode": 200,
+          "bytes": 1048576,
+          "elapsedMs": 2311,
+          "kbps": 443.1,
+          "error": "quality threshold failed: 1048576 bytes, 443.1 KB/s, HTTP 200"
         }
       },
       {
         "id": "keyline-regular-46",
-        "remarks": "🇫🇷 France 2",
+        "remarks": "🇫🇷 France 3",
         "country": "France",
         "source": "retained",
         "linkFingerprint": "e61ea13fecd8",
         "ok": true,
         "protocol": "trojan",
-        "stages": "TCP + Xray + 3/3 HTTPS + quality 225.4 KB/s",
+        "stages": "TCP + Xray + 3/3 HTTPS + quality 667.4 KB/s",
         "reason": "",
         "quality": {
           "ok": true,
-          "url": "https://speed.cloudflare.com/__down?bytes=262144",
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
           "httpCode": 200,
-          "bytes": 262144,
-          "elapsedMs": 1136,
-          "kbps": 225.4,
+          "bytes": 1048576,
+          "elapsedMs": 1534,
+          "kbps": 667.4,
           "error": ""
         }
       },
       {
         "id": "keyline-regular-48",
-        "remarks": "🇫🇷 France 3",
+        "remarks": "🇫🇷 France 4",
         "country": "France",
         "source": "retained",
         "linkFingerprint": "47b90d7ef419",
         "ok": true,
         "protocol": "trojan",
-        "stages": "TCP + Xray + 3/3 HTTPS + quality 223.7 KB/s",
+        "stages": "TCP + Xray + 3/3 HTTPS + quality 622.1 KB/s",
         "reason": "",
         "quality": {
           "ok": true,
-          "url": "https://speed.cloudflare.com/__down?bytes=262144",
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
           "httpCode": 200,
-          "bytes": 262144,
-          "elapsedMs": 1144,
-          "kbps": 223.7,
+          "bytes": 1048576,
+          "elapsedMs": 1646,
+          "kbps": 622.1,
           "error": ""
         }
       },
@@ -2668,16 +2608,36 @@
         "linkFingerprint": "321a6bbb03b6",
         "ok": true,
         "protocol": "vless",
-        "stages": "TCP + Xray + 3/3 HTTPS + quality 115.6 KB/s",
+        "stages": "TCP + Xray + 3/3 HTTPS + quality 529.6 KB/s",
         "reason": "",
         "quality": {
           "ok": true,
-          "url": "https://speed.cloudflare.com/__down?bytes=262144",
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
           "httpCode": 200,
-          "bytes": 262144,
-          "elapsedMs": 2214,
-          "kbps": 115.6,
+          "bytes": 1048576,
+          "elapsedMs": 1933,
+          "kbps": 529.6,
           "error": ""
+        }
+      },
+      {
+        "id": "keyline-regular-21",
+        "remarks": "🇨🇦 Canada 1",
+        "country": "Canada",
+        "source": "retained",
+        "linkFingerprint": "c41e459f44af",
+        "ok": false,
+        "protocol": "",
+        "stages": "",
+        "reason": "TCP + Xray + 3/3 HTTPS passed, but real traffic quality failed: 1048576 bytes, 208 KB/s, HTTP 200; quality threshold failed: 1048576 bytes, 208 KB/s, HTTP 200",
+        "quality": {
+          "ok": false,
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
+          "httpCode": 200,
+          "bytes": 1048576,
+          "elapsedMs": 4924,
+          "kbps": 208,
+          "error": "quality threshold failed: 1048576 bytes, 208 KB/s, HTTP 200"
         }
       },
       {
@@ -2688,15 +2648,15 @@
         "linkFingerprint": "fe275d33e72e",
         "ok": true,
         "protocol": "vless",
-        "stages": "TCP + Xray + 3/3 HTTPS + quality 154.4 KB/s",
+        "stages": "TCP + Xray + 3/3 HTTPS + quality 531.4 KB/s",
         "reason": "",
         "quality": {
           "ok": true,
-          "url": "https://speed.cloudflare.com/__down?bytes=262144",
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
           "httpCode": 200,
-          "bytes": 262144,
-          "elapsedMs": 1658,
-          "kbps": 154.4,
+          "bytes": 1048576,
+          "elapsedMs": 1927,
+          "kbps": 531.4,
           "error": ""
         }
       },
@@ -2708,15 +2668,15 @@
         "linkFingerprint": "03a20399a407",
         "ok": true,
         "protocol": "vless",
-        "stages": "TCP + Xray + 3/3 HTTPS + quality 196.8 KB/s",
+        "stages": "TCP + Xray + 3/3 HTTPS + quality 546.7 KB/s",
         "reason": "",
         "quality": {
           "ok": true,
-          "url": "https://speed.cloudflare.com/__down?bytes=262144",
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
           "httpCode": 200,
-          "bytes": 262144,
-          "elapsedMs": 1301,
-          "kbps": 196.8,
+          "bytes": 1048576,
+          "elapsedMs": 1873,
+          "kbps": 546.7,
           "error": ""
         }
       },
@@ -2728,35 +2688,15 @@
         "linkFingerprint": "8dedfd2ca9f9",
         "ok": true,
         "protocol": "hysteria2",
-        "stages": "TCP + Xray + 3/3 HTTPS + quality 353.6 KB/s",
+        "stages": "TCP + Xray + 3/3 HTTPS + quality 918.2 KB/s",
         "reason": "",
         "quality": {
           "ok": true,
-          "url": "https://speed.cloudflare.com/__down?bytes=262144",
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
           "httpCode": 200,
-          "bytes": 262144,
-          "elapsedMs": 724,
-          "kbps": 353.6,
-          "error": ""
-        }
-      },
-      {
-        "id": "keyline-regular-77",
-        "remarks": "🇩🇪 Germany 3",
-        "country": "Germany",
-        "source": "Keyline URL 2",
-        "linkFingerprint": "3754410df75b",
-        "ok": true,
-        "protocol": "vless",
-        "stages": "TCP + Xray + 3/3 HTTPS + quality 188.8 KB/s",
-        "reason": "",
-        "quality": {
-          "ok": true,
-          "url": "https://speed.cloudflare.com/__down?bytes=262144",
-          "httpCode": 200,
-          "bytes": 262144,
-          "elapsedMs": 1356,
-          "kbps": 188.8,
+          "bytes": 1048576,
+          "elapsedMs": 1115,
+          "kbps": 918.2,
           "error": ""
         }
       },
@@ -2768,15 +2708,67 @@
         "linkFingerprint": "c6f7cacffe2f",
         "ok": true,
         "protocol": "trojan",
-        "stages": "TCP + Xray + 3/3 HTTPS + quality 256.6 KB/s",
+        "stages": "TCP + Xray + 3/3 HTTPS + quality 724.5 KB/s",
         "reason": "",
         "quality": {
           "ok": true,
-          "url": "https://speed.cloudflare.com/__down?bytes=262144",
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
           "httpCode": 200,
-          "bytes": 262144,
-          "elapsedMs": 998,
-          "kbps": 256.6,
+          "bytes": 1048576,
+          "elapsedMs": 1413,
+          "kbps": 724.5,
+          "error": ""
+        }
+      },
+      {
+        "id": "keyline-regular-77",
+        "remarks": "🇩🇪 Germany 3",
+        "country": "Germany",
+        "source": "Keyline URL 2",
+        "linkFingerprint": "3754410df75b",
+        "ok": true,
+        "protocol": "vless",
+        "stages": "TCP + Xray + 3/3 HTTPS + quality 537.4 KB/s",
+        "reason": "",
+        "quality": {
+          "ok": true,
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
+          "httpCode": 200,
+          "bytes": 1048576,
+          "elapsedMs": 1906,
+          "kbps": 537.4,
+          "error": ""
+        }
+      },
+      {
+        "id": "keyline-regular-39",
+        "remarks": "🇪🇺 European Union 1",
+        "country": "European Union",
+        "source": "Keyline URL 5",
+        "linkFingerprint": "a7b9701fcbc2",
+        "ok": false,
+        "protocol": "",
+        "stages": "",
+        "reason": "TCP reachable, Xray SOCKS started, 2/3 HTTPS proxy probes passed; https://www.google.com/generate_204: https://www.google.com/generate_204 attempt 1: curl: (28) SSL connection timeout; https://www.google.com/generate_204 attempt 2: curl: (28) SSL connection timeout",
+        "quality": null
+      },
+      {
+        "id": "keyline-regular-94",
+        "remarks": "🇯🇵 Japan 2",
+        "country": "Japan",
+        "source": "retained",
+        "linkFingerprint": "9ec523b31eb1",
+        "ok": true,
+        "protocol": "trojan",
+        "stages": "TCP + Xray + 3/3 HTTPS + quality 753.6 KB/s",
+        "reason": "",
+        "quality": {
+          "ok": true,
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
+          "httpCode": 200,
+          "bytes": 1048576,
+          "elapsedMs": 1359,
+          "kbps": 753.6,
           "error": ""
         }
       },
@@ -2788,35 +2780,15 @@
         "linkFingerprint": "91d9dba0cd91",
         "ok": true,
         "protocol": "vless",
-        "stages": "TCP + Xray + 3/3 HTTPS + quality 153.9 KB/s",
+        "stages": "TCP + Xray + 3/3 HTTPS + quality 560.7 KB/s",
         "reason": "",
         "quality": {
           "ok": true,
-          "url": "https://speed.cloudflare.com/__down?bytes=262144",
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
           "httpCode": 200,
-          "bytes": 262144,
-          "elapsedMs": 1663,
-          "kbps": 153.9,
-          "error": ""
-        }
-      },
-      {
-        "id": "keyline-regular-81",
-        "remarks": "🇭🇰 Hong Kong 1",
-        "country": "Hong Kong",
-        "source": "retained",
-        "linkFingerprint": "0c5c681baef7",
-        "ok": true,
-        "protocol": "vless",
-        "stages": "TCP + Xray + 3/3 HTTPS + quality 126.6 KB/s",
-        "reason": "",
-        "quality": {
-          "ok": true,
-          "url": "https://speed.cloudflare.com/__down?bytes=262144",
-          "httpCode": 200,
-          "bytes": 262144,
-          "elapsedMs": 2022,
-          "kbps": 126.6,
+          "bytes": 1048576,
+          "elapsedMs": 1826,
+          "kbps": 560.7,
           "error": ""
         }
       },
@@ -2828,35 +2800,15 @@
         "linkFingerprint": "197592b7bb58",
         "ok": true,
         "protocol": "vless",
-        "stages": "TCP + Xray + 3/3 HTTPS + quality 186.8 KB/s",
+        "stages": "TCP + Xray + 3/3 HTTPS + quality 553.6 KB/s",
         "reason": "",
         "quality": {
           "ok": true,
-          "url": "https://speed.cloudflare.com/__down?bytes=262144",
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
           "httpCode": 200,
-          "bytes": 262144,
-          "elapsedMs": 1371,
-          "kbps": 186.8,
-          "error": ""
-        }
-      },
-      {
-        "id": "keyline-regular-94",
-        "remarks": "🇯🇵 Japan 2",
-        "country": "Japan",
-        "source": "retained",
-        "linkFingerprint": "9ec523b31eb1",
-        "ok": true,
-        "protocol": "trojan",
-        "stages": "TCP + Xray + 3/3 HTTPS + quality 254.7 KB/s",
-        "reason": "",
-        "quality": {
-          "ok": true,
-          "url": "https://speed.cloudflare.com/__down?bytes=262144",
-          "httpCode": 200,
-          "bytes": 262144,
-          "elapsedMs": 1005,
-          "kbps": 254.7,
+          "bytes": 1048576,
+          "elapsedMs": 1850,
+          "kbps": 553.6,
           "error": ""
         }
       },
@@ -2868,36 +2820,36 @@
         "linkFingerprint": "e6ce6b48d704",
         "ok": true,
         "protocol": "trojan",
-        "stages": "TCP + Xray + 3/3 HTTPS + quality 252.9 KB/s",
+        "stages": "TCP + Xray + 3/3 HTTPS + quality 752.9 KB/s",
         "reason": "",
         "quality": {
           "ok": true,
-          "url": "https://speed.cloudflare.com/__down?bytes=262144",
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
           "httpCode": 200,
-          "bytes": 262144,
-          "elapsedMs": 1012,
-          "kbps": 252.9,
+          "bytes": 1048576,
+          "elapsedMs": 1360,
+          "kbps": 752.9,
           "error": ""
         }
       },
       {
-        "id": "keyline-regular-80",
-        "remarks": "🇬🇷 Greece 1",
-        "country": "Greece",
-        "source": "Keyline URL 2",
-        "linkFingerprint": "eeb91a15d4df",
-        "ok": true,
-        "protocol": "vless",
-        "stages": "TCP + Xray + 3/3 HTTPS + quality 140.2 KB/s",
-        "reason": "",
+        "id": "keyline-regular-06",
+        "remarks": "🇦🇹 Austria 1",
+        "country": "Austria",
+        "source": "Keyline URL 3",
+        "linkFingerprint": "3881eed7801e",
+        "ok": false,
+        "protocol": "",
+        "stages": "",
+        "reason": "TCP + Xray + 3/3 HTTPS passed, but real traffic quality failed: 1048576 bytes, 115.5 KB/s, HTTP 200; quality threshold failed: 1048576 bytes, 115.5 KB/s, HTTP 200",
         "quality": {
-          "ok": true,
-          "url": "https://speed.cloudflare.com/__down?bytes=262144",
+          "ok": false,
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
           "httpCode": 200,
-          "bytes": 262144,
-          "elapsedMs": 1826,
-          "kbps": 140.2,
-          "error": ""
+          "bytes": 1048576,
+          "elapsedMs": 8865,
+          "kbps": 115.5,
+          "error": "quality threshold failed: 1048576 bytes, 115.5 KB/s, HTTP 200"
         }
       },
       {
@@ -2908,15 +2860,15 @@
         "linkFingerprint": "b32baa517658",
         "ok": true,
         "protocol": "trojan",
-        "stages": "TCP + Xray + 3/3 HTTPS + quality 245.9 KB/s",
+        "stages": "TCP + Xray + 3/3 HTTPS + quality 747.6 KB/s",
         "reason": "",
         "quality": {
           "ok": true,
-          "url": "https://speed.cloudflare.com/__down?bytes=262144",
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
           "httpCode": 200,
-          "bytes": 262144,
-          "elapsedMs": 1041,
-          "kbps": 245.9,
+          "bytes": 1048576,
+          "elapsedMs": 1370,
+          "kbps": 747.6,
           "error": ""
         }
       },
@@ -2928,55 +2880,15 @@
         "linkFingerprint": "26bcdbba5546",
         "ok": true,
         "protocol": "trojan",
-        "stages": "TCP + Xray + 3/3 HTTPS + quality 219.4 KB/s",
+        "stages": "TCP + Xray + 3/3 HTTPS + quality 708.6 KB/s",
         "reason": "",
         "quality": {
           "ok": true,
-          "url": "https://speed.cloudflare.com/__down?bytes=262144",
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
           "httpCode": 200,
-          "bytes": 262144,
-          "elapsedMs": 1167,
-          "kbps": 219.4,
-          "error": ""
-        }
-      },
-      {
-        "id": "keyline-regular-26",
-        "remarks": "🇨🇴 Colombia 1",
-        "country": "Colombia",
-        "source": "retained",
-        "linkFingerprint": "3d83dddfe94d",
-        "ok": false,
-        "protocol": "",
-        "stages": "",
-        "reason": "TCP + Xray + 3/3 HTTPS passed, but real traffic quality failed: 0 bytes, 0 KB/s, HTTP ?; curl: (28) SSL connection timeout",
-        "quality": {
-          "ok": false,
-          "url": "https://speed.cloudflare.com/__down?bytes=262144",
-          "httpCode": 0,
-          "bytes": 0,
-          "elapsedMs": 4002,
-          "kbps": 0,
-          "error": "curl: (28) SSL connection timeout"
-        }
-      },
-      {
-        "id": "keyline-regular-98",
-        "remarks": "🇯🇵 Japan 7",
-        "country": "Japan",
-        "source": "retained",
-        "linkFingerprint": "d80754ffdd1d",
-        "ok": true,
-        "protocol": "vless",
-        "stages": "TCP + Xray + 3/3 HTTPS + quality 235 KB/s",
-        "reason": "",
-        "quality": {
-          "ok": true,
-          "url": "https://speed.cloudflare.com/__down?bytes=262144",
-          "httpCode": 200,
-          "bytes": 262144,
-          "elapsedMs": 1090,
-          "kbps": 235,
+          "bytes": 1048576,
+          "elapsedMs": 1445,
+          "kbps": 708.6,
           "error": ""
         }
       },
@@ -2988,16 +2900,36 @@
         "linkFingerprint": "7c81178b5b74",
         "ok": true,
         "protocol": "vless",
-        "stages": "TCP + Xray + 3/3 HTTPS + quality 275.6 KB/s",
+        "stages": "TCP + Xray + 3/3 HTTPS + quality 667.8 KB/s",
         "reason": "",
         "quality": {
           "ok": true,
-          "url": "https://speed.cloudflare.com/__down?bytes=262144",
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
           "httpCode": 200,
-          "bytes": 262144,
-          "elapsedMs": 929,
-          "kbps": 275.6,
+          "bytes": 1048576,
+          "elapsedMs": 1533,
+          "kbps": 667.8,
           "error": ""
+        }
+      },
+      {
+        "id": "keyline-regular-80",
+        "remarks": "🇬🇷 Greece 1",
+        "country": "Greece",
+        "source": "Keyline URL 2",
+        "linkFingerprint": "eeb91a15d4df",
+        "ok": false,
+        "protocol": "",
+        "stages": "",
+        "reason": "TCP + Xray + 3/3 HTTPS passed, but real traffic quality failed: 1048576 bytes, 371.4 KB/s, HTTP 200; quality threshold failed: 1048576 bytes, 371.4 KB/s, HTTP 200",
+        "quality": {
+          "ok": false,
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
+          "httpCode": 200,
+          "bytes": 1048576,
+          "elapsedMs": 2757,
+          "kbps": 371.4,
+          "error": "quality threshold failed: 1048576 bytes, 371.4 KB/s, HTTP 200"
         }
       },
       {
@@ -3006,77 +2938,77 @@
         "country": "Netherlands",
         "source": "retained",
         "linkFingerprint": "a6ff54fbc953",
-        "ok": true,
-        "protocol": "vless",
-        "stages": "TCP + Xray + 3/3 HTTPS + quality 269.4 KB/s",
-        "reason": "",
+        "ok": false,
+        "protocol": "",
+        "stages": "",
+        "reason": "TCP + Xray + 3/3 HTTPS passed, but real traffic quality failed: 1048576 bytes, 387 KB/s, HTTP 200; quality threshold failed: 1048576 bytes, 387 KB/s, HTTP 200",
         "quality": {
-          "ok": true,
-          "url": "https://speed.cloudflare.com/__down?bytes=262144",
+          "ok": false,
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
           "httpCode": 200,
-          "bytes": 262144,
-          "elapsedMs": 950,
-          "kbps": 269.4,
-          "error": ""
+          "bytes": 1048576,
+          "elapsedMs": 2646,
+          "kbps": 387,
+          "error": "quality threshold failed: 1048576 bytes, 387 KB/s, HTTP 200"
         }
       },
       {
-        "id": "keyline-regular-140",
-        "remarks": "🇳🇱 Netherlands 4",
-        "country": "Netherlands",
-        "source": "Keyline URL 2",
-        "linkFingerprint": "91accceea190",
-        "ok": true,
-        "protocol": "vless",
-        "stages": "TCP + Xray + 3/3 HTTPS + quality 261.3 KB/s",
-        "reason": "",
+        "id": "keyline-regular-81",
+        "remarks": "🇭🇰 Hong Kong 1",
+        "country": "Hong Kong",
+        "source": "retained",
+        "linkFingerprint": "0c5c681baef7",
+        "ok": false,
+        "protocol": "",
+        "stages": "",
+        "reason": "TCP + Xray + 3/3 HTTPS passed, but real traffic quality failed: 1048576 bytes, 174 KB/s, HTTP 200; quality threshold failed: 1048576 bytes, 174 KB/s, HTTP 200",
         "quality": {
-          "ok": true,
-          "url": "https://speed.cloudflare.com/__down?bytes=262144",
+          "ok": false,
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
           "httpCode": 200,
-          "bytes": 262144,
-          "elapsedMs": 980,
-          "kbps": 261.3,
-          "error": ""
+          "bytes": 1048576,
+          "elapsedMs": 5885,
+          "kbps": 174,
+          "error": "quality threshold failed: 1048576 bytes, 174 KB/s, HTTP 200"
         }
       },
       {
         "id": "keyline-regular-123",
-        "remarks": "🇳🇱 Netherlands 3",
+        "remarks": "🇳🇱 Netherlands 4",
         "country": "Netherlands",
         "source": "Keyline URL 5",
         "linkFingerprint": "830a6f9576a5",
-        "ok": true,
-        "protocol": "vless",
-        "stages": "TCP + Xray + 3/3 HTTPS + quality 143.3 KB/s",
-        "reason": "",
+        "ok": false,
+        "protocol": "",
+        "stages": "",
+        "reason": "TCP + Xray + 3/3 HTTPS passed, but real traffic quality failed: 1048576 bytes, 450.2 KB/s, HTTP 200; quality threshold failed: 1048576 bytes, 450.2 KB/s, HTTP 200",
         "quality": {
-          "ok": true,
-          "url": "https://speed.cloudflare.com/__down?bytes=262144",
+          "ok": false,
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
           "httpCode": 200,
-          "bytes": 262144,
-          "elapsedMs": 1786,
-          "kbps": 143.3,
-          "error": ""
+          "bytes": 1048576,
+          "elapsedMs": 2275,
+          "kbps": 450.2,
+          "error": "quality threshold failed: 1048576 bytes, 450.2 KB/s, HTTP 200"
         }
       },
       {
-        "id": "keyline-regular-99",
-        "remarks": "🇯🇵 Japan 8",
+        "id": "keyline-regular-98",
+        "remarks": "🇯🇵 Japan 6",
         "country": "Japan",
         "source": "retained",
-        "linkFingerprint": "8b81d4c1ece7",
+        "linkFingerprint": "d80754ffdd1d",
         "ok": true,
         "protocol": "vless",
-        "stages": "TCP + Xray + 3/3 HTTPS + quality 123.6 KB/s",
+        "stages": "TCP + Xray + 3/3 HTTPS + quality 798.3 KB/s",
         "reason": "",
         "quality": {
           "ok": true,
-          "url": "https://speed.cloudflare.com/__down?bytes=262144",
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
           "httpCode": 200,
-          "bytes": 262144,
-          "elapsedMs": 2071,
-          "kbps": 123.6,
+          "bytes": 1048576,
+          "elapsedMs": 1283,
+          "kbps": 798.3,
           "error": ""
         }
       },
@@ -3088,15 +3020,15 @@
         "linkFingerprint": "dfa217f58219",
         "ok": true,
         "protocol": "vless",
-        "stages": "TCP + Xray + 3/3 HTTPS + quality 250.3 KB/s",
+        "stages": "TCP + Xray + 3/3 HTTPS + quality 682.5 KB/s",
         "reason": "",
         "quality": {
           "ok": true,
-          "url": "https://speed.cloudflare.com/__down?bytes=262144",
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
           "httpCode": 200,
-          "bytes": 262144,
-          "elapsedMs": 1023,
-          "kbps": 250.3,
+          "bytes": 1048576,
+          "elapsedMs": 1500,
+          "kbps": 682.5,
           "error": ""
         }
       },
@@ -3108,15 +3040,35 @@
         "linkFingerprint": "d456ba2a4150",
         "ok": true,
         "protocol": "vless",
-        "stages": "TCP + Xray + 3/3 HTTPS + quality 248 KB/s",
+        "stages": "TCP + Xray + 3/3 HTTPS + quality 625 KB/s",
         "reason": "",
         "quality": {
           "ok": true,
-          "url": "https://speed.cloudflare.com/__down?bytes=262144",
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
           "httpCode": 200,
-          "bytes": 262144,
-          "elapsedMs": 1032,
-          "kbps": 248,
+          "bytes": 1048576,
+          "elapsedMs": 1638,
+          "kbps": 625,
+          "error": ""
+        }
+      },
+      {
+        "id": "keyline-regular-140",
+        "remarks": "🇳🇱 Netherlands 3",
+        "country": "Netherlands",
+        "source": "Keyline URL 2",
+        "linkFingerprint": "91accceea190",
+        "ok": true,
+        "protocol": "vless",
+        "stages": "TCP + Xray + 3/3 HTTPS + quality 574.3 KB/s",
+        "reason": "",
+        "quality": {
+          "ok": true,
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
+          "httpCode": 200,
+          "bytes": 1048576,
+          "elapsedMs": 1783,
+          "kbps": 574.3,
           "error": ""
         }
       },
@@ -3126,138 +3078,38 @@
         "country": "Romania",
         "source": "Keyline URL 5",
         "linkFingerprint": "1aa223523e05",
-        "ok": true,
-        "protocol": "vless",
-        "stages": "TCP + Xray + 3/3 HTTPS + quality 173.8 KB/s",
-        "reason": "",
-        "quality": {
-          "ok": true,
-          "url": "https://speed.cloudflare.com/__down?bytes=262144",
-          "httpCode": 200,
-          "bytes": 262144,
-          "elapsedMs": 1473,
-          "kbps": 173.8,
-          "error": ""
-        }
-      },
-      {
-        "id": "keyline-regular-101",
-        "remarks": "🇯🇵 Japan 6",
-        "country": "Japan",
-        "source": "Keyline URL 5",
-        "linkFingerprint": "7ae3040cb414",
         "ok": false,
         "protocol": "",
         "stages": "",
-        "reason": "TCP + Xray + 3/3 HTTPS passed, but real traffic quality failed: 262144 bytes, 52.9 KB/s, HTTP 200; quality threshold failed: 262144 bytes, 52.9 KB/s, HTTP 200",
+        "reason": "TCP + Xray + 3/3 HTTPS passed, but real traffic quality failed: 1048576 bytes, 501 KB/s, HTTP 200; quality threshold failed: 1048576 bytes, 501 KB/s, HTTP 200",
         "quality": {
           "ok": false,
-          "url": "https://speed.cloudflare.com/__down?bytes=262144",
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
           "httpCode": 200,
-          "bytes": 262144,
-          "elapsedMs": 4840,
-          "kbps": 52.9,
-          "error": "quality threshold failed: 262144 bytes, 52.9 KB/s, HTTP 200"
-        }
-      },
-      {
-        "id": "keyline-regular-104",
-        "remarks": "🇰🇿 Kazakhstan 1",
-        "country": "Kazakhstan",
-        "source": "Keyline URL 5",
-        "linkFingerprint": "242dd6f31e6b",
-        "ok": true,
-        "protocol": "vless",
-        "stages": "TCP + Xray + 3/3 HTTPS + quality 98.6 KB/s",
-        "reason": "",
-        "quality": {
-          "ok": true,
-          "url": "https://speed.cloudflare.com/__down?bytes=262144",
-          "httpCode": 200,
-          "bytes": 262144,
-          "elapsedMs": 2597,
-          "kbps": 98.6,
-          "error": ""
-        }
-      },
-      {
-        "id": "keyline-regular-150",
-        "remarks": "🇳🇱 Netherlands 5",
-        "country": "Netherlands",
-        "source": "Keyline URL 2",
-        "linkFingerprint": "8107c5ef363c",
-        "ok": true,
-        "protocol": "vless",
-        "stages": "TCP + Xray + 3/3 HTTPS + quality 107.6 KB/s",
-        "reason": "",
-        "quality": {
-          "ok": true,
-          "url": "https://speed.cloudflare.com/__down?bytes=262144",
-          "httpCode": 200,
-          "bytes": 262144,
-          "elapsedMs": 2380,
-          "kbps": 107.6,
-          "error": ""
-        }
-      },
-      {
-        "id": "keyline-regular-180",
-        "remarks": "🇷🇺 Russia 1",
-        "country": "Russia",
-        "source": "retained",
-        "linkFingerprint": "8fb589cce3e9",
-        "ok": true,
-        "protocol": "vless",
-        "stages": "TCP + Xray + 3/3 HTTPS + quality 125 KB/s",
-        "reason": "",
-        "quality": {
-          "ok": true,
-          "url": "https://speed.cloudflare.com/__down?bytes=262144",
-          "httpCode": 200,
-          "bytes": 262144,
-          "elapsedMs": 2048,
-          "kbps": 125,
-          "error": ""
-        }
-      },
-      {
-        "id": "keyline-regular-170",
-        "remarks": "🇵🇱 Poland 3",
-        "country": "Poland",
-        "source": "Keyline URL 5",
-        "linkFingerprint": "169d54d05428",
-        "ok": true,
-        "protocol": "vless",
-        "stages": "TCP + Xray + 3/3 HTTPS + quality 71.4 KB/s",
-        "reason": "",
-        "quality": {
-          "ok": true,
-          "url": "https://speed.cloudflare.com/__down?bytes=262144",
-          "httpCode": 200,
-          "bytes": 262144,
-          "elapsedMs": 3584,
-          "kbps": 71.4,
-          "error": ""
+          "bytes": 1048576,
+          "elapsedMs": 2044,
+          "kbps": 501,
+          "error": "quality threshold failed: 1048576 bytes, 501 KB/s, HTTP 200"
         }
       },
       {
         "id": "keyline-regular-212",
-        "remarks": "🇷🇺 Russia 3",
+        "remarks": "🇷🇺 Russia 2",
         "country": "Russia",
         "source": "Keyline URL 2",
         "linkFingerprint": "9c0e07f3f29f",
-        "ok": true,
-        "protocol": "vless",
-        "stages": "TCP + Xray + 3/3 HTTPS + quality 146.1 KB/s",
-        "reason": "",
+        "ok": false,
+        "protocol": "",
+        "stages": "",
+        "reason": "TCP + Xray + 3/3 HTTPS passed, but real traffic quality failed: 1048576 bytes, 441.3 KB/s, HTTP 200; quality threshold failed: 1048576 bytes, 441.3 KB/s, HTTP 200",
         "quality": {
-          "ok": true,
-          "url": "https://speed.cloudflare.com/__down?bytes=262144",
+          "ok": false,
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
           "httpCode": 200,
-          "bytes": 262144,
-          "elapsedMs": 1753,
-          "kbps": 146.1,
-          "error": ""
+          "bytes": 1048576,
+          "elapsedMs": 2320,
+          "kbps": 441.3,
+          "error": "quality threshold failed: 1048576 bytes, 441.3 KB/s, HTTP 200"
         }
       },
       {
@@ -3266,18 +3118,38 @@
         "country": "Singapore",
         "source": "retained",
         "linkFingerprint": "63bca6db4f16",
-        "ok": true,
-        "protocol": "trojan",
-        "stages": "TCP + Xray + 3/3 HTTPS + quality 169.6 KB/s",
-        "reason": "",
+        "ok": false,
+        "protocol": "",
+        "stages": "",
+        "reason": "TCP + Xray + 3/3 HTTPS passed, but real traffic quality failed: 1048576 bytes, 471.1 KB/s, HTTP 200; quality threshold failed: 1048576 bytes, 471.1 KB/s, HTTP 200",
         "quality": {
-          "ok": true,
-          "url": "https://speed.cloudflare.com/__down?bytes=262144",
+          "ok": false,
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
           "httpCode": 200,
-          "bytes": 262144,
-          "elapsedMs": 1509,
-          "kbps": 169.6,
-          "error": ""
+          "bytes": 1048576,
+          "elapsedMs": 2174,
+          "kbps": 471.1,
+          "error": "quality threshold failed: 1048576 bytes, 471.1 KB/s, HTTP 200"
+        }
+      },
+      {
+        "id": "keyline-regular-170",
+        "remarks": "🇵🇱 Poland 3",
+        "country": "Poland",
+        "source": "Keyline URL 5",
+        "linkFingerprint": "169d54d05428",
+        "ok": false,
+        "protocol": "",
+        "stages": "",
+        "reason": "TCP + Xray + 3/3 HTTPS passed, but real traffic quality failed: 0 bytes, 0 KB/s, HTTP ?; curl: (28) SSL connection timeout",
+        "quality": {
+          "ok": false,
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
+          "httpCode": 0,
+          "bytes": 0,
+          "elapsedMs": 4003,
+          "kbps": 0,
+          "error": "curl: (28) SSL connection timeout"
         }
       },
       {
@@ -3286,58 +3158,78 @@
         "country": "Singapore",
         "source": "retained",
         "linkFingerprint": "5587163c629a",
-        "ok": true,
-        "protocol": "trojan",
-        "stages": "TCP + Xray + 3/3 HTTPS + quality 165 KB/s",
-        "reason": "",
+        "ok": false,
+        "protocol": "",
+        "stages": "",
+        "reason": "TCP + Xray + 3/3 HTTPS passed, but real traffic quality failed: 1048576 bytes, 469.3 KB/s, HTTP 200; quality threshold failed: 1048576 bytes, 469.3 KB/s, HTTP 200",
         "quality": {
-          "ok": true,
-          "url": "https://speed.cloudflare.com/__down?bytes=262144",
+          "ok": false,
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
           "httpCode": 200,
-          "bytes": 262144,
-          "elapsedMs": 1552,
-          "kbps": 165,
-          "error": ""
+          "bytes": 1048576,
+          "elapsedMs": 2182,
+          "kbps": 469.3,
+          "error": "quality threshold failed: 1048576 bytes, 469.3 KB/s, HTTP 200"
         }
       },
       {
-        "id": "keyline-regular-119",
-        "remarks": "🇲🇩 Moldova 1",
-        "country": "Moldova",
+        "id": "keyline-regular-99",
+        "remarks": "🇯🇵 Japan 7",
+        "country": "Japan",
+        "source": "retained",
+        "linkFingerprint": "8b81d4c1ece7",
+        "ok": false,
+        "protocol": "",
+        "stages": "",
+        "reason": "TCP + Xray + 3/3 HTTPS passed, but real traffic quality failed: 1048576 bytes, 415.1 KB/s, HTTP 200; quality threshold failed: 1048576 bytes, 415.1 KB/s, HTTP 200",
+        "quality": {
+          "ok": false,
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
+          "httpCode": 200,
+          "bytes": 1048576,
+          "elapsedMs": 2467,
+          "kbps": 415.1,
+          "error": "quality threshold failed: 1048576 bytes, 415.1 KB/s, HTTP 200"
+        }
+      },
+      {
+        "id": "keyline-regular-150",
+        "remarks": "🇳🇱 Netherlands 5",
+        "country": "Netherlands",
         "source": "Keyline URL 2",
-        "linkFingerprint": "a27ec18fb5a9",
-        "ok": true,
-        "protocol": "vless",
-        "stages": "TCP + Xray + 3/3 HTTPS + quality 123.3 KB/s",
-        "reason": "",
+        "linkFingerprint": "8107c5ef363c",
+        "ok": false,
+        "protocol": "",
+        "stages": "",
+        "reason": "TCP + Xray + 3/3 HTTPS passed, but real traffic quality failed: 1048576 bytes, 166.1 KB/s, HTTP 200; quality threshold failed: 1048576 bytes, 166.1 KB/s, HTTP 200",
         "quality": {
-          "ok": true,
-          "url": "https://speed.cloudflare.com/__down?bytes=262144",
+          "ok": false,
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
           "httpCode": 200,
-          "bytes": 262144,
-          "elapsedMs": 2076,
-          "kbps": 123.3,
-          "error": ""
+          "bytes": 1048576,
+          "elapsedMs": 6163,
+          "kbps": 166.1,
+          "error": "quality threshold failed: 1048576 bytes, 166.1 KB/s, HTTP 200"
         }
       },
       {
-        "id": "keyline-regular-183",
-        "remarks": "🇷🇺 Russia 2",
+        "id": "keyline-regular-180",
+        "remarks": "🇷🇺 Russia 1",
         "country": "Russia",
-        "source": "Keyline URL 5",
-        "linkFingerprint": "237417ba499e",
-        "ok": true,
-        "protocol": "vless",
-        "stages": "TCP + Xray + 3/3 HTTPS + quality 146.8 KB/s",
-        "reason": "",
+        "source": "retained",
+        "linkFingerprint": "8fb589cce3e9",
+        "ok": false,
+        "protocol": "",
+        "stages": "",
+        "reason": "TCP + Xray + 3/3 HTTPS passed, but real traffic quality failed: 1048576 bytes, 146.4 KB/s, HTTP 200; quality threshold failed: 1048576 bytes, 146.4 KB/s, HTTP 200",
         "quality": {
-          "ok": true,
-          "url": "https://speed.cloudflare.com/__down?bytes=262144",
+          "ok": false,
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
           "httpCode": 200,
-          "bytes": 262144,
-          "elapsedMs": 1744,
-          "kbps": 146.8,
-          "error": ""
+          "bytes": 1048576,
+          "elapsedMs": 6992,
+          "kbps": 146.4,
+          "error": "quality threshold failed: 1048576 bytes, 146.4 KB/s, HTTP 200"
         }
       },
       {
@@ -3346,18 +3238,18 @@
         "country": "Singapore",
         "source": "retained",
         "linkFingerprint": "fb84bf49729f",
-        "ok": true,
-        "protocol": "trojan",
-        "stages": "TCP + Xray + 3/3 HTTPS + quality 166.4 KB/s",
-        "reason": "",
+        "ok": false,
+        "protocol": "",
+        "stages": "",
+        "reason": "TCP + Xray + 3/3 HTTPS passed, but real traffic quality failed: 1048576 bytes, 467.1 KB/s, HTTP 200; quality threshold failed: 1048576 bytes, 467.1 KB/s, HTTP 200",
         "quality": {
-          "ok": true,
-          "url": "https://speed.cloudflare.com/__down?bytes=262144",
+          "ok": false,
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
           "httpCode": 200,
-          "bytes": 262144,
-          "elapsedMs": 1538,
-          "kbps": 166.4,
-          "error": ""
+          "bytes": 1048576,
+          "elapsedMs": 2192,
+          "kbps": 467.1,
+          "error": "quality threshold failed: 1048576 bytes, 467.1 KB/s, HTTP 200"
         }
       },
       {
@@ -3366,18 +3258,58 @@
         "country": "Singapore",
         "source": "retained",
         "linkFingerprint": "ebd708ba4fad",
-        "ok": true,
-        "protocol": "trojan",
-        "stages": "TCP + Xray + 3/3 HTTPS + quality 165 KB/s",
-        "reason": "",
+        "ok": false,
+        "protocol": "",
+        "stages": "",
+        "reason": "TCP + Xray + 3/3 HTTPS passed, but real traffic quality failed: 1048576 bytes, 467.5 KB/s, HTTP 200; quality threshold failed: 1048576 bytes, 467.5 KB/s, HTTP 200",
         "quality": {
-          "ok": true,
-          "url": "https://speed.cloudflare.com/__down?bytes=262144",
+          "ok": false,
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
           "httpCode": 200,
-          "bytes": 262144,
-          "elapsedMs": 1552,
-          "kbps": 165,
-          "error": ""
+          "bytes": 1048576,
+          "elapsedMs": 2190,
+          "kbps": 467.5,
+          "error": "quality threshold failed: 1048576 bytes, 467.5 KB/s, HTTP 200"
+        }
+      },
+      {
+        "id": "keyline-regular-104",
+        "remarks": "🇰🇿 Kazakhstan 1",
+        "country": "Kazakhstan",
+        "source": "Keyline URL 5",
+        "linkFingerprint": "242dd6f31e6b",
+        "ok": false,
+        "protocol": "",
+        "stages": "",
+        "reason": "TCP + Xray + 3/3 HTTPS passed, but real traffic quality failed: 1048576 bytes, 145.6 KB/s, HTTP 200; quality threshold failed: 1048576 bytes, 145.6 KB/s, HTTP 200",
+        "quality": {
+          "ok": false,
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
+          "httpCode": 200,
+          "bytes": 1048576,
+          "elapsedMs": 7032,
+          "kbps": 145.6,
+          "error": "quality threshold failed: 1048576 bytes, 145.6 KB/s, HTTP 200"
+        }
+      },
+      {
+        "id": "keyline-regular-119",
+        "remarks": "🇲🇩 Moldova 1",
+        "country": "Moldova",
+        "source": "Keyline URL 2",
+        "linkFingerprint": "a27ec18fb5a9",
+        "ok": false,
+        "protocol": "",
+        "stages": "",
+        "reason": "TCP + Xray + 3/3 HTTPS passed, but real traffic quality failed: 1048576 bytes, 267.4 KB/s, HTTP 200; quality threshold failed: 1048576 bytes, 267.4 KB/s, HTTP 200",
+        "quality": {
+          "ok": false,
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
+          "httpCode": 200,
+          "bytes": 1048576,
+          "elapsedMs": 3830,
+          "kbps": 267.4,
+          "error": "quality threshold failed: 1048576 bytes, 267.4 KB/s, HTTP 200"
         }
       },
       {
@@ -3386,18 +3318,18 @@
         "country": "Singapore",
         "source": "retained",
         "linkFingerprint": "6fbdee87a048",
-        "ok": true,
-        "protocol": "trojan",
-        "stages": "TCP + Xray + 3/3 HTTPS + quality 169.1 KB/s",
-        "reason": "",
+        "ok": false,
+        "protocol": "",
+        "stages": "",
+        "reason": "TCP + Xray + 3/3 HTTPS passed, but real traffic quality failed: 1048576 bytes, 467.8 KB/s, HTTP 200; quality threshold failed: 1048576 bytes, 467.8 KB/s, HTTP 200",
         "quality": {
-          "ok": true,
-          "url": "https://speed.cloudflare.com/__down?bytes=262144",
+          "ok": false,
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
           "httpCode": 200,
-          "bytes": 262144,
-          "elapsedMs": 1514,
-          "kbps": 169.1,
-          "error": ""
+          "bytes": 1048576,
+          "elapsedMs": 2189,
+          "kbps": 467.8,
+          "error": "quality threshold failed: 1048576 bytes, 467.8 KB/s, HTTP 200"
         }
       },
       {
@@ -3406,18 +3338,18 @@
         "country": "Singapore",
         "source": "retained",
         "linkFingerprint": "61d4c22efbec",
-        "ok": true,
-        "protocol": "trojan",
-        "stages": "TCP + Xray + 3/3 HTTPS + quality 170.6 KB/s",
-        "reason": "",
+        "ok": false,
+        "protocol": "",
+        "stages": "",
+        "reason": "TCP + Xray + 3/3 HTTPS passed, but real traffic quality failed: 1048576 bytes, 464.2 KB/s, HTTP 200; quality threshold failed: 1048576 bytes, 464.2 KB/s, HTTP 200",
         "quality": {
-          "ok": true,
-          "url": "https://speed.cloudflare.com/__down?bytes=262144",
+          "ok": false,
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
           "httpCode": 200,
-          "bytes": 262144,
-          "elapsedMs": 1501,
-          "kbps": 170.6,
-          "error": ""
+          "bytes": 1048576,
+          "elapsedMs": 2206,
+          "kbps": 464.2,
+          "error": "quality threshold failed: 1048576 bytes, 464.2 KB/s, HTTP 200"
         }
       },
       {
@@ -3426,18 +3358,18 @@
         "country": "Singapore",
         "source": "retained",
         "linkFingerprint": "1581ff9af66a",
-        "ok": true,
-        "protocol": "trojan",
-        "stages": "TCP + Xray + 3/3 HTTPS + quality 166.4 KB/s",
-        "reason": "",
+        "ok": false,
+        "protocol": "",
+        "stages": "",
+        "reason": "TCP + Xray + 3/3 HTTPS passed, but real traffic quality failed: 1048576 bytes, 465.2 KB/s, HTTP 200; quality threshold failed: 1048576 bytes, 465.2 KB/s, HTTP 200",
         "quality": {
-          "ok": true,
-          "url": "https://speed.cloudflare.com/__down?bytes=262144",
+          "ok": false,
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
           "httpCode": 200,
-          "bytes": 262144,
-          "elapsedMs": 1539,
-          "kbps": 166.4,
-          "error": ""
+          "bytes": 1048576,
+          "elapsedMs": 2201,
+          "kbps": 465.2,
+          "error": "quality threshold failed: 1048576 bytes, 465.2 KB/s, HTTP 200"
         }
       },
       {
@@ -3446,18 +3378,18 @@
         "country": "Singapore",
         "source": "retained",
         "linkFingerprint": "df41fa61c565",
-        "ok": true,
-        "protocol": "trojan",
-        "stages": "TCP + Xray + 3/3 HTTPS + quality 166.9 KB/s",
-        "reason": "",
+        "ok": false,
+        "protocol": "",
+        "stages": "",
+        "reason": "TCP + Xray + 3/3 HTTPS passed, but real traffic quality failed: 1048576 bytes, 467 KB/s, HTTP 200; quality threshold failed: 1048576 bytes, 467 KB/s, HTTP 200",
         "quality": {
-          "ok": true,
-          "url": "https://speed.cloudflare.com/__down?bytes=262144",
+          "ok": false,
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
           "httpCode": 200,
-          "bytes": 262144,
-          "elapsedMs": 1534,
-          "kbps": 166.9,
-          "error": ""
+          "bytes": 1048576,
+          "elapsedMs": 2193,
+          "kbps": 467,
+          "error": "quality threshold failed: 1048576 bytes, 467 KB/s, HTTP 200"
         }
       },
       {
@@ -3466,18 +3398,18 @@
         "country": "Singapore",
         "source": "retained",
         "linkFingerprint": "c831fd70ab93",
-        "ok": true,
-        "protocol": "trojan",
-        "stages": "TCP + Xray + 3/3 HTTPS + quality 165.4 KB/s",
-        "reason": "",
+        "ok": false,
+        "protocol": "",
+        "stages": "",
+        "reason": "TCP + Xray + 3/3 HTTPS passed, but real traffic quality failed: 1048576 bytes, 457.1 KB/s, HTTP 200; quality threshold failed: 1048576 bytes, 457.1 KB/s, HTTP 200",
         "quality": {
-          "ok": true,
-          "url": "https://speed.cloudflare.com/__down?bytes=262144",
+          "ok": false,
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
           "httpCode": 200,
-          "bytes": 262144,
-          "elapsedMs": 1548,
-          "kbps": 165.4,
-          "error": ""
+          "bytes": 1048576,
+          "elapsedMs": 2240,
+          "kbps": 457.1,
+          "error": "quality threshold failed: 1048576 bytes, 457.1 KB/s, HTTP 200"
         }
       },
       {
@@ -3486,18 +3418,18 @@
         "country": "Singapore",
         "source": "retained",
         "linkFingerprint": "36f717885797",
-        "ok": true,
-        "protocol": "trojan",
-        "stages": "TCP + Xray + 3/3 HTTPS + quality 168.6 KB/s",
-        "reason": "",
+        "ok": false,
+        "protocol": "",
+        "stages": "",
+        "reason": "TCP + Xray + 3/3 HTTPS passed, but real traffic quality failed: 1048576 bytes, 469.7 KB/s, HTTP 200; quality threshold failed: 1048576 bytes, 469.7 KB/s, HTTP 200",
         "quality": {
-          "ok": true,
-          "url": "https://speed.cloudflare.com/__down?bytes=262144",
+          "ok": false,
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
           "httpCode": 200,
-          "bytes": 262144,
-          "elapsedMs": 1519,
-          "kbps": 168.6,
-          "error": ""
+          "bytes": 1048576,
+          "elapsedMs": 2180,
+          "kbps": 469.7,
+          "error": "quality threshold failed: 1048576 bytes, 469.7 KB/s, HTTP 200"
         }
       },
       {
@@ -3506,58 +3438,18 @@
         "country": "Singapore",
         "source": "retained",
         "linkFingerprint": "f6a98725b52b",
-        "ok": true,
-        "protocol": "trojan",
-        "stages": "TCP + Xray + 3/3 HTTPS + quality 166.7 KB/s",
-        "reason": "",
+        "ok": false,
+        "protocol": "",
+        "stages": "",
+        "reason": "TCP + Xray + 3/3 HTTPS passed, but real traffic quality failed: 1048576 bytes, 464.6 KB/s, HTTP 200; quality threshold failed: 1048576 bytes, 464.6 KB/s, HTTP 200",
         "quality": {
-          "ok": true,
-          "url": "https://speed.cloudflare.com/__down?bytes=262144",
+          "ok": false,
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
           "httpCode": 200,
-          "bytes": 262144,
-          "elapsedMs": 1535,
-          "kbps": 166.7,
-          "error": ""
-        }
-      },
-      {
-        "id": "keyline-regular-291",
-        "remarks": "🇸🇬 Singapore 12",
-        "country": "Singapore",
-        "source": "retained",
-        "linkFingerprint": "55ff79ccf720",
-        "ok": true,
-        "protocol": "trojan",
-        "stages": "TCP + Xray + 3/3 HTTPS + quality 166.2 KB/s",
-        "reason": "",
-        "quality": {
-          "ok": true,
-          "url": "https://speed.cloudflare.com/__down?bytes=262144",
-          "httpCode": 200,
-          "bytes": 262144,
-          "elapsedMs": 1540,
-          "kbps": 166.2,
-          "error": ""
-        }
-      },
-      {
-        "id": "keyline-regular-292",
-        "remarks": "🇸🇬 Singapore 13",
-        "country": "Singapore",
-        "source": "retained",
-        "linkFingerprint": "a8d5686bccf5",
-        "ok": true,
-        "protocol": "trojan",
-        "stages": "TCP + Xray + 3/3 HTTPS + quality 169.8 KB/s",
-        "reason": "",
-        "quality": {
-          "ok": true,
-          "url": "https://speed.cloudflare.com/__down?bytes=262144",
-          "httpCode": 200,
-          "bytes": 262144,
-          "elapsedMs": 1507,
-          "kbps": 169.8,
-          "error": ""
+          "bytes": 1048576,
+          "elapsedMs": 2204,
+          "kbps": 464.6,
+          "error": "quality threshold failed: 1048576 bytes, 464.6 KB/s, HTTP 200"
         }
       },
       {
@@ -3568,36 +3460,56 @@
         "linkFingerprint": "22504d34ba6c",
         "ok": true,
         "protocol": "trojan",
-        "stages": "TCP + Xray + 3/3 HTTPS + quality 209.2 KB/s",
+        "stages": "TCP + Xray + 3/3 HTTPS + quality 606.3 KB/s",
         "reason": "",
         "quality": {
           "ok": true,
-          "url": "https://speed.cloudflare.com/__down?bytes=262144",
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
           "httpCode": 200,
-          "bytes": 262144,
-          "elapsedMs": 1224,
-          "kbps": 209.2,
+          "bytes": 1048576,
+          "elapsedMs": 1689,
+          "kbps": 606.3,
           "error": ""
         }
       },
       {
-        "id": "keyline-regular-293",
-        "remarks": "🇸🇬 Singapore 14",
+        "id": "keyline-regular-183",
+        "remarks": "🇷🇺 Russia 3",
+        "country": "Russia",
+        "source": "Keyline URL 5",
+        "linkFingerprint": "237417ba499e",
+        "ok": false,
+        "protocol": "",
+        "stages": "",
+        "reason": "TCP + Xray + 3/3 HTTPS passed, but real traffic quality failed: 1048576 bytes, 415.7 KB/s, HTTP 200; quality threshold failed: 1048576 bytes, 415.7 KB/s, HTTP 200",
+        "quality": {
+          "ok": false,
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
+          "httpCode": 200,
+          "bytes": 1048576,
+          "elapsedMs": 2464,
+          "kbps": 415.7,
+          "error": "quality threshold failed: 1048576 bytes, 415.7 KB/s, HTTP 200"
+        }
+      },
+      {
+        "id": "keyline-regular-292",
+        "remarks": "🇸🇬 Singapore 13",
         "country": "Singapore",
         "source": "retained",
-        "linkFingerprint": "0588d556a514",
-        "ok": true,
-        "protocol": "trojan",
-        "stages": "TCP + Xray + 3/3 HTTPS + quality 167.5 KB/s",
-        "reason": "",
+        "linkFingerprint": "a8d5686bccf5",
+        "ok": false,
+        "protocol": "",
+        "stages": "",
+        "reason": "TCP + Xray + 3/3 HTTPS passed, but real traffic quality failed: 1048576 bytes, 468.4 KB/s, HTTP 200; quality threshold failed: 1048576 bytes, 468.4 KB/s, HTTP 200",
         "quality": {
-          "ok": true,
-          "url": "https://speed.cloudflare.com/__down?bytes=262144",
+          "ok": false,
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
           "httpCode": 200,
-          "bytes": 262144,
-          "elapsedMs": 1528,
-          "kbps": 167.5,
-          "error": ""
+          "bytes": 1048576,
+          "elapsedMs": 2186,
+          "kbps": 468.4,
+          "error": "quality threshold failed: 1048576 bytes, 468.4 KB/s, HTTP 200"
         }
       },
       {
@@ -3608,36 +3520,56 @@
         "linkFingerprint": "1779be085e98",
         "ok": true,
         "protocol": "trojan",
-        "stages": "TCP + Xray + 3/3 HTTPS + quality 212.5 KB/s",
+        "stages": "TCP + Xray + 3/3 HTTPS + quality 612.5 KB/s",
         "reason": "",
         "quality": {
           "ok": true,
-          "url": "https://speed.cloudflare.com/__down?bytes=262144",
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
           "httpCode": 200,
-          "bytes": 262144,
-          "elapsedMs": 1205,
-          "kbps": 212.5,
+          "bytes": 1048576,
+          "elapsedMs": 1672,
+          "kbps": 612.5,
           "error": ""
         }
       },
       {
-        "id": "keyline-regular-263",
-        "remarks": "🇷🇺 Russia 5",
-        "country": "Russia",
-        "source": "Keyline URL 2",
-        "linkFingerprint": "e2c93cb96d3a",
-        "ok": true,
-        "protocol": "vless",
-        "stages": "TCP + Xray + 3/3 HTTPS + quality 151.2 KB/s",
-        "reason": "",
+        "id": "keyline-regular-291",
+        "remarks": "🇸🇬 Singapore 12",
+        "country": "Singapore",
+        "source": "retained",
+        "linkFingerprint": "55ff79ccf720",
+        "ok": false,
+        "protocol": "",
+        "stages": "",
+        "reason": "TCP + Xray + 3/3 HTTPS passed, but real traffic quality failed: 1048576 bytes, 314.8 KB/s, HTTP 200; quality threshold failed: 1048576 bytes, 314.8 KB/s, HTTP 200",
         "quality": {
-          "ok": true,
-          "url": "https://speed.cloudflare.com/__down?bytes=262144",
+          "ok": false,
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
           "httpCode": 200,
-          "bytes": 262144,
-          "elapsedMs": 1693,
-          "kbps": 151.2,
-          "error": ""
+          "bytes": 1048576,
+          "elapsedMs": 3253,
+          "kbps": 314.8,
+          "error": "quality threshold failed: 1048576 bytes, 314.8 KB/s, HTTP 200"
+        }
+      },
+      {
+        "id": "keyline-regular-293",
+        "remarks": "🇸🇬 Singapore 14",
+        "country": "Singapore",
+        "source": "retained",
+        "linkFingerprint": "0588d556a514",
+        "ok": false,
+        "protocol": "",
+        "stages": "",
+        "reason": "TCP + Xray + 3/3 HTTPS passed, but real traffic quality failed: 1048576 bytes, 469.8 KB/s, HTTP 200; quality threshold failed: 1048576 bytes, 469.8 KB/s, HTTP 200",
+        "quality": {
+          "ok": false,
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
+          "httpCode": 200,
+          "bytes": 1048576,
+          "elapsedMs": 2180,
+          "kbps": 469.8,
+          "error": "quality threshold failed: 1048576 bytes, 469.8 KB/s, HTTP 200"
         }
       },
       {
@@ -3648,15 +3580,15 @@
         "linkFingerprint": "71c7612b8c93",
         "ok": true,
         "protocol": "trojan",
-        "stages": "TCP + Xray + 3/3 HTTPS + quality 198.4 KB/s",
+        "stages": "TCP + Xray + 3/3 HTTPS + quality 623.9 KB/s",
         "reason": "",
         "quality": {
           "ok": true,
-          "url": "https://speed.cloudflare.com/__down?bytes=262144",
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
           "httpCode": 200,
-          "bytes": 262144,
-          "elapsedMs": 1290,
-          "kbps": 198.4,
+          "bytes": 1048576,
+          "elapsedMs": 1641,
+          "kbps": 623.9,
           "error": ""
         }
       },
@@ -3668,36 +3600,16 @@
         "linkFingerprint": "600eb655dcf0",
         "ok": true,
         "protocol": "trojan",
-        "stages": "TCP + Xray + 3/3 HTTPS + quality 211.5 KB/s",
+        "stages": "TCP + Xray + 3/3 HTTPS + quality 611.7 KB/s",
         "reason": "",
         "quality": {
           "ok": true,
-          "url": "https://speed.cloudflare.com/__down?bytes=262144",
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
           "httpCode": 200,
-          "bytes": 262144,
-          "elapsedMs": 1210,
-          "kbps": 211.5,
+          "bytes": 1048576,
+          "elapsedMs": 1674,
+          "kbps": 611.7,
           "error": ""
-        }
-      },
-      {
-        "id": "keyline-regular-224",
-        "remarks": "🇷🇺 Russia 4",
-        "country": "Russia",
-        "source": "Keyline URL 2",
-        "linkFingerprint": "842e232e29ed",
-        "ok": false,
-        "protocol": "",
-        "stages": "",
-        "reason": "TCP + Xray + 3/3 HTTPS passed, but real traffic quality failed: 0 bytes, 0 KB/s, HTTP ?; curl: (28) SSL connection timeout",
-        "quality": {
-          "ok": false,
-          "url": "https://speed.cloudflare.com/__down?bytes=262144",
-          "httpCode": 0,
-          "bytes": 0,
-          "elapsedMs": 4003,
-          "kbps": 0,
-          "error": "curl: (28) SSL connection timeout"
         }
       },
       {
@@ -3708,15 +3620,15 @@
         "linkFingerprint": "3c7fd3d1a9ba",
         "ok": true,
         "protocol": "trojan",
-        "stages": "TCP + Xray + 3/3 HTTPS + quality 212.6 KB/s",
+        "stages": "TCP + Xray + 3/3 HTTPS + quality 618.7 KB/s",
         "reason": "",
         "quality": {
           "ok": true,
-          "url": "https://speed.cloudflare.com/__down?bytes=262144",
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
           "httpCode": 200,
-          "bytes": 262144,
-          "elapsedMs": 1204,
-          "kbps": 212.6,
+          "bytes": 1048576,
+          "elapsedMs": 1655,
+          "kbps": 618.7,
           "error": ""
         }
       },
@@ -3728,15 +3640,15 @@
         "linkFingerprint": "046ed668b8bc",
         "ok": true,
         "protocol": "trojan",
-        "stages": "TCP + Xray + 3/3 HTTPS + quality 206.9 KB/s",
+        "stages": "TCP + Xray + 3/3 HTTPS + quality 619 KB/s",
         "reason": "",
         "quality": {
           "ok": true,
-          "url": "https://speed.cloudflare.com/__down?bytes=262144",
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
           "httpCode": 200,
-          "bytes": 262144,
-          "elapsedMs": 1237,
-          "kbps": 206.9,
+          "bytes": 1048576,
+          "elapsedMs": 1654,
+          "kbps": 619,
           "error": ""
         }
       },
@@ -3748,15 +3660,15 @@
         "linkFingerprint": "38cbf63fc272",
         "ok": true,
         "protocol": "trojan",
-        "stages": "TCP + Xray + 3/3 HTTPS + quality 206.9 KB/s",
+        "stages": "TCP + Xray + 3/3 HTTPS + quality 582.3 KB/s",
         "reason": "",
         "quality": {
           "ok": true,
-          "url": "https://speed.cloudflare.com/__down?bytes=262144",
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
           "httpCode": 200,
-          "bytes": 262144,
-          "elapsedMs": 1237,
-          "kbps": 206.9,
+          "bytes": 1048576,
+          "elapsedMs": 1759,
+          "kbps": 582.3,
           "error": ""
         }
       },
@@ -3768,15 +3680,15 @@
         "linkFingerprint": "b5eeb0aca5b9",
         "ok": true,
         "protocol": "trojan",
-        "stages": "TCP + Xray + 3/3 HTTPS + quality 206.6 KB/s",
+        "stages": "TCP + Xray + 3/3 HTTPS + quality 615.8 KB/s",
         "reason": "",
         "quality": {
           "ok": true,
-          "url": "https://speed.cloudflare.com/__down?bytes=262144",
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
           "httpCode": 200,
-          "bytes": 262144,
-          "elapsedMs": 1239,
-          "kbps": 206.6,
+          "bytes": 1048576,
+          "elapsedMs": 1663,
+          "kbps": 615.8,
           "error": ""
         }
       },
@@ -3788,15 +3700,15 @@
         "linkFingerprint": "560ff5476ccd",
         "ok": true,
         "protocol": "trojan",
-        "stages": "TCP + Xray + 3/3 HTTPS + quality 207.4 KB/s",
+        "stages": "TCP + Xray + 3/3 HTTPS + quality 608.9 KB/s",
         "reason": "",
         "quality": {
           "ok": true,
-          "url": "https://speed.cloudflare.com/__down?bytes=262144",
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
           "httpCode": 200,
-          "bytes": 262144,
-          "elapsedMs": 1235,
-          "kbps": 207.4,
+          "bytes": 1048576,
+          "elapsedMs": 1682,
+          "kbps": 608.9,
           "error": ""
         }
       },
@@ -3808,15 +3720,15 @@
         "linkFingerprint": "5854051e1434",
         "ok": true,
         "protocol": "trojan",
-        "stages": "TCP + Xray + 3/3 HTTPS + quality 212.1 KB/s",
+        "stages": "TCP + Xray + 3/3 HTTPS + quality 621.6 KB/s",
         "reason": "",
         "quality": {
           "ok": true,
-          "url": "https://speed.cloudflare.com/__down?bytes=262144",
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
           "httpCode": 200,
-          "bytes": 262144,
-          "elapsedMs": 1207,
-          "kbps": 212.1,
+          "bytes": 1048576,
+          "elapsedMs": 1647,
+          "kbps": 621.6,
           "error": ""
         }
       },
@@ -3828,35 +3740,15 @@
         "linkFingerprint": "c70038f1168a",
         "ok": true,
         "protocol": "trojan",
-        "stages": "TCP + Xray + 3/3 HTTPS + quality 207.1 KB/s",
+        "stages": "TCP + Xray + 3/3 HTTPS + quality 644.9 KB/s",
         "reason": "",
         "quality": {
           "ok": true,
-          "url": "https://speed.cloudflare.com/__down?bytes=262144",
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
           "httpCode": 200,
-          "bytes": 262144,
-          "elapsedMs": 1236,
-          "kbps": 207.1,
-          "error": ""
-        }
-      },
-      {
-        "id": "keyline-regular-309",
-        "remarks": "🇰🇷 South Korea 12",
-        "country": "South Korea",
-        "source": "Keyline URL 3",
-        "linkFingerprint": "ca7245b881f8",
-        "ok": true,
-        "protocol": "trojan",
-        "stages": "TCP + Xray + 3/3 HTTPS + quality 211.1 KB/s",
-        "reason": "",
-        "quality": {
-          "ok": true,
-          "url": "https://speed.cloudflare.com/__down?bytes=262144",
-          "httpCode": 200,
-          "bytes": 262144,
-          "elapsedMs": 1213,
-          "kbps": 211.1,
+          "bytes": 1048576,
+          "elapsedMs": 1588,
+          "kbps": 644.9,
           "error": ""
         }
       },
@@ -3868,95 +3760,55 @@
         "linkFingerprint": "e2cc202d75a1",
         "ok": true,
         "protocol": "vless",
-        "stages": "TCP + Xray + 3/3 HTTPS + quality 299.3 KB/s",
+        "stages": "TCP + Xray + 3/3 HTTPS + quality 626.9 KB/s",
         "reason": "",
         "quality": {
           "ok": true,
-          "url": "https://speed.cloudflare.com/__down?bytes=262144",
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
           "httpCode": 200,
-          "bytes": 262144,
-          "elapsedMs": 855,
-          "kbps": 299.3,
+          "bytes": 1048576,
+          "elapsedMs": 1633,
+          "kbps": 626.9,
+          "error": ""
+        }
+      },
+      {
+        "id": "keyline-regular-309",
+        "remarks": "🇰🇷 South Korea 12",
+        "country": "South Korea",
+        "source": "Keyline URL 3",
+        "linkFingerprint": "ca7245b881f8",
+        "ok": true,
+        "protocol": "trojan",
+        "stages": "TCP + Xray + 3/3 HTTPS + quality 614.1 KB/s",
+        "reason": "",
+        "quality": {
+          "ok": true,
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
+          "httpCode": 200,
+          "bytes": 1048576,
+          "elapsedMs": 1668,
+          "kbps": 614.1,
           "error": ""
         }
       },
       {
         "id": "keyline-regular-353",
-        "remarks": "🇬🇧 United Kingdom 2",
+        "remarks": "🇬🇧 United Kingdom 1",
         "country": "United Kingdom",
         "source": "Keyline URL 5",
         "linkFingerprint": "41879ea4a589",
         "ok": true,
         "protocol": "vless",
-        "stages": "TCP + Xray + 3/3 HTTPS + quality 194.3 KB/s",
+        "stages": "TCP + Xray + 3/3 HTTPS + quality 569.4 KB/s",
         "reason": "",
         "quality": {
           "ok": true,
-          "url": "https://speed.cloudflare.com/__down?bytes=262144",
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
           "httpCode": 200,
-          "bytes": 262144,
-          "elapsedMs": 1318,
-          "kbps": 194.3,
-          "error": ""
-        }
-      },
-      {
-        "id": "keyline-regular-340",
-        "remarks": "🇹🇷 Turkey 1",
-        "country": "Turkey",
-        "source": "Keyline URL 3",
-        "linkFingerprint": "91bef95e058f",
-        "ok": true,
-        "protocol": "trojan",
-        "stages": "TCP + Xray + 3/3 HTTPS + quality 220.3 KB/s",
-        "reason": "",
-        "quality": {
-          "ok": true,
-          "url": "https://speed.cloudflare.com/__down?bytes=262144",
-          "httpCode": 200,
-          "bytes": 262144,
-          "elapsedMs": 1162,
-          "kbps": 220.3,
-          "error": ""
-        }
-      },
-      {
-        "id": "keyline-regular-327",
-        "remarks": "🇸🇪 Sweden 1",
-        "country": "Sweden",
-        "source": "Keyline URL 2",
-        "linkFingerprint": "eec40c374e3b",
-        "ok": true,
-        "protocol": "vless",
-        "stages": "TCP + Xray + 3/3 HTTPS + quality 123.6 KB/s",
-        "reason": "",
-        "quality": {
-          "ok": true,
-          "url": "https://speed.cloudflare.com/__down?bytes=262144",
-          "httpCode": 200,
-          "bytes": 262144,
-          "elapsedMs": 2072,
-          "kbps": 123.6,
-          "error": ""
-        }
-      },
-      {
-        "id": "keyline-regular-351",
-        "remarks": "🇬🇧 United Kingdom 1",
-        "country": "United Kingdom",
-        "source": "retained",
-        "linkFingerprint": "4f7046dcaa32",
-        "ok": true,
-        "protocol": "vless",
-        "stages": "TCP + Xray + 3/3 HTTPS + quality 173.3 KB/s",
-        "reason": "",
-        "quality": {
-          "ok": true,
-          "url": "https://speed.cloudflare.com/__down?bytes=262144",
-          "httpCode": 200,
-          "bytes": 262144,
-          "elapsedMs": 1477,
-          "kbps": 173.3,
+          "bytes": 1048576,
+          "elapsedMs": 1798,
+          "kbps": 569.4,
           "error": ""
         }
       },
@@ -3968,35 +3820,35 @@
         "linkFingerprint": "c9c9f534955f",
         "ok": true,
         "protocol": "vless",
-        "stages": "TCP + Xray + 3/3 HTTPS + quality 431.7 KB/s",
+        "stages": "TCP + Xray + 3/3 HTTPS + quality 1375.4 KB/s",
         "reason": "",
         "quality": {
           "ok": true,
-          "url": "https://speed.cloudflare.com/__down?bytes=262144",
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
           "httpCode": 200,
-          "bytes": 262144,
-          "elapsedMs": 593,
-          "kbps": 431.7,
+          "bytes": 1048576,
+          "elapsedMs": 745,
+          "kbps": 1375.4,
           "error": ""
         }
       },
       {
-        "id": "keyline-regular-357",
-        "remarks": "🇺🇸 United States 3",
-        "country": "United States",
+        "id": "keyline-regular-351",
+        "remarks": "🇬🇧 United Kingdom 2",
+        "country": "United Kingdom",
         "source": "retained",
-        "linkFingerprint": "830cd0f43baf",
+        "linkFingerprint": "4f7046dcaa32",
         "ok": true,
         "protocol": "vless",
-        "stages": "TCP + Xray + 3/3 HTTPS + quality 301.2 KB/s",
+        "stages": "TCP + Xray + 3/3 HTTPS + quality 706.3 KB/s",
         "reason": "",
         "quality": {
           "ok": true,
-          "url": "https://speed.cloudflare.com/__down?bytes=262144",
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
           "httpCode": 200,
-          "bytes": 262144,
-          "elapsedMs": 850,
-          "kbps": 301.2,
+          "bytes": 1048576,
+          "elapsedMs": 1450,
+          "kbps": 706.3,
           "error": ""
         }
       },
@@ -4008,245 +3860,143 @@
         "linkFingerprint": "b1dc81c9289f",
         "ok": true,
         "protocol": "vless",
-        "stages": "TCP + Xray + 3/3 HTTPS + quality 331.9 KB/s",
+        "stages": "TCP + Xray + 3/3 HTTPS + quality 949.6 KB/s",
         "reason": "",
         "quality": {
           "ok": true,
-          "url": "https://speed.cloudflare.com/__down?bytes=262144",
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
           "httpCode": 200,
-          "bytes": 262144,
-          "elapsedMs": 771,
-          "kbps": 331.9,
+          "bytes": 1048576,
+          "elapsedMs": 1078,
+          "kbps": 949.6,
           "error": ""
         }
       },
       {
+        "id": "keyline-regular-357",
+        "remarks": "🇺🇸 United States 3",
+        "country": "United States",
+        "source": "retained",
+        "linkFingerprint": "830cd0f43baf",
+        "ok": true,
+        "protocol": "vless",
+        "stages": "TCP + Xray + 3/3 HTTPS + quality 741.1 KB/s",
+        "reason": "",
+        "quality": {
+          "ok": true,
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
+          "httpCode": 200,
+          "bytes": 1048576,
+          "elapsedMs": 1382,
+          "kbps": 741.1,
+          "error": ""
+        }
+      },
+      {
+        "id": "keyline-regular-263",
+        "remarks": "🇷🇺 Russia 4",
+        "country": "Russia",
+        "source": "Keyline URL 2",
+        "linkFingerprint": "e2c93cb96d3a",
+        "ok": false,
+        "protocol": "",
+        "stages": "",
+        "reason": "TCP reachable, Xray SOCKS started, 2/3 HTTPS proxy probes passed; https://www.gstatic.com/generate_204: https://www.gstatic.com/generate_204 attempt 1: curl: (28) SSL connection timeout; https://www.gstatic.com/generate_204 attempt 2: curl: (28) SSL connection timeout",
+        "quality": null
+      },
+      {
+        "id": "keyline-regular-340",
+        "remarks": "🇹🇷 Turkey 1",
+        "country": "Turkey",
+        "source": "Keyline URL 3",
+        "linkFingerprint": "91bef95e058f",
+        "ok": false,
+        "protocol": "",
+        "stages": "",
+        "reason": "TCP + Xray + 3/3 HTTPS passed, but real traffic quality failed: 1048576 bytes, 225.2 KB/s, HTTP 200; quality threshold failed: 1048576 bytes, 225.2 KB/s, HTTP 200",
+        "quality": {
+          "ok": false,
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
+          "httpCode": 200,
+          "bytes": 1048576,
+          "elapsedMs": 4548,
+          "kbps": 225.2,
+          "error": "quality threshold failed: 1048576 bytes, 225.2 KB/s, HTTP 200"
+        }
+      },
+      {
         "id": "keyline-regular-363",
-        "remarks": "🇺🇸 United States 6",
+        "remarks": "🇺🇸 United States 5",
         "country": "United States",
         "source": "retained",
         "linkFingerprint": "8ae9f0729dff",
         "ok": true,
         "protocol": "vless",
-        "stages": "TCP + Xray + 3/3 HTTPS + quality 192.4 KB/s",
+        "stages": "TCP + Xray + 3/3 HTTPS + quality 529.5 KB/s",
         "reason": "",
         "quality": {
           "ok": true,
-          "url": "https://speed.cloudflare.com/__down?bytes=262144",
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
           "httpCode": 200,
-          "bytes": 262144,
-          "elapsedMs": 1330,
-          "kbps": 192.4,
+          "bytes": 1048576,
+          "elapsedMs": 1934,
+          "kbps": 529.5,
           "error": ""
+        }
+      },
+      {
+        "id": "keyline-regular-332",
+        "remarks": "🇨🇭 Switzerland 1",
+        "country": "Switzerland",
+        "source": "retained",
+        "linkFingerprint": "204beef2dd21",
+        "ok": false,
+        "protocol": "",
+        "stages": "",
+        "reason": "TCP + Xray + 3/3 HTTPS passed, but real traffic quality failed: 1048576 bytes, 397.3 KB/s, HTTP 200; quality threshold failed: 1048576 bytes, 397.3 KB/s, HTTP 200",
+        "quality": {
+          "ok": false,
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
+          "httpCode": 200,
+          "bytes": 1048576,
+          "elapsedMs": 2578,
+          "kbps": 397.3,
+          "error": "quality threshold failed: 1048576 bytes, 397.3 KB/s, HTTP 200"
         }
       },
       {
         "id": "keyline-regular-360",
-        "remarks": "🇺🇸 United States 5",
+        "remarks": "🇺🇸 United States 6",
         "country": "United States",
         "source": "retained",
         "linkFingerprint": "cc532f10713e",
-        "ok": true,
-        "protocol": "trojan",
-        "stages": "TCP + Xray + 3/3 HTTPS + quality 136 KB/s",
-        "reason": "",
+        "ok": false,
+        "protocol": "",
+        "stages": "",
+        "reason": "TCP + Xray + 3/3 HTTPS passed, but real traffic quality failed: 1048576 bytes, 330.2 KB/s, HTTP 200; quality threshold failed: 1048576 bytes, 330.2 KB/s, HTTP 200",
         "quality": {
-          "ok": true,
-          "url": "https://speed.cloudflare.com/__down?bytes=262144",
+          "ok": false,
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
           "httpCode": 200,
-          "bytes": 262144,
-          "elapsedMs": 1882,
-          "kbps": 136,
-          "error": ""
+          "bytes": 1048576,
+          "elapsedMs": 3101,
+          "kbps": 330.2,
+          "error": "quality threshold failed: 1048576 bytes, 330.2 KB/s, HTTP 200"
         }
       },
       {
         "id": "keyline-regular-368",
-        "remarks": "🇺🇸 United States 8",
+        "remarks": "🇺🇸 United States 7",
         "country": "United States",
         "source": "Keyline URL 2",
         "linkFingerprint": "039685b0a176",
-        "ok": true,
-        "protocol": "vless",
-        "stages": "TCP + Xray + 3/3 HTTPS + quality 341 KB/s",
-        "reason": "",
-        "quality": {
-          "ok": true,
-          "url": "https://speed.cloudflare.com/__down?bytes=262144",
-          "httpCode": 200,
-          "bytes": 262144,
-          "elapsedMs": 751,
-          "kbps": 341,
-          "error": ""
-        }
-      },
-      {
-        "id": "keyline-regular-359",
-        "remarks": "🇺🇸 United States 9",
-        "country": "United States",
-        "source": "retained",
-        "linkFingerprint": "1affb991a517",
-        "ok": true,
-        "protocol": "trojan",
-        "stages": "TCP + Xray + 3/3 HTTPS + quality 190.3 KB/s",
-        "reason": "",
-        "quality": {
-          "ok": true,
-          "url": "https://speed.cloudflare.com/__down?bytes=262144",
-          "httpCode": 200,
-          "bytes": 262144,
-          "elapsedMs": 1346,
-          "kbps": 190.3,
-          "error": ""
-        }
-      },
-      {
-        "id": "keyline-regular-316",
-        "remarks": "🇪🇸 Spain 1",
-        "country": "Spain",
-        "source": "Keyline URL 3",
-        "linkFingerprint": "8c6284400d50",
-        "ok": false,
-        "protocol": "",
-        "stages": "",
-        "reason": "TCP reachable, Xray SOCKS started, 1/3 HTTPS proxy probes passed; https://www.google.com/generate_204: https://www.google.com/generate_204 attempt 1: curl: (28) SSL connection timeout; https://www.google.com/generate_204 attempt 2: curl: (28) SSL connection timeout | https://cp.cloudflare.com/generate_204: https://cp.cloudflare.com/generate_204 attempt 1: curl: (35) OpenSSL SSL_connect: SSL_ERROR_SYSCALL in connection to cp.cloudflare.com:443; https://cp.cloudflare.com/generate_204 attempt 2: curl: (28) SSL connection timeout",
-        "quality": null
-      },
-      {
-        "id": "keyline-regular-332",
-        "remarks": "🇨🇭 Switzerland 2",
-        "country": "Switzerland",
-        "source": "retained",
-        "linkFingerprint": "204beef2dd21",
-        "ok": true,
-        "protocol": "vless",
-        "stages": "TCP + Xray + 3/3 HTTPS + quality 74.4 KB/s",
-        "reason": "",
-        "quality": {
-          "ok": true,
-          "url": "https://speed.cloudflare.com/__down?bytes=262144",
-          "httpCode": 200,
-          "bytes": 262144,
-          "elapsedMs": 3440,
-          "kbps": 74.4,
-          "error": ""
-        }
-      },
-      {
-        "id": "keyline-regular-364",
-        "remarks": "🇺🇸 United States 7",
-        "country": "United States",
-        "source": "Keyline URL 3",
-        "linkFingerprint": "aafc4438458d",
-        "ok": true,
-        "protocol": "trojan",
-        "stages": "TCP + Xray + 3/3 HTTPS + quality 182.2 KB/s",
-        "reason": "",
-        "quality": {
-          "ok": true,
-          "url": "https://speed.cloudflare.com/__down?bytes=262144",
-          "httpCode": 200,
-          "bytes": 262144,
-          "elapsedMs": 1405,
-          "kbps": 182.2,
-          "error": ""
-        }
-      },
-      {
-        "id": "keyline-regular-335",
-        "remarks": "🇨🇭 Switzerland 1",
-        "country": "Switzerland",
-        "source": "Keyline URL 3",
-        "linkFingerprint": "9058661d3837",
-        "ok": true,
-        "protocol": "vless",
-        "stages": "TCP + Xray + 3/3 HTTPS + quality 75.4 KB/s",
-        "reason": "",
-        "quality": {
-          "ok": true,
-          "url": "https://speed.cloudflare.com/__down?bytes=262144",
-          "httpCode": 200,
-          "bytes": 262144,
-          "elapsedMs": 3397,
-          "kbps": 75.4,
-          "error": ""
-        }
-      },
-      {
-        "id": "keyline-whitelist-03",
-        "remarks": "🇷🇺 🏳️ White List 2",
-        "country": "Russia",
-        "source": "Keyline URL 5",
-        "linkFingerprint": "2c4475dd2c6a",
-        "ok": false,
-        "protocol": "",
-        "stages": "",
-        "reason": "TCP reachable, Xray SOCKS started, 1/3 HTTPS proxy probes passed; https://www.google.com/generate_204: https://www.google.com/generate_204 attempt 1: curl: (28) SSL connection timeout; https://www.google.com/generate_204 attempt 2: curl: (28) SSL connection timeout | https://cp.cloudflare.com/generate_204: https://cp.cloudflare.com/generate_204 attempt 1: curl: (28) SSL connection timeout; https://cp.cloudflare.com/generate_204 attempt 2: curl: (28) SSL connection timeout",
-        "quality": null
-      }
-    ]
-  },
-  "finalManagedServers": 82,
-  "stageComparison": {
-    "candidatesBeforeHealthCheck": 376,
-    "checked": 87,
-    "healthPassed": 82,
-    "healthFailed": 5,
-    "finalManagedServers": 82,
-    "removedByHealthCheck": [
-      {
-        "id": "keyline-regular-26",
-        "remarks": "🇨🇴 Colombia 1",
-        "country": "Colombia",
-        "source": "retained",
-        "linkFingerprint": "3d83dddfe94d",
         "ok": false,
         "protocol": "",
         "stages": "",
         "reason": "TCP + Xray + 3/3 HTTPS passed, but real traffic quality failed: 0 bytes, 0 KB/s, HTTP ?; curl: (28) SSL connection timeout",
         "quality": {
           "ok": false,
-          "url": "https://speed.cloudflare.com/__down?bytes=262144",
-          "httpCode": 0,
-          "bytes": 0,
-          "elapsedMs": 4002,
-          "kbps": 0,
-          "error": "curl: (28) SSL connection timeout"
-        }
-      },
-      {
-        "id": "keyline-regular-101",
-        "remarks": "🇯🇵 Japan 6",
-        "country": "Japan",
-        "source": "Keyline URL 5",
-        "linkFingerprint": "7ae3040cb414",
-        "ok": false,
-        "protocol": "",
-        "stages": "",
-        "reason": "TCP + Xray + 3/3 HTTPS passed, but real traffic quality failed: 262144 bytes, 52.9 KB/s, HTTP 200; quality threshold failed: 262144 bytes, 52.9 KB/s, HTTP 200",
-        "quality": {
-          "ok": false,
-          "url": "https://speed.cloudflare.com/__down?bytes=262144",
-          "httpCode": 200,
-          "bytes": 262144,
-          "elapsedMs": 4840,
-          "kbps": 52.9,
-          "error": "quality threshold failed: 262144 bytes, 52.9 KB/s, HTTP 200"
-        }
-      },
-      {
-        "id": "keyline-regular-224",
-        "remarks": "🇷🇺 Russia 4",
-        "country": "Russia",
-        "source": "Keyline URL 2",
-        "linkFingerprint": "842e232e29ed",
-        "ok": false,
-        "protocol": "",
-        "stages": "",
-        "reason": "TCP + Xray + 3/3 HTTPS passed, but real traffic quality failed: 0 bytes, 0 KB/s, HTTP ?; curl: (28) SSL connection timeout",
-        "quality": {
-          "ok": false,
-          "url": "https://speed.cloudflare.com/__down?bytes=262144",
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
           "httpCode": 0,
           "bytes": 0,
           "elapsedMs": 4003,
@@ -4255,88 +4005,906 @@
         }
       },
       {
-        "id": "keyline-regular-316",
-        "remarks": "🇪🇸 Spain 1",
-        "country": "Spain",
-        "source": "Keyline URL 3",
-        "linkFingerprint": "8c6284400d50",
+        "id": "keyline-regular-327",
+        "remarks": "🇸🇪 Sweden 1",
+        "country": "Sweden",
+        "source": "Keyline URL 2",
+        "linkFingerprint": "eec40c374e3b",
         "ok": false,
         "protocol": "",
         "stages": "",
-        "reason": "TCP reachable, Xray SOCKS started, 1/3 HTTPS proxy probes passed; https://www.google.com/generate_204: https://www.google.com/generate_204 attempt 1: curl: (28) SSL connection timeout; https://www.google.com/generate_204 attempt 2: curl: (28) SSL connection timeout | https://cp.cloudflare.com/generate_204: https://cp.cloudflare.com/generate_204 attempt 1: curl: (35) OpenSSL SSL_connect: SSL_ERROR_SYSCALL in connection to cp.cloudflare.com:443; https://cp.cloudflare.com/generate_204 attempt 2: curl: (28) SSL connection timeout",
+        "reason": "TCP + Xray + 3/3 HTTPS passed, but real traffic quality failed: 1048576 bytes, 297 KB/s, HTTP 200; quality threshold failed: 1048576 bytes, 297 KB/s, HTTP 200",
+        "quality": {
+          "ok": false,
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
+          "httpCode": 200,
+          "bytes": 1048576,
+          "elapsedMs": 3448,
+          "kbps": 297,
+          "error": "quality threshold failed: 1048576 bytes, 297 KB/s, HTTP 200"
+        }
+      },
+      {
+        "id": "keyline-regular-359",
+        "remarks": "🇺🇸 United States 8",
+        "country": "United States",
+        "source": "retained",
+        "linkFingerprint": "1affb991a517",
+        "ok": false,
+        "protocol": "",
+        "stages": "",
+        "reason": "TCP + Xray + 3/3 HTTPS passed, but real traffic quality failed: 1048576 bytes, 388.4 KB/s, HTTP 200; quality threshold failed: 1048576 bytes, 388.4 KB/s, HTTP 200",
+        "quality": {
+          "ok": false,
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
+          "httpCode": 200,
+          "bytes": 1048576,
+          "elapsedMs": 2636,
+          "kbps": 388.4,
+          "error": "quality threshold failed: 1048576 bytes, 388.4 KB/s, HTTP 200"
+        }
+      },
+      {
+        "id": "keyline-regular-335",
+        "remarks": "🇨🇭 Switzerland 2",
+        "country": "Switzerland",
+        "source": "Keyline URL 3",
+        "linkFingerprint": "9058661d3837",
+        "ok": false,
+        "protocol": "",
+        "stages": "",
+        "reason": "TCP + Xray + 3/3 HTTPS passed, but real traffic quality failed: 1048576 bytes, 384.7 KB/s, HTTP 200; quality threshold failed: 1048576 bytes, 384.7 KB/s, HTTP 200",
+        "quality": {
+          "ok": false,
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
+          "httpCode": 200,
+          "bytes": 1048576,
+          "elapsedMs": 2661,
+          "kbps": 384.7,
+          "error": "quality threshold failed: 1048576 bytes, 384.7 KB/s, HTTP 200"
+        }
+      },
+      {
+        "id": "keyline-regular-364",
+        "remarks": "🇺🇸 United States 9",
+        "country": "United States",
+        "source": "Keyline URL 3",
+        "linkFingerprint": "aafc4438458d",
+        "ok": false,
+        "protocol": "",
+        "stages": "",
+        "reason": "TCP + Xray + 3/3 HTTPS passed, but real traffic quality failed: 1048576 bytes, 332.9 KB/s, HTTP 200; quality threshold failed: 1048576 bytes, 332.9 KB/s, HTTP 200",
+        "quality": {
+          "ok": false,
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
+          "httpCode": 200,
+          "bytes": 1048576,
+          "elapsedMs": 3076,
+          "kbps": 332.9,
+          "error": "quality threshold failed: 1048576 bytes, 332.9 KB/s, HTTP 200"
+        }
+      }
+    ]
+  },
+  "finalManagedServers": 42,
+  "stageComparison": {
+    "candidatesBeforeHealthCheck": 376,
+    "checked": 82,
+    "healthPassed": 42,
+    "healthFailed": 40,
+    "finalManagedServers": 42,
+    "removedByHealthCheck": [
+      {
+        "id": "keyline-regular-01",
+        "remarks": "🇦🇱 Albania 1",
+        "country": "Albania",
+        "source": "Keyline URL 5",
+        "linkFingerprint": "21fe44421f57",
+        "ok": false,
+        "protocol": "",
+        "stages": "",
+        "reason": "TCP + Xray + 3/3 HTTPS passed, but real traffic quality failed: 1048576 bytes, 443.1 KB/s, HTTP 200; quality threshold failed: 1048576 bytes, 443.1 KB/s, HTTP 200",
+        "quality": {
+          "ok": false,
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
+          "httpCode": 200,
+          "bytes": 1048576,
+          "elapsedMs": 2311,
+          "kbps": 443.1,
+          "error": "quality threshold failed: 1048576 bytes, 443.1 KB/s, HTTP 200"
+        }
+      },
+      {
+        "id": "keyline-regular-21",
+        "remarks": "🇨🇦 Canada 1",
+        "country": "Canada",
+        "source": "retained",
+        "linkFingerprint": "c41e459f44af",
+        "ok": false,
+        "protocol": "",
+        "stages": "",
+        "reason": "TCP + Xray + 3/3 HTTPS passed, but real traffic quality failed: 1048576 bytes, 208 KB/s, HTTP 200; quality threshold failed: 1048576 bytes, 208 KB/s, HTTP 200",
+        "quality": {
+          "ok": false,
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
+          "httpCode": 200,
+          "bytes": 1048576,
+          "elapsedMs": 4924,
+          "kbps": 208,
+          "error": "quality threshold failed: 1048576 bytes, 208 KB/s, HTTP 200"
+        }
+      },
+      {
+        "id": "keyline-regular-39",
+        "remarks": "🇪🇺 European Union 1",
+        "country": "European Union",
+        "source": "Keyline URL 5",
+        "linkFingerprint": "a7b9701fcbc2",
+        "ok": false,
+        "protocol": "",
+        "stages": "",
+        "reason": "TCP reachable, Xray SOCKS started, 2/3 HTTPS proxy probes passed; https://www.google.com/generate_204: https://www.google.com/generate_204 attempt 1: curl: (28) SSL connection timeout; https://www.google.com/generate_204 attempt 2: curl: (28) SSL connection timeout",
         "quality": null
       },
       {
-        "id": "keyline-whitelist-03",
-        "remarks": "🇷🇺 🏳️ White List 2",
-        "country": "Russia",
-        "source": "Keyline URL 5",
-        "linkFingerprint": "2c4475dd2c6a",
+        "id": "keyline-regular-06",
+        "remarks": "🇦🇹 Austria 1",
+        "country": "Austria",
+        "source": "Keyline URL 3",
+        "linkFingerprint": "3881eed7801e",
         "ok": false,
         "protocol": "",
         "stages": "",
-        "reason": "TCP reachable, Xray SOCKS started, 1/3 HTTPS proxy probes passed; https://www.google.com/generate_204: https://www.google.com/generate_204 attempt 1: curl: (28) SSL connection timeout; https://www.google.com/generate_204 attempt 2: curl: (28) SSL connection timeout | https://cp.cloudflare.com/generate_204: https://cp.cloudflare.com/generate_204 attempt 1: curl: (28) SSL connection timeout; https://cp.cloudflare.com/generate_204 attempt 2: curl: (28) SSL connection timeout",
+        "reason": "TCP + Xray + 3/3 HTTPS passed, but real traffic quality failed: 1048576 bytes, 115.5 KB/s, HTTP 200; quality threshold failed: 1048576 bytes, 115.5 KB/s, HTTP 200",
+        "quality": {
+          "ok": false,
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
+          "httpCode": 200,
+          "bytes": 1048576,
+          "elapsedMs": 8865,
+          "kbps": 115.5,
+          "error": "quality threshold failed: 1048576 bytes, 115.5 KB/s, HTTP 200"
+        }
+      },
+      {
+        "id": "keyline-regular-80",
+        "remarks": "🇬🇷 Greece 1",
+        "country": "Greece",
+        "source": "Keyline URL 2",
+        "linkFingerprint": "eeb91a15d4df",
+        "ok": false,
+        "protocol": "",
+        "stages": "",
+        "reason": "TCP + Xray + 3/3 HTTPS passed, but real traffic quality failed: 1048576 bytes, 371.4 KB/s, HTTP 200; quality threshold failed: 1048576 bytes, 371.4 KB/s, HTTP 200",
+        "quality": {
+          "ok": false,
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
+          "httpCode": 200,
+          "bytes": 1048576,
+          "elapsedMs": 2757,
+          "kbps": 371.4,
+          "error": "quality threshold failed: 1048576 bytes, 371.4 KB/s, HTTP 200"
+        }
+      },
+      {
+        "id": "keyline-regular-121",
+        "remarks": "🇳🇱 Netherlands 2",
+        "country": "Netherlands",
+        "source": "retained",
+        "linkFingerprint": "a6ff54fbc953",
+        "ok": false,
+        "protocol": "",
+        "stages": "",
+        "reason": "TCP + Xray + 3/3 HTTPS passed, but real traffic quality failed: 1048576 bytes, 387 KB/s, HTTP 200; quality threshold failed: 1048576 bytes, 387 KB/s, HTTP 200",
+        "quality": {
+          "ok": false,
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
+          "httpCode": 200,
+          "bytes": 1048576,
+          "elapsedMs": 2646,
+          "kbps": 387,
+          "error": "quality threshold failed: 1048576 bytes, 387 KB/s, HTTP 200"
+        }
+      },
+      {
+        "id": "keyline-regular-81",
+        "remarks": "🇭🇰 Hong Kong 1",
+        "country": "Hong Kong",
+        "source": "retained",
+        "linkFingerprint": "0c5c681baef7",
+        "ok": false,
+        "protocol": "",
+        "stages": "",
+        "reason": "TCP + Xray + 3/3 HTTPS passed, but real traffic quality failed: 1048576 bytes, 174 KB/s, HTTP 200; quality threshold failed: 1048576 bytes, 174 KB/s, HTTP 200",
+        "quality": {
+          "ok": false,
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
+          "httpCode": 200,
+          "bytes": 1048576,
+          "elapsedMs": 5885,
+          "kbps": 174,
+          "error": "quality threshold failed: 1048576 bytes, 174 KB/s, HTTP 200"
+        }
+      },
+      {
+        "id": "keyline-regular-123",
+        "remarks": "🇳🇱 Netherlands 4",
+        "country": "Netherlands",
+        "source": "Keyline URL 5",
+        "linkFingerprint": "830a6f9576a5",
+        "ok": false,
+        "protocol": "",
+        "stages": "",
+        "reason": "TCP + Xray + 3/3 HTTPS passed, but real traffic quality failed: 1048576 bytes, 450.2 KB/s, HTTP 200; quality threshold failed: 1048576 bytes, 450.2 KB/s, HTTP 200",
+        "quality": {
+          "ok": false,
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
+          "httpCode": 200,
+          "bytes": 1048576,
+          "elapsedMs": 2275,
+          "kbps": 450.2,
+          "error": "quality threshold failed: 1048576 bytes, 450.2 KB/s, HTTP 200"
+        }
+      },
+      {
+        "id": "keyline-regular-177",
+        "remarks": "🇷🇴 Romania 1",
+        "country": "Romania",
+        "source": "Keyline URL 5",
+        "linkFingerprint": "1aa223523e05",
+        "ok": false,
+        "protocol": "",
+        "stages": "",
+        "reason": "TCP + Xray + 3/3 HTTPS passed, but real traffic quality failed: 1048576 bytes, 501 KB/s, HTTP 200; quality threshold failed: 1048576 bytes, 501 KB/s, HTTP 200",
+        "quality": {
+          "ok": false,
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
+          "httpCode": 200,
+          "bytes": 1048576,
+          "elapsedMs": 2044,
+          "kbps": 501,
+          "error": "quality threshold failed: 1048576 bytes, 501 KB/s, HTTP 200"
+        }
+      },
+      {
+        "id": "keyline-regular-212",
+        "remarks": "🇷🇺 Russia 2",
+        "country": "Russia",
+        "source": "Keyline URL 2",
+        "linkFingerprint": "9c0e07f3f29f",
+        "ok": false,
+        "protocol": "",
+        "stages": "",
+        "reason": "TCP + Xray + 3/3 HTTPS passed, but real traffic quality failed: 1048576 bytes, 441.3 KB/s, HTTP 200; quality threshold failed: 1048576 bytes, 441.3 KB/s, HTTP 200",
+        "quality": {
+          "ok": false,
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
+          "httpCode": 200,
+          "bytes": 1048576,
+          "elapsedMs": 2320,
+          "kbps": 441.3,
+          "error": "quality threshold failed: 1048576 bytes, 441.3 KB/s, HTTP 200"
+        }
+      },
+      {
+        "id": "keyline-regular-280",
+        "remarks": "🇸🇬 Singapore 1",
+        "country": "Singapore",
+        "source": "retained",
+        "linkFingerprint": "63bca6db4f16",
+        "ok": false,
+        "protocol": "",
+        "stages": "",
+        "reason": "TCP + Xray + 3/3 HTTPS passed, but real traffic quality failed: 1048576 bytes, 471.1 KB/s, HTTP 200; quality threshold failed: 1048576 bytes, 471.1 KB/s, HTTP 200",
+        "quality": {
+          "ok": false,
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
+          "httpCode": 200,
+          "bytes": 1048576,
+          "elapsedMs": 2174,
+          "kbps": 471.1,
+          "error": "quality threshold failed: 1048576 bytes, 471.1 KB/s, HTTP 200"
+        }
+      },
+      {
+        "id": "keyline-regular-170",
+        "remarks": "🇵🇱 Poland 3",
+        "country": "Poland",
+        "source": "Keyline URL 5",
+        "linkFingerprint": "169d54d05428",
+        "ok": false,
+        "protocol": "",
+        "stages": "",
+        "reason": "TCP + Xray + 3/3 HTTPS passed, but real traffic quality failed: 0 bytes, 0 KB/s, HTTP ?; curl: (28) SSL connection timeout",
+        "quality": {
+          "ok": false,
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
+          "httpCode": 0,
+          "bytes": 0,
+          "elapsedMs": 4003,
+          "kbps": 0,
+          "error": "curl: (28) SSL connection timeout"
+        }
+      },
+      {
+        "id": "keyline-regular-281",
+        "remarks": "🇸🇬 Singapore 2",
+        "country": "Singapore",
+        "source": "retained",
+        "linkFingerprint": "5587163c629a",
+        "ok": false,
+        "protocol": "",
+        "stages": "",
+        "reason": "TCP + Xray + 3/3 HTTPS passed, but real traffic quality failed: 1048576 bytes, 469.3 KB/s, HTTP 200; quality threshold failed: 1048576 bytes, 469.3 KB/s, HTTP 200",
+        "quality": {
+          "ok": false,
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
+          "httpCode": 200,
+          "bytes": 1048576,
+          "elapsedMs": 2182,
+          "kbps": 469.3,
+          "error": "quality threshold failed: 1048576 bytes, 469.3 KB/s, HTTP 200"
+        }
+      },
+      {
+        "id": "keyline-regular-99",
+        "remarks": "🇯🇵 Japan 7",
+        "country": "Japan",
+        "source": "retained",
+        "linkFingerprint": "8b81d4c1ece7",
+        "ok": false,
+        "protocol": "",
+        "stages": "",
+        "reason": "TCP + Xray + 3/3 HTTPS passed, but real traffic quality failed: 1048576 bytes, 415.1 KB/s, HTTP 200; quality threshold failed: 1048576 bytes, 415.1 KB/s, HTTP 200",
+        "quality": {
+          "ok": false,
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
+          "httpCode": 200,
+          "bytes": 1048576,
+          "elapsedMs": 2467,
+          "kbps": 415.1,
+          "error": "quality threshold failed: 1048576 bytes, 415.1 KB/s, HTTP 200"
+        }
+      },
+      {
+        "id": "keyline-regular-150",
+        "remarks": "🇳🇱 Netherlands 5",
+        "country": "Netherlands",
+        "source": "Keyline URL 2",
+        "linkFingerprint": "8107c5ef363c",
+        "ok": false,
+        "protocol": "",
+        "stages": "",
+        "reason": "TCP + Xray + 3/3 HTTPS passed, but real traffic quality failed: 1048576 bytes, 166.1 KB/s, HTTP 200; quality threshold failed: 1048576 bytes, 166.1 KB/s, HTTP 200",
+        "quality": {
+          "ok": false,
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
+          "httpCode": 200,
+          "bytes": 1048576,
+          "elapsedMs": 6163,
+          "kbps": 166.1,
+          "error": "quality threshold failed: 1048576 bytes, 166.1 KB/s, HTTP 200"
+        }
+      },
+      {
+        "id": "keyline-regular-180",
+        "remarks": "🇷🇺 Russia 1",
+        "country": "Russia",
+        "source": "retained",
+        "linkFingerprint": "8fb589cce3e9",
+        "ok": false,
+        "protocol": "",
+        "stages": "",
+        "reason": "TCP + Xray + 3/3 HTTPS passed, but real traffic quality failed: 1048576 bytes, 146.4 KB/s, HTTP 200; quality threshold failed: 1048576 bytes, 146.4 KB/s, HTTP 200",
+        "quality": {
+          "ok": false,
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
+          "httpCode": 200,
+          "bytes": 1048576,
+          "elapsedMs": 6992,
+          "kbps": 146.4,
+          "error": "quality threshold failed: 1048576 bytes, 146.4 KB/s, HTTP 200"
+        }
+      },
+      {
+        "id": "keyline-regular-282",
+        "remarks": "🇸🇬 Singapore 3",
+        "country": "Singapore",
+        "source": "retained",
+        "linkFingerprint": "fb84bf49729f",
+        "ok": false,
+        "protocol": "",
+        "stages": "",
+        "reason": "TCP + Xray + 3/3 HTTPS passed, but real traffic quality failed: 1048576 bytes, 467.1 KB/s, HTTP 200; quality threshold failed: 1048576 bytes, 467.1 KB/s, HTTP 200",
+        "quality": {
+          "ok": false,
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
+          "httpCode": 200,
+          "bytes": 1048576,
+          "elapsedMs": 2192,
+          "kbps": 467.1,
+          "error": "quality threshold failed: 1048576 bytes, 467.1 KB/s, HTTP 200"
+        }
+      },
+      {
+        "id": "keyline-regular-283",
+        "remarks": "🇸🇬 Singapore 4",
+        "country": "Singapore",
+        "source": "retained",
+        "linkFingerprint": "ebd708ba4fad",
+        "ok": false,
+        "protocol": "",
+        "stages": "",
+        "reason": "TCP + Xray + 3/3 HTTPS passed, but real traffic quality failed: 1048576 bytes, 467.5 KB/s, HTTP 200; quality threshold failed: 1048576 bytes, 467.5 KB/s, HTTP 200",
+        "quality": {
+          "ok": false,
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
+          "httpCode": 200,
+          "bytes": 1048576,
+          "elapsedMs": 2190,
+          "kbps": 467.5,
+          "error": "quality threshold failed: 1048576 bytes, 467.5 KB/s, HTTP 200"
+        }
+      },
+      {
+        "id": "keyline-regular-104",
+        "remarks": "🇰🇿 Kazakhstan 1",
+        "country": "Kazakhstan",
+        "source": "Keyline URL 5",
+        "linkFingerprint": "242dd6f31e6b",
+        "ok": false,
+        "protocol": "",
+        "stages": "",
+        "reason": "TCP + Xray + 3/3 HTTPS passed, but real traffic quality failed: 1048576 bytes, 145.6 KB/s, HTTP 200; quality threshold failed: 1048576 bytes, 145.6 KB/s, HTTP 200",
+        "quality": {
+          "ok": false,
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
+          "httpCode": 200,
+          "bytes": 1048576,
+          "elapsedMs": 7032,
+          "kbps": 145.6,
+          "error": "quality threshold failed: 1048576 bytes, 145.6 KB/s, HTTP 200"
+        }
+      },
+      {
+        "id": "keyline-regular-119",
+        "remarks": "🇲🇩 Moldova 1",
+        "country": "Moldova",
+        "source": "Keyline URL 2",
+        "linkFingerprint": "a27ec18fb5a9",
+        "ok": false,
+        "protocol": "",
+        "stages": "",
+        "reason": "TCP + Xray + 3/3 HTTPS passed, but real traffic quality failed: 1048576 bytes, 267.4 KB/s, HTTP 200; quality threshold failed: 1048576 bytes, 267.4 KB/s, HTTP 200",
+        "quality": {
+          "ok": false,
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
+          "httpCode": 200,
+          "bytes": 1048576,
+          "elapsedMs": 3830,
+          "kbps": 267.4,
+          "error": "quality threshold failed: 1048576 bytes, 267.4 KB/s, HTTP 200"
+        }
+      },
+      {
+        "id": "keyline-regular-284",
+        "remarks": "🇸🇬 Singapore 5",
+        "country": "Singapore",
+        "source": "retained",
+        "linkFingerprint": "6fbdee87a048",
+        "ok": false,
+        "protocol": "",
+        "stages": "",
+        "reason": "TCP + Xray + 3/3 HTTPS passed, but real traffic quality failed: 1048576 bytes, 467.8 KB/s, HTTP 200; quality threshold failed: 1048576 bytes, 467.8 KB/s, HTTP 200",
+        "quality": {
+          "ok": false,
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
+          "httpCode": 200,
+          "bytes": 1048576,
+          "elapsedMs": 2189,
+          "kbps": 467.8,
+          "error": "quality threshold failed: 1048576 bytes, 467.8 KB/s, HTTP 200"
+        }
+      },
+      {
+        "id": "keyline-regular-285",
+        "remarks": "🇸🇬 Singapore 6",
+        "country": "Singapore",
+        "source": "retained",
+        "linkFingerprint": "61d4c22efbec",
+        "ok": false,
+        "protocol": "",
+        "stages": "",
+        "reason": "TCP + Xray + 3/3 HTTPS passed, but real traffic quality failed: 1048576 bytes, 464.2 KB/s, HTTP 200; quality threshold failed: 1048576 bytes, 464.2 KB/s, HTTP 200",
+        "quality": {
+          "ok": false,
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
+          "httpCode": 200,
+          "bytes": 1048576,
+          "elapsedMs": 2206,
+          "kbps": 464.2,
+          "error": "quality threshold failed: 1048576 bytes, 464.2 KB/s, HTTP 200"
+        }
+      },
+      {
+        "id": "keyline-regular-286",
+        "remarks": "🇸🇬 Singapore 7",
+        "country": "Singapore",
+        "source": "retained",
+        "linkFingerprint": "1581ff9af66a",
+        "ok": false,
+        "protocol": "",
+        "stages": "",
+        "reason": "TCP + Xray + 3/3 HTTPS passed, but real traffic quality failed: 1048576 bytes, 465.2 KB/s, HTTP 200; quality threshold failed: 1048576 bytes, 465.2 KB/s, HTTP 200",
+        "quality": {
+          "ok": false,
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
+          "httpCode": 200,
+          "bytes": 1048576,
+          "elapsedMs": 2201,
+          "kbps": 465.2,
+          "error": "quality threshold failed: 1048576 bytes, 465.2 KB/s, HTTP 200"
+        }
+      },
+      {
+        "id": "keyline-regular-287",
+        "remarks": "🇸🇬 Singapore 8",
+        "country": "Singapore",
+        "source": "retained",
+        "linkFingerprint": "df41fa61c565",
+        "ok": false,
+        "protocol": "",
+        "stages": "",
+        "reason": "TCP + Xray + 3/3 HTTPS passed, but real traffic quality failed: 1048576 bytes, 467 KB/s, HTTP 200; quality threshold failed: 1048576 bytes, 467 KB/s, HTTP 200",
+        "quality": {
+          "ok": false,
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
+          "httpCode": 200,
+          "bytes": 1048576,
+          "elapsedMs": 2193,
+          "kbps": 467,
+          "error": "quality threshold failed: 1048576 bytes, 467 KB/s, HTTP 200"
+        }
+      },
+      {
+        "id": "keyline-regular-288",
+        "remarks": "🇸🇬 Singapore 9",
+        "country": "Singapore",
+        "source": "retained",
+        "linkFingerprint": "c831fd70ab93",
+        "ok": false,
+        "protocol": "",
+        "stages": "",
+        "reason": "TCP + Xray + 3/3 HTTPS passed, but real traffic quality failed: 1048576 bytes, 457.1 KB/s, HTTP 200; quality threshold failed: 1048576 bytes, 457.1 KB/s, HTTP 200",
+        "quality": {
+          "ok": false,
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
+          "httpCode": 200,
+          "bytes": 1048576,
+          "elapsedMs": 2240,
+          "kbps": 457.1,
+          "error": "quality threshold failed: 1048576 bytes, 457.1 KB/s, HTTP 200"
+        }
+      },
+      {
+        "id": "keyline-regular-289",
+        "remarks": "🇸🇬 Singapore 10",
+        "country": "Singapore",
+        "source": "retained",
+        "linkFingerprint": "36f717885797",
+        "ok": false,
+        "protocol": "",
+        "stages": "",
+        "reason": "TCP + Xray + 3/3 HTTPS passed, but real traffic quality failed: 1048576 bytes, 469.7 KB/s, HTTP 200; quality threshold failed: 1048576 bytes, 469.7 KB/s, HTTP 200",
+        "quality": {
+          "ok": false,
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
+          "httpCode": 200,
+          "bytes": 1048576,
+          "elapsedMs": 2180,
+          "kbps": 469.7,
+          "error": "quality threshold failed: 1048576 bytes, 469.7 KB/s, HTTP 200"
+        }
+      },
+      {
+        "id": "keyline-regular-290",
+        "remarks": "🇸🇬 Singapore 11",
+        "country": "Singapore",
+        "source": "retained",
+        "linkFingerprint": "f6a98725b52b",
+        "ok": false,
+        "protocol": "",
+        "stages": "",
+        "reason": "TCP + Xray + 3/3 HTTPS passed, but real traffic quality failed: 1048576 bytes, 464.6 KB/s, HTTP 200; quality threshold failed: 1048576 bytes, 464.6 KB/s, HTTP 200",
+        "quality": {
+          "ok": false,
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
+          "httpCode": 200,
+          "bytes": 1048576,
+          "elapsedMs": 2204,
+          "kbps": 464.6,
+          "error": "quality threshold failed: 1048576 bytes, 464.6 KB/s, HTTP 200"
+        }
+      },
+      {
+        "id": "keyline-regular-183",
+        "remarks": "🇷🇺 Russia 3",
+        "country": "Russia",
+        "source": "Keyline URL 5",
+        "linkFingerprint": "237417ba499e",
+        "ok": false,
+        "protocol": "",
+        "stages": "",
+        "reason": "TCP + Xray + 3/3 HTTPS passed, but real traffic quality failed: 1048576 bytes, 415.7 KB/s, HTTP 200; quality threshold failed: 1048576 bytes, 415.7 KB/s, HTTP 200",
+        "quality": {
+          "ok": false,
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
+          "httpCode": 200,
+          "bytes": 1048576,
+          "elapsedMs": 2464,
+          "kbps": 415.7,
+          "error": "quality threshold failed: 1048576 bytes, 415.7 KB/s, HTTP 200"
+        }
+      },
+      {
+        "id": "keyline-regular-292",
+        "remarks": "🇸🇬 Singapore 13",
+        "country": "Singapore",
+        "source": "retained",
+        "linkFingerprint": "a8d5686bccf5",
+        "ok": false,
+        "protocol": "",
+        "stages": "",
+        "reason": "TCP + Xray + 3/3 HTTPS passed, but real traffic quality failed: 1048576 bytes, 468.4 KB/s, HTTP 200; quality threshold failed: 1048576 bytes, 468.4 KB/s, HTTP 200",
+        "quality": {
+          "ok": false,
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
+          "httpCode": 200,
+          "bytes": 1048576,
+          "elapsedMs": 2186,
+          "kbps": 468.4,
+          "error": "quality threshold failed: 1048576 bytes, 468.4 KB/s, HTTP 200"
+        }
+      },
+      {
+        "id": "keyline-regular-291",
+        "remarks": "🇸🇬 Singapore 12",
+        "country": "Singapore",
+        "source": "retained",
+        "linkFingerprint": "55ff79ccf720",
+        "ok": false,
+        "protocol": "",
+        "stages": "",
+        "reason": "TCP + Xray + 3/3 HTTPS passed, but real traffic quality failed: 1048576 bytes, 314.8 KB/s, HTTP 200; quality threshold failed: 1048576 bytes, 314.8 KB/s, HTTP 200",
+        "quality": {
+          "ok": false,
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
+          "httpCode": 200,
+          "bytes": 1048576,
+          "elapsedMs": 3253,
+          "kbps": 314.8,
+          "error": "quality threshold failed: 1048576 bytes, 314.8 KB/s, HTTP 200"
+        }
+      },
+      {
+        "id": "keyline-regular-293",
+        "remarks": "🇸🇬 Singapore 14",
+        "country": "Singapore",
+        "source": "retained",
+        "linkFingerprint": "0588d556a514",
+        "ok": false,
+        "protocol": "",
+        "stages": "",
+        "reason": "TCP + Xray + 3/3 HTTPS passed, but real traffic quality failed: 1048576 bytes, 469.8 KB/s, HTTP 200; quality threshold failed: 1048576 bytes, 469.8 KB/s, HTTP 200",
+        "quality": {
+          "ok": false,
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
+          "httpCode": 200,
+          "bytes": 1048576,
+          "elapsedMs": 2180,
+          "kbps": 469.8,
+          "error": "quality threshold failed: 1048576 bytes, 469.8 KB/s, HTTP 200"
+        }
+      },
+      {
+        "id": "keyline-regular-263",
+        "remarks": "🇷🇺 Russia 4",
+        "country": "Russia",
+        "source": "Keyline URL 2",
+        "linkFingerprint": "e2c93cb96d3a",
+        "ok": false,
+        "protocol": "",
+        "stages": "",
+        "reason": "TCP reachable, Xray SOCKS started, 2/3 HTTPS proxy probes passed; https://www.gstatic.com/generate_204: https://www.gstatic.com/generate_204 attempt 1: curl: (28) SSL connection timeout; https://www.gstatic.com/generate_204 attempt 2: curl: (28) SSL connection timeout",
         "quality": null
+      },
+      {
+        "id": "keyline-regular-340",
+        "remarks": "🇹🇷 Turkey 1",
+        "country": "Turkey",
+        "source": "Keyline URL 3",
+        "linkFingerprint": "91bef95e058f",
+        "ok": false,
+        "protocol": "",
+        "stages": "",
+        "reason": "TCP + Xray + 3/3 HTTPS passed, but real traffic quality failed: 1048576 bytes, 225.2 KB/s, HTTP 200; quality threshold failed: 1048576 bytes, 225.2 KB/s, HTTP 200",
+        "quality": {
+          "ok": false,
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
+          "httpCode": 200,
+          "bytes": 1048576,
+          "elapsedMs": 4548,
+          "kbps": 225.2,
+          "error": "quality threshold failed: 1048576 bytes, 225.2 KB/s, HTTP 200"
+        }
+      },
+      {
+        "id": "keyline-regular-332",
+        "remarks": "🇨🇭 Switzerland 1",
+        "country": "Switzerland",
+        "source": "retained",
+        "linkFingerprint": "204beef2dd21",
+        "ok": false,
+        "protocol": "",
+        "stages": "",
+        "reason": "TCP + Xray + 3/3 HTTPS passed, but real traffic quality failed: 1048576 bytes, 397.3 KB/s, HTTP 200; quality threshold failed: 1048576 bytes, 397.3 KB/s, HTTP 200",
+        "quality": {
+          "ok": false,
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
+          "httpCode": 200,
+          "bytes": 1048576,
+          "elapsedMs": 2578,
+          "kbps": 397.3,
+          "error": "quality threshold failed: 1048576 bytes, 397.3 KB/s, HTTP 200"
+        }
+      },
+      {
+        "id": "keyline-regular-360",
+        "remarks": "🇺🇸 United States 6",
+        "country": "United States",
+        "source": "retained",
+        "linkFingerprint": "cc532f10713e",
+        "ok": false,
+        "protocol": "",
+        "stages": "",
+        "reason": "TCP + Xray + 3/3 HTTPS passed, but real traffic quality failed: 1048576 bytes, 330.2 KB/s, HTTP 200; quality threshold failed: 1048576 bytes, 330.2 KB/s, HTTP 200",
+        "quality": {
+          "ok": false,
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
+          "httpCode": 200,
+          "bytes": 1048576,
+          "elapsedMs": 3101,
+          "kbps": 330.2,
+          "error": "quality threshold failed: 1048576 bytes, 330.2 KB/s, HTTP 200"
+        }
+      },
+      {
+        "id": "keyline-regular-368",
+        "remarks": "🇺🇸 United States 7",
+        "country": "United States",
+        "source": "Keyline URL 2",
+        "linkFingerprint": "039685b0a176",
+        "ok": false,
+        "protocol": "",
+        "stages": "",
+        "reason": "TCP + Xray + 3/3 HTTPS passed, but real traffic quality failed: 0 bytes, 0 KB/s, HTTP ?; curl: (28) SSL connection timeout",
+        "quality": {
+          "ok": false,
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
+          "httpCode": 0,
+          "bytes": 0,
+          "elapsedMs": 4003,
+          "kbps": 0,
+          "error": "curl: (28) SSL connection timeout"
+        }
+      },
+      {
+        "id": "keyline-regular-327",
+        "remarks": "🇸🇪 Sweden 1",
+        "country": "Sweden",
+        "source": "Keyline URL 2",
+        "linkFingerprint": "eec40c374e3b",
+        "ok": false,
+        "protocol": "",
+        "stages": "",
+        "reason": "TCP + Xray + 3/3 HTTPS passed, but real traffic quality failed: 1048576 bytes, 297 KB/s, HTTP 200; quality threshold failed: 1048576 bytes, 297 KB/s, HTTP 200",
+        "quality": {
+          "ok": false,
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
+          "httpCode": 200,
+          "bytes": 1048576,
+          "elapsedMs": 3448,
+          "kbps": 297,
+          "error": "quality threshold failed: 1048576 bytes, 297 KB/s, HTTP 200"
+        }
+      },
+      {
+        "id": "keyline-regular-359",
+        "remarks": "🇺🇸 United States 8",
+        "country": "United States",
+        "source": "retained",
+        "linkFingerprint": "1affb991a517",
+        "ok": false,
+        "protocol": "",
+        "stages": "",
+        "reason": "TCP + Xray + 3/3 HTTPS passed, but real traffic quality failed: 1048576 bytes, 388.4 KB/s, HTTP 200; quality threshold failed: 1048576 bytes, 388.4 KB/s, HTTP 200",
+        "quality": {
+          "ok": false,
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
+          "httpCode": 200,
+          "bytes": 1048576,
+          "elapsedMs": 2636,
+          "kbps": 388.4,
+          "error": "quality threshold failed: 1048576 bytes, 388.4 KB/s, HTTP 200"
+        }
+      },
+      {
+        "id": "keyline-regular-335",
+        "remarks": "🇨🇭 Switzerland 2",
+        "country": "Switzerland",
+        "source": "Keyline URL 3",
+        "linkFingerprint": "9058661d3837",
+        "ok": false,
+        "protocol": "",
+        "stages": "",
+        "reason": "TCP + Xray + 3/3 HTTPS passed, but real traffic quality failed: 1048576 bytes, 384.7 KB/s, HTTP 200; quality threshold failed: 1048576 bytes, 384.7 KB/s, HTTP 200",
+        "quality": {
+          "ok": false,
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
+          "httpCode": 200,
+          "bytes": 1048576,
+          "elapsedMs": 2661,
+          "kbps": 384.7,
+          "error": "quality threshold failed: 1048576 bytes, 384.7 KB/s, HTTP 200"
+        }
+      },
+      {
+        "id": "keyline-regular-364",
+        "remarks": "🇺🇸 United States 9",
+        "country": "United States",
+        "source": "Keyline URL 3",
+        "linkFingerprint": "aafc4438458d",
+        "ok": false,
+        "protocol": "",
+        "stages": "",
+        "reason": "TCP + Xray + 3/3 HTTPS passed, but real traffic quality failed: 1048576 bytes, 332.9 KB/s, HTTP 200; quality threshold failed: 1048576 bytes, 332.9 KB/s, HTTP 200",
+        "quality": {
+          "ok": false,
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
+          "httpCode": 200,
+          "bytes": 1048576,
+          "elapsedMs": 3076,
+          "kbps": 332.9,
+          "error": "quality threshold failed: 1048576 bytes, 332.9 KB/s, HTTP 200"
+        }
       }
     ],
     "finalLinkFingerprints": [
-      "75884ef007bb",
-      "a7b9701fcbc2",
-      "c41e459f44af",
-      "91113326f3fc",
-      "21fe44421f57",
-      "3881eed7801e",
-      "5594fbc31d72",
       "d61fed205c21",
+      "5594fbc31d72",
+      "91113326f3fc",
+      "75884ef007bb",
       "e61ea13fecd8",
       "47b90d7ef419",
       "321a6bbb03b6",
       "fe275d33e72e",
       "03a20399a407",
       "8dedfd2ca9f9",
-      "3754410df75b",
       "c6f7cacffe2f",
-      "91d9dba0cd91",
-      "0c5c681baef7",
-      "197592b7bb58",
+      "3754410df75b",
       "9ec523b31eb1",
+      "91d9dba0cd91",
+      "197592b7bb58",
       "e6ce6b48d704",
-      "eeb91a15d4df",
       "b32baa517658",
       "26bcdbba5546",
-      "d80754ffdd1d",
       "7c81178b5b74",
-      "a6ff54fbc953",
-      "91accceea190",
-      "830a6f9576a5",
-      "8b81d4c1ece7",
+      "d80754ffdd1d",
       "dfa217f58219",
       "d456ba2a4150",
-      "1aa223523e05",
-      "242dd6f31e6b",
-      "8107c5ef363c",
-      "8fb589cce3e9",
-      "169d54d05428",
-      "9c0e07f3f29f",
-      "63bca6db4f16",
-      "5587163c629a",
-      "a27ec18fb5a9",
-      "237417ba499e",
-      "fb84bf49729f",
-      "ebd708ba4fad",
-      "6fbdee87a048",
-      "61d4c22efbec",
-      "1581ff9af66a",
-      "df41fa61c565",
-      "c831fd70ab93",
-      "36f717885797",
-      "f6a98725b52b",
-      "55ff79ccf720",
-      "a8d5686bccf5",
+      "91accceea190",
       "22504d34ba6c",
-      "0588d556a514",
       "1779be085e98",
-      "e2c93cb96d3a",
       "71c7612b8c93",
       "600eb655dcf0",
       "3c7fd3d1a9ba",
@@ -4346,76 +4914,58 @@
       "560ff5476ccd",
       "5854051e1434",
       "c70038f1168a",
-      "ca7245b881f8",
       "e2cc202d75a1",
+      "ca7245b881f8",
       "41879ea4a589",
-      "91bef95e058f",
-      "eec40c374e3b",
-      "4f7046dcaa32",
       "c9c9f534955f",
-      "830cd0f43baf",
+      "4f7046dcaa32",
       "b1dc81c9289f",
-      "8ae9f0729dff",
-      "cc532f10713e",
-      "039685b0a176",
-      "1affb991a517",
-      "204beef2dd21",
-      "aafc4438458d",
-      "9058661d3837"
+      "830cd0f43baf",
+      "8ae9f0729dff"
     ]
   },
   "healthCheckBySource": {
-    "Keyline URL 3": {
-      "checked": 11,
-      "passed": 10,
-      "failed": 1
-    },
-    "Keyline URL 5": {
-      "checked": 12,
-      "passed": 10,
-      "failed": 2
+    "Keyline URL 2": {
+      "checked": 14,
+      "passed": 7,
+      "failed": 7
     },
     "retained": {
-      "checked": 49,
-      "passed": 48,
-      "failed": 1
+      "checked": 48,
+      "passed": 26,
+      "failed": 22
     },
-    "Keyline URL 2": {
-      "checked": 15,
-      "passed": 14,
-      "failed": 1
+    "Keyline URL 3": {
+      "checked": 10,
+      "passed": 6,
+      "failed": 4
+    },
+    "Keyline URL 5": {
+      "checked": 10,
+      "passed": 3,
+      "failed": 7
     }
   },
   "healthCheckByCountry": {
+    "France": {
+      "checked": 4,
+      "passed": 4,
+      "failed": 0
+    },
+    "Canada": {
+      "checked": 2,
+      "passed": 1,
+      "failed": 1
+    },
     "Denmark": {
       "checked": 1,
       "passed": 1,
       "failed": 0
     },
-    "European Union": {
-      "checked": 1,
-      "passed": 1,
-      "failed": 0
-    },
-    "Canada": {
-      "checked": 2,
-      "passed": 2,
-      "failed": 0
-    },
     "Albania": {
       "checked": 1,
-      "passed": 1,
-      "failed": 0
-    },
-    "Austria": {
-      "checked": 1,
-      "passed": 1,
-      "failed": 0
-    },
-    "France": {
-      "checked": 4,
-      "passed": 4,
-      "failed": 0
+      "passed": 0,
+      "failed": 1
     },
     "Czech Republic": {
       "checked": 1,
@@ -4433,8 +4983,13 @@
       "failed": 0
     },
     "Japan": {
-      "checked": 8,
-      "passed": 7,
+      "checked": 7,
+      "passed": 6,
+      "failed": 1
+    },
+    "European Union": {
+      "checked": 1,
+      "passed": 0,
       "failed": 1
     },
     "Italy": {
@@ -4442,55 +4997,55 @@
       "passed": 2,
       "failed": 0
     },
-    "Hong Kong": {
-      "checked": 1,
-      "passed": 1,
-      "failed": 0
-    },
-    "Greece": {
-      "checked": 1,
-      "passed": 1,
-      "failed": 0
-    },
-    "Colombia": {
+    "Austria": {
       "checked": 1,
       "passed": 0,
       "failed": 1
     },
     "Netherlands": {
       "checked": 5,
-      "passed": 5,
-      "failed": 0
+      "passed": 2,
+      "failed": 3
+    },
+    "Greece": {
+      "checked": 1,
+      "passed": 0,
+      "failed": 1
+    },
+    "Hong Kong": {
+      "checked": 1,
+      "passed": 0,
+      "failed": 1
     },
     "Poland": {
       "checked": 3,
-      "passed": 3,
-      "failed": 0
+      "passed": 2,
+      "failed": 1
     },
     "Romania": {
       "checked": 1,
-      "passed": 1,
-      "failed": 0
-    },
-    "Kazakhstan": {
-      "checked": 1,
-      "passed": 1,
-      "failed": 0
+      "passed": 0,
+      "failed": 1
     },
     "Russia": {
-      "checked": 6,
-      "passed": 4,
-      "failed": 2
+      "checked": 4,
+      "passed": 0,
+      "failed": 4
     },
     "Singapore": {
       "checked": 14,
-      "passed": 14,
-      "failed": 0
+      "passed": 0,
+      "failed": 14
+    },
+    "Kazakhstan": {
+      "checked": 1,
+      "passed": 0,
+      "failed": 1
     },
     "Moldova": {
       "checked": 1,
-      "passed": 1,
-      "failed": 0
+      "passed": 0,
+      "failed": 1
     },
     "South Korea": {
       "checked": 12,
@@ -4499,8 +5054,8 @@
     },
     "United States": {
       "checked": 9,
-      "passed": 9,
-      "failed": 0
+      "passed": 5,
+      "failed": 4
     },
     "United Kingdom": {
       "checked": 2,
@@ -4509,23 +5064,18 @@
     },
     "Turkey": {
       "checked": 1,
-      "passed": 1,
-      "failed": 0
-    },
-    "Sweden": {
-      "checked": 1,
-      "passed": 1,
-      "failed": 0
-    },
-    "Spain": {
-      "checked": 1,
       "passed": 0,
       "failed": 1
     },
     "Switzerland": {
       "checked": 2,
-      "passed": 2,
-      "failed": 0
+      "passed": 0,
+      "failed": 2
+    },
+    "Sweden": {
+      "checked": 1,
+      "passed": 0,
+      "failed": 1
     }
   }
 }
