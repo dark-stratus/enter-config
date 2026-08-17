@@ -33,6 +33,7 @@ function isManagedId(id) {
 const FLAG_TO_COUNTRY = {
   "🇦🇱": "Albania",
   "🇦🇹": "Austria",
+  "🇧🇾": "Belarus",
   "🇧🇪": "Belgium",
   "🇧🇷": "Brazil",
   "🇨🇭": "Switzerland",
@@ -79,7 +80,12 @@ const WHITE_LIST_PATTERNS = [
   /\bwhite\s*list\b/i,
   /\bwhitelist\b/i,
   /\bwhite[-_ ]?listed?\b/i,
-  /бел\w*/i,
+
+  // Russian white-list phrases. Do NOT match any arbitrary word
+  // beginning with "бел" (for example "Беларусь"/"Белоруссия").
+  /(?<!\p{L})бел(?:ый|ая|ое|ые|ом|ой|ых|ым|ыми)\s+спис(?:ок|ка|ке|ком|ки|ков|ках|ками)(?!\p{L})/iu,
+  /(?<!\p{L})бел(?:ый|ая|ое|ые|ом|ой|ых|ым|ыми)\s+интернет(?!\p{L})/iu,
+
   /обход\w*/i,
   /глушил\w*/i,
   /\blte\b/i,
@@ -107,7 +113,7 @@ function flagToIso(flag) {
 
 const COUNTRY_ALIAS_PATTERNS = [
   ["Albania", ["албания"]], ["Austria", ["австрия"]],
-  ["Belgium", ["бельгия"]], ["Brazil", ["бразилия"]],
+  ["Belarus", ["беларусь", "белоруссия"]], ["Belgium", ["бельгия"]], ["Brazil", ["бразилия"]],
   ["Switzerland", ["швейцария"]], ["China", ["китай"]],
   ["Czech Republic", ["чехия", "чешская республика"]],
   ["Germany", ["германия", "немец"]], ["Denmark", ["дания"]],
