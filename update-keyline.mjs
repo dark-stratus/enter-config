@@ -12,10 +12,9 @@ const REGULAR_LIMIT = Number.POSITIVE_INFINITY;
 const AUTO_WHITE_LIST_LIMIT = 20;
 const SUCCESS_INTERVAL_MS = 1 * 60 * 60 * 1000;
 
-const FETCH_TIMEOUT_MS = 60_000;
-const FETCH_RETRIES = 4;
+const FETCH_TIMEOUT_MS = 30_000;
+const FETCH_RETRIES = 3;
 const FETCH_RETRY_DELAY_MS = 2_000;
-const FETCH_CACHE_DIR = path.join(ROOT, ".keyline-cache");
 
 const HAPP_APP_VERSION = "2.16.2";
 const HAPP_BUILD_ID = "2605221224503";
@@ -106,51 +105,6 @@ const COUNTRY_NAME_PATTERNS = Object.entries(FLAG_TO_COUNTRY).map(
     ),
   })
 );
-
-function flagToIso(flag) {
-  const cps = [...String(flag || "")];
-  if (cps.length !== 2) return "";
-  return cps.map(ch => String.fromCharCode(ch.codePointAt(0) - 0x1f1e6 + 65)).join("");
-}
-
-const COUNTRY_ALIAS_PATTERNS = [
-  ["Albania", ["албания"]], ["Austria", ["австрия"]],
-  ["Belarus", ["беларусь", "белоруссия"]], ["Belgium", ["бельгия"]], ["Brazil", ["бразилия"]],
-  ["Switzerland", ["швейцария"]], ["China", ["китай"]],
-  ["Czech Republic", ["чехия", "чешская республика"]],
-  ["Germany", ["германия", "немец"]], ["Denmark", ["дания"]],
-  ["Estonia", ["эстония"]], ["Spain", ["испания"]],
-  ["Finland", ["финляндия"]], ["France", ["франция"]],
-  ["United Kingdom", ["великобритания", "англия", "ук"]],
-  ["Greece", ["греция"]], ["Hong Kong", ["гонконг"]],
-  ["Indonesia", ["индонезия"]], ["Ireland", ["ирландия"]],
-  ["India", ["индия"]], ["Israel", ["израиль"]],
-  ["Italy", ["италия"]], ["Japan", ["япония"]],
-  ["Kazakhstan", ["казахстан"]], ["Lithuania", ["литва", "литва"]],
-  ["Latvia", ["латвия"]], ["Mexico", ["мексика"]],
-  ["Netherlands", ["нидерланды", "нидерланд", "голландия", "голланд"]],
-  ["Norway", ["норвегия"]], ["New Zealand", ["новая зеландия"]],
-  ["Poland", ["польша"]], ["Portugal", ["португалия"]],
-  ["Romania", ["румыния"]], ["Russia", ["россия", "рф"]],
-  ["Sweden", ["швеция"]], ["Singapore", ["сингапур"]],
-  ["Slovenia", ["словения"]], ["Slovakia", ["словакия"]],
-  ["Thailand", ["таиланд", "тайланд"]], ["Turkey", ["турция"]],
-  ["Ukraine", ["украина"]], ["United States", ["сша", "соединенные штаты"]],
-  ["Vietnam", ["вьетнам"]],
-].flatMap(([country, aliases]) => {
-  const flag = Object.entries(FLAG_TO_COUNTRY).find(([, value]) => value === country)?.[0] || "";
-  return aliases.map(alias => ({
-    country,
-    flag,
-    pattern: new RegExp(`(^|[\\s\\[\\]().,:;_\\-/])${alias.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\\\$&")}(?=$|[\\s\\[\\]().,:;_\\-/0-9])`, "i"),
-  }));
-});
-
-const COUNTRY_CODE_PATTERNS = Object.entries(FLAG_TO_COUNTRY).map(([flag, country]) => ({
-  flag,
-  country,
-  pattern: new RegExp(`(^|[\\s\\[\\]().,:;_\\-/])${flagToIso(flag)}(?=$|[\\s\\[\\]().,:;_\\-/0-9])`, "i"),
-}));
 
 const COUNTRY_DISPLAY_NAMES =
   new Intl.DisplayNames(
@@ -301,21 +255,10 @@ function countryFromRemark(
   // Fallback for sources that spell the country name but omit the flag.
   for (const entry of COUNTRY_NAME_PATTERNS) {
     if (entry.pattern.test(String(remarks))) {
-      return { flag: entry.flag, country: entry.country };
-    }
-  }
-
-  // Keyline may put the country only in the profile name/remark, often in Russian.
-  for (const entry of COUNTRY_ALIAS_PATTERNS) {
-    if (entry.pattern.test(String(remarks))) {
-      return { flag: entry.flag, country: entry.country };
-    }
-  }
-
-  // Also accept a standalone ISO country code in a server name, e.g. "FR-01" / "NL Amsterdam".
-  for (const entry of COUNTRY_CODE_PATTERNS) {
-    if (entry.pattern.test(String(remarks))) {
-      return { flag: entry.flag, country: entry.country };
+      return {
+        flag: entry.flag,
+        country: entry.country,
+      };
     }
   }
 
@@ -367,8 +310,8 @@ function normalizeCountryRemark(
   // Some Keyline White List profiles intentionally have no country
   // in `remarks` (for example `🌐 Белый интернет`). Keep them instead
   // of silently dropping them. When Keyline provides structured country
-  // metadata it is preferred above; otherwise use the requested Russia
-  // fallback for unflagged White List profiles.
+  // metadata it is preferred above; otherwise use an explicit Global
+  // fallback rather than inventing a country.
   if (isWhiteListRemark(original)) {
     return {
       flag:
@@ -376,7 +319,7 @@ function normalizeCountryRemark(
         "🇷🇺",
 
       country:
-        flag ? country : "Russia",
+        "Russia",
 
       whiteList:
         true,
@@ -732,108 +675,6 @@ async function fetchJsonUrl(url, label, clientIdentity) {
   throw lastError || new Error(`${label}: unknown fetch error`);
 }
 
-
-function sourceCacheFile(scope, index, url) {
-  const hash = crypto
-    .createHash("sha256")
-    .update(String(url))
-    .digest("hex")
-    .slice(0, 12);
-
-  return path.join(
-    FETCH_CACHE_DIR,
-    `${scope}-${String(index + 1).padStart(2, "0")}-${hash}.json`
-  );
-}
-
-async function writeSourceCache(scope, index, url, payload) {
-  await fs.mkdir(FETCH_CACHE_DIR, { recursive: true });
-  const file = sourceCacheFile(scope, index, url);
-
-  await writeAtomic(
-    file,
-    `${JSON.stringify({
-      cachedAt: Date.now(),
-      url,
-      payloadKind: payload.kind,
-      data: payload.data,
-    }, null, 2)}\n`
-  );
-}
-
-async function readSourceCache(scope, index, url) {
-  const file = sourceCacheFile(scope, index, url);
-
-  try {
-    const text = await fs.readFile(file, "utf8");
-    const cached = safeJsonParse(text, file);
-
-    if (cached?.url !== url) return null;
-    if (!cached?.payloadKind || cached?.data === undefined) return null;
-
-    return {
-      kind: cached.payloadKind,
-      data: cached.data,
-      cachedAt: Number(cached.cachedAt) || 0,
-    };
-  } catch (error) {
-    if (error.code === "ENOENT") return null;
-    throw error;
-  }
-}
-
-async function fetchOneConfiguredSource(url, label, clientIdentity, cacheScope, index) {
-  try {
-    const payload = await fetchJsonUrl(url, label, clientIdentity);
-    await writeSourceCache(cacheScope, index, url, payload);
-
-    return {
-      ok: true,
-      source: {
-        label,
-        data: payload.data,
-        payloadKind: payload.kind,
-        forceWhiteList: cacheScope === "whitelist",
-      },
-    };
-  } catch (error) {
-    const cached = await readSourceCache(
-      cacheScope,
-      index,
-      url
-    );
-
-    if (!cached) {
-      return {
-        ok: false,
-        failure: {
-          label,
-          message: error.message,
-        },
-      };
-    }
-
-    const ageHours = cached.cachedAt > 0
-      ? ((Date.now() - cached.cachedAt) / 3_600_000).toFixed(1)
-      : "unknown";
-
-    console.warn(
-      `${label}: live fetch failed (${error.message}); ` +
-      `using cached source from ${ageHours}h ago.`
-    );
-
-    return {
-      ok: true,
-      source: {
-        label: `${label} (cached)`,
-        data: cached.data,
-        payloadKind: cached.kind,
-        forceWhiteList: cacheScope === "whitelist",
-      },
-    };
-  }
-}
-
 async function fetchKeylineSources() {
   const clientIdentity = await getHappClientIdentity();
 
@@ -896,51 +737,59 @@ async function fetchKeylineSources() {
   const sources = [];
   const failures = [];
 
-  const regularResults = await Promise.all(
-    regularUrls.map((url, index) =>
-      fetchOneConfiguredSource(
-        url,
-        `Keyline source ${index + 1}`,
-        clientIdentity,
-        "regular",
-        index
-      )
-    )
-  );
+  // Every configured subscription is read once per attempt, using the
+  // same client identity and headers as a normal Windows Happ client.
+  for (let index = 0; index < regularUrls.length; index += 1) {
+    const url = regularUrls[index];
+    const label = `Keyline source ${index + 1}`;
 
-  for (const result of regularResults) {
-    if (result.ok) {
-      sources.push(result.source);
-      console.log(`${result.source.label}: OK`);
-    } else {
-      failures.push(result.failure);
-      console.error(
-        `${result.failure.label}: FAILED — ${result.failure.message}`
-      );
+    try {
+      const data = await fetchJsonUrl(url, label, clientIdentity);
+
+      sources.push({
+        label,
+        data: data.data,
+        payloadKind: data.kind,
+        forceWhiteList: false,
+      });
+
+      console.log(`${label}: OK`);
+    } catch (error) {
+      failures.push({
+        label,
+        message: error.message,
+      });
+
+      console.error(`${label}: FAILED — ${error.message}`);
     }
   }
 
-  const whiteListResults = await Promise.all(
-    dedicatedWhiteListUrls.map((url, index) =>
-      fetchOneConfiguredSource(
-        url,
-        `Keyline White List source ${index + 1}`,
-        clientIdentity,
-        "whitelist",
-        index
-      )
-    )
-  );
+  for (let index = 0; index < dedicatedWhiteListUrls.length; index += 1) {
+    const url = dedicatedWhiteListUrls[index];
+    const label = `Keyline White List source ${index + 1}`;
 
-  for (const result of whiteListResults) {
-    if (result.ok) {
-      sources.push(result.source);
-      console.log(`${result.source.label}: OK`);
-    } else {
-      failures.push(result.failure);
-      console.error(
-        `${result.failure.label}: FAILED — ${result.failure.message}`
+    try {
+      const data = await fetchJsonUrl(
+        url,
+        label,
+        clientIdentity
       );
+
+      sources.push({
+        label,
+        data: data.data,
+        payloadKind: data.kind,
+        forceWhiteList: true,
+      });
+
+      console.log(`${label}: OK`);
+    } catch (error) {
+      failures.push({
+        label,
+        message: error.message,
+      });
+
+      console.error(`${label}: FAILED — ${error.message}`);
     }
   }
 
@@ -1299,50 +1148,21 @@ function buildSupportedLink(entry) {
   return null;
 }
 
-function normalizeProfileLink(link, index, source, forceWhiteList = false, stats = null) {
-  if (typeof link !== "string" || !link.trim()) {
-    if (stats) stats.droppedInvalid += 1;
-    return null;
-  }
+function normalizeProfileLink(link, index, source, forceWhiteList = false) {
+  if (typeof link !== "string" || !link.trim()) return null;
 
   const value = link.trim();
   const protocol = value.split("://")[0]?.toLowerCase();
 
   if (!["vless", "trojan", "hysteria2"].includes(protocol)) {
-    if (stats) stats.droppedUnsupported += 1;
     return null;
   }
 
-  let canonicalLink = value;
   let remarks = "";
 
   try {
     const url = new URL(value);
     remarks = decodeURIComponent(url.hash.replace(/^#/, "")).trim();
-
-    // Normalize URI inputs to the same minimum contract used by enter-main:
-    // transport is explicit, and protocol security has a deterministic default.
-    if (protocol === "vless") {
-      if (!url.searchParams.get("type") && !url.searchParams.get("network")) {
-        url.searchParams.set("type", "tcp");
-      }
-      if (!url.searchParams.get("security")) {
-        url.searchParams.set("security", "none");
-      }
-    } else if (protocol === "trojan") {
-      if (!url.searchParams.get("type") && !url.searchParams.get("network")) {
-        url.searchParams.set("type", "tcp");
-      }
-      if (!url.searchParams.get("security")) {
-        url.searchParams.set("security", "tls");
-      }
-    }
-
-    const hash = url.hash;
-    url.hash = "";
-    canonicalLink = url.toString();
-    url.hash = hash;
-    if (hash) canonicalLink += hash;
   } catch {}
 
   if (!remarks) {
@@ -1350,12 +1170,11 @@ function normalizeProfileLink(link, index, source, forceWhiteList = false, stats
   }
 
   const normalized =
-    normalizeCountryRemark(remarks, {});
-  if (!normalized) {
-    if (stats) stats.droppedUnknownCountry += 1;
-    return null;
-  }
-  if (stats) stats.parsed += 1;
+    normalizeCountryRemark(
+      remarks,
+      {}
+    );
+  if (!normalized) return null;
 
   return {
     sourceIndex: index,
@@ -1364,58 +1183,79 @@ function normalizeProfileLink(link, index, source, forceWhiteList = false, stats
     flag: normalized.flag,
     country: normalized.country,
     whiteList: forceWhiteList || normalized.whiteList,
-    link: canonicalLink,
+    link: value,
   };
 }
 
 function normalizeSourceData(source) {
-  const stats = {
-    raw: Array.isArray(source.data) ? source.data.length : 1,
-    parsed: 0,
-    droppedInvalid: 0,
-    droppedUnsupported: 0,
-    droppedUnknownCountry: 0,
-    autoSelection: 0,
-  };
-
   if (source.payloadKind === "links") {
-    const result = source.data
+    return source.data
       .map((link, index) => normalizeProfileLink(
-        link, index, source.label, source.forceWhiteList, stats
+        link,
+        index,
+        source.label,
+        source.forceWhiteList
       ))
       .filter(Boolean);
-    return { entries: result, stats };
   }
 
-  const sourceEntries = Array.isArray(source.data)
-    ? source.data
-    : (source.data && typeof source.data === "object" ? [source.data] : null);
+  const sourceEntries =
+    Array.isArray(source.data)
+      ? source.data
+      : (
+          source.data &&
+          typeof source.data === "object"
+            ? [source.data]
+            : null
+        );
 
   if (!sourceEntries) {
-    throw new Error(`${source.label}: response must be a JSON object or array. Existing Keyline pool is preserved.`);
+    throw new Error(
+      `${source.label}: response must be a JSON object or array. ` +
+      "Existing Keyline pool is preserved."
+    );
   }
 
   const result = [];
   let autoEntry = null;
-  stats.raw = sourceEntries.length;
 
-  for (let index = 0; index < sourceEntries.length; index += 1) {
-    const normalized = normalizeEntry(sourceEntries[index], index, source.label, stats);
+  for (
+    let index = 0;
+    index < sourceEntries.length;
+    index += 1
+  ) {
+    const normalized = normalizeEntry(
+      sourceEntries[index],
+      index,
+      source.label
+    );
+
     if (normalized === "AUTO_SELECTION") {
-      stats.autoSelection += 1;
-      if (!autoEntry) autoEntry = extractAutoLink(sourceEntries[index]);
+      if (!autoEntry) {
+        autoEntry =
+          extractAutoLink(
+            sourceEntries[index]
+          );
+      }
       continue;
     }
+
     if (!normalized) continue;
     if (source.forceWhiteList) normalized.whiteList = true;
+
     result.push(normalized);
   }
 
   if (autoEntry && result.some(item => item.whiteList)) {
-    result.push({ ...autoEntry, whiteList: true, isAutoWhiteListCandidate: true, originalRemarks: "⚡ Auto White List" });
+    result.push({
+      ...autoEntry,
+      whiteList: true,
+      isAutoWhiteListCandidate: true,
+      originalRemarks: "⚡ Auto White List",
+    });
   }
 
-  return { entries: result, stats };
+  return result;
 }
 
 function extractAutoLink(entry) {
@@ -1436,11 +1276,8 @@ function extractAutoLink(entry) {
   };
 }
 
-function normalizeEntry(entry, index, source, stats = null) {
-  if (!entry || typeof entry !== "object") {
-    if (stats) stats.droppedInvalid += 1;
-    return null;
-  }
+function normalizeEntry(entry, index, source) {
+  if (!entry || typeof entry !== "object") return null;
 
   const outbounds = Array.isArray(entry.outbounds)
     ? entry.outbounds
@@ -1453,13 +1290,7 @@ function normalizeEntry(entry, index, source, stats = null) {
     : "";
   const link = buildSupportedLink(entry);
 
-  if (!proxy || !remarks || !link) {
-    if (stats) {
-      if (!proxy || !link) stats.droppedInvalid += 1;
-      else stats.droppedUnknownCountry += 1;
-    }
-    return null;
-  }
+  if (!proxy || !remarks || !link) return null;
   if (isAutoSelectionRemark(remarks)) return "AUTO_SELECTION";
 
   const normalized =
@@ -1468,11 +1299,7 @@ function normalizeEntry(entry, index, source, stats = null) {
       {}
     );
 
-  if (!normalized) {
-    if (stats) stats.droppedUnknownCountry += 1;
-    return null;
-  }
-  if (stats) stats.parsed += 1;
+  if (!normalized) return null;
 
   return {
     sourceIndex: index,
@@ -1543,81 +1370,6 @@ function sortEntries(entries) {
 
     return (a.sourceIndex ?? 0) - (b.sourceIndex ?? 0);
   });
-}
-
-function buildRetainedEntries(currentIndex) {
-  const retained = [];
-
-  for (const item of currentIndex) {
-    if (!isManagedId(item?.id)) continue;
-
-    const link = String(item?.link || "").trim();
-    if (!link) continue;
-
-    const remarks = String(item?.remarks || "").trim();
-    const flag = extractFlag(remarks);
-    const isWhiteList = MANAGED_WHITE_LIST_RE.test(item.id);
-
-    let country = "Unknown";
-    if (flag) {
-      country =
-        FLAG_TO_COUNTRY[flag] ||
-        countryFromFlagValue(flag) ||
-        "Unknown";
-    }
-
-    if (country === "Unknown") {
-      const match = remarks.match(
-        /(?:^|\s)(Albania|Austria|Belgium|Brazil|Switzerland|China|Czech Republic|Germany|Denmark|Estonia|Spain|Finland|France|United Kingdom|Greece|Hong Kong|Indonesia|Ireland|India|Israel|Italy|Japan|Kazakhstan|Lithuania|Latvia|Mexico|Netherlands|Norway|New Zealand|Poland|Portugal|Romania|Russia|Sweden|Singapore|Slovenia|Slovakia|Thailand|Turkey|Ukraine|United States|Vietnam)(?:\s+\d+)?(?:\s|$)/i
-      );
-
-      if (match?.[1]) {
-        country = match[1];
-      }
-    }
-
-    retained.push({
-      link,
-      remarks,
-      flag: flag || "🇷🇺",
-      country,
-      whiteList: isWhiteList,
-      retained: true,
-    });
-  }
-
-  return retained;
-}
-
-function mergeWithRetainedEntries(
-  freshRegular,
-  freshWhiteList,
-  currentIndex
-) {
-  const retained = buildRetainedEntries(currentIndex);
-  const seen = new Set(
-    [...freshRegular, ...freshWhiteList]
-      .map(item => String(item?.link || "").trim())
-      .filter(Boolean)
-  );
-
-  for (const item of retained) {
-    if (seen.has(item.link)) continue;
-
-    seen.add(item.link);
-
-    if (item.whiteList) {
-      freshWhiteList.push(item);
-    } else {
-      freshRegular.push(item);
-    }
-  }
-
-  return {
-    regular: freshRegular,
-    whiteList: freshWhiteList,
-    retainedCount: retained.length,
-  };
 }
 
 function normalizeAndNumber(entries) {
@@ -1872,51 +1624,28 @@ async function main() {
   } = await fetchKeylineSources();
   const allEntries = [];
   let totalRawEntries = 0;
-  const sourceReports = [];
 
   for (const source of sources) {
-    const result = normalizeSourceData(source);
-    const { entries, stats } = result;
-    totalRawEntries += stats.raw;
-    allEntries.push(...entries);
+    const normalized = normalizeSourceData(source);
 
-    sourceReports.push({
-      source: source.label,
-      payloadKind: source.payloadKind,
-      ...stats,
-    });
+    totalRawEntries += Array.isArray(source.data)
+      ? source.data.length
+      : 1;
+    allEntries.push(...normalized);
 
     console.log(
-      `${source.label}: raw=${stats.raw}, parsed=${stats.parsed}, ` +
-      `no-country=${stats.droppedUnknownCountry}, invalid=${stats.droppedInvalid}, ` +
-      `unsupported=${stats.droppedUnsupported}`
+      `${source.label}: parsed ${normalized.length} supported entries` +
+      ` (${source.payloadKind})`
     );
   }
 
   const deduped = dedupe(allEntries);
-  const currentIndex = await loadIndex();
-
-  const freshRegularEntries = deduped.filter(item => (
-    !item.whiteList &&
-    !item.isAutoWhiteListCandidate
-  ));
-
-  const freshWhiteListEntries = deduped.filter(item => (
-    item.whiteList &&
-    !item.isAutoWhiteListCandidate
-  ));
-
-  const freshRegularCount = freshRegularEntries.length;
-  const freshWhiteListCount = freshWhiteListEntries.length;
-
-  const merged = mergeWithRetainedEntries(
-    freshRegularEntries,
-    freshWhiteListEntries,
-    currentIndex
-  );
 
   const regular = normalizeAndNumber(
-    merged.regular
+    deduped.filter(item => (
+      !item.whiteList &&
+      !item.isAutoWhiteListCandidate
+    ))
   );
 
   const autoCandidates = deduped.filter(
@@ -1930,7 +1659,10 @@ async function main() {
   );
 
   const whiteListLocations = normalizeWhiteListEntries(
-    merged.whiteList,
+    deduped.filter(item => (
+      item.whiteList &&
+      !item.isAutoWhiteListCandidate
+    )),
     autoWhiteList.length > 0 ? 3 : 2
   );
 
@@ -1946,6 +1678,7 @@ async function main() {
     );
   }
 
+  const currentIndex = await loadIndex();
   const manualWhiteList = currentIndex.filter(item => (
     item &&
     typeof item.id === "string" &&
@@ -1966,25 +1699,6 @@ async function main() {
     throw error;
   }
 
-  const report = {
-    generatedAt: new Date().toISOString(),
-    sourceCount: sources.length,
-    totalRawEntries,
-    sourceReports,
-    freshBeforeDedupe: allEntries.length,
-    afterDedupe: deduped.length,
-    freshRegular: freshRegularCount,
-    freshWhiteList: freshWhiteListCount,
-    retainedFromPreviousPool: merged.retainedCount,
-    regularBeforeHealthCheck: regular.length,
-    autoWhiteListBeforeHealthCheck: automaticWhiteList.length,
-    totalBeforeHealthCheck: regular.length + automaticWhiteList.length,
-  };
-  await writeAtomic(
-    path.join(ROOT, "keyline-report.json"),
-    `${JSON.stringify(report, null, 2)}\n`
-  );
-
   await writeAtomic(
     STATE_FILE,
     `${JSON.stringify({
@@ -2000,8 +1714,7 @@ async function main() {
 
   console.log(
     `Keyline update complete: ${sources.length} sources, ` +
-    `${regular.length} regular, ${automaticWhiteList.length} auto-white-list, ` +
-    `${merged.retainedCount} retained from previous pool.`
+    `${regular.length} regular, ${automaticWhiteList.length} auto-white-list.`
   );
 }
 
