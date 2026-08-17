@@ -77,14 +77,26 @@ const FLAG_TO_COUNTRY = {
 const WHITE_LIST_PATTERNS = [
   /\bwhite\s*list\b/i,
   /\bwhitelist\b/i,
+  /\bwhite[-_ ]?listed?\b/i,
   /бел\w*/i,
   /обход\w*/i,
   /глушил\w*/i,
   /\blte\b/i,
   /\bblock\s*list\b/i,
   /\bblocklist\b/i,
-  /🏳️?/u,
+  /🏳️/u,
 ];
+
+const COUNTRY_NAME_PATTERNS = Object.entries(FLAG_TO_COUNTRY).map(
+  ([flag, country]) => ({
+    flag,
+    country,
+    pattern: new RegExp(
+      `(^|[\\s\\[\\]().,:;_-])${country.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\\\$&")}(?=$|[\\s\\[\\]().,:;_-])`,
+      "i"
+    ),
+  })
+);
 
 function isWhiteListRemark(remarks = "") {
   const value = String(remarks);
@@ -93,18 +105,40 @@ function isWhiteListRemark(remarks = "") {
 }
 
 function extractFlag(remarks = "") {
-  const match = String(remarks).match(
-    /(?:^|\s)([\u{1F1E6}-\u{1F1FF}]{2})(?=\s|$)/u
+  const value = String(remarks);
+
+  // Keyline commonly puts the flag immediately before the name:
+  // `🇫🇷Новый образец`, so the flag must not require surrounding spaces.
+  const match = value.match(
+    /[\u{1F1E6}-\u{1F1FF}]{2}/u
   );
 
-  return match?.[1] || "🏳️";
+  return match?.[0] || "";
 }
 
 function countryFromRemark(remarks = "") {
   const flag = extractFlag(remarks);
+
+  if (FLAG_TO_COUNTRY[flag]) {
+    return {
+      flag,
+      country: FLAG_TO_COUNTRY[flag],
+    };
+  }
+
+  // Fallback for sources that spell the country name but omit the flag.
+  for (const entry of COUNTRY_NAME_PATTERNS) {
+    if (entry.pattern.test(String(remarks))) {
+      return {
+        flag: entry.flag,
+        country: entry.country,
+      };
+    }
+  }
+
   return {
-    flag,
-    country: FLAG_TO_COUNTRY[flag] || "Unknown",
+    flag: "",
+    country: "Unknown",
   };
 }
 
@@ -795,15 +829,37 @@ function buildHysteria2Link(entry) {
     server.password ||
     "";
 
+  const finalmask =
+    stream.finalmask ||
+    outbound.finalmask ||
+    null;
+
   const query = encodeQuery({
     sni: tls.serverName || "",
-    alpn: Array.isArray(tls.alpn) ? tls.alpn.join(",") : "",
+    alpn: Array.isArray(tls.alpn)
+      ? tls.alpn.join(",")
+      : "",
+    insecure:
+      tls.allowInsecure
+        ? "1"
+        : "",
+    pinSHA256:
+      tls.pinnedPeerCertSha256 ||
+      tls.pinSHA256 ||
+      "",
+    fm:
+      finalmask &&
+      typeof finalmask === "object" &&
+      Object.keys(finalmask).length > 0
+        ? JSON.stringify(finalmask)
+        : "",
   });
 
   return (
     `hysteria2://${encodeLinkUsername(auth)}@${server.address}:${server.port}?${query}`
   );
 }
+
 
 function buildSupportedLink(entry) {
   const outbound = entry?.outbounds?.find(
@@ -991,7 +1047,8 @@ function canonicalAutoWhiteList(entries) {
 
   return [{
     ...entries[0],
-    remarks: "⚡ Auto White List",
+    remarks: "🏳️ ⚡ Auto White List 2",
+    whiteListIndex: 2,
   }];
 }
 
@@ -1031,10 +1088,20 @@ function normalizeAndNumber(entries) {
 
     return {
       ...item,
-      remarks: `${item.flag} ${item.country} ${next}`,
+      remarks: `${item.flag} ${item.country} ${next}`.trim(),
       countryIndex: next,
     };
   });
+}
+
+function normalizeWhiteListEntries(entries, startNumber = 2) {
+  const sorted = sortEntries(entries);
+
+  return sorted.map((item, index) => ({
+    ...item,
+    remarks: `🏳️ ${item.flag} White List ${startNumber + index}`.trim(),
+    whiteListIndex: startNumber + index,
+  }));
 }
 
 async function loadIndex() {
@@ -1092,24 +1159,23 @@ async function buildStagedLinks(
     !/^whitelist-\d+$/i.test(item.id)
   ));
 
-  const currentManualWhiteLists = currentIndex.filter(item => (
-    item &&
-    typeof item.id === "string" &&
-    !isManagedId(item.id) &&
-    /^whitelist-\d+$/i.test(item.id)
-  ));
-
   const nextEntries = [];
-  const manualNonWhite = manualEntries.filter(item => item.id !== "whitelist-1");
-  const manualEuropeFirst = manualNonWhite.filter(item => /^europe-\d+$/i.test(item.id));
-  const manualOther = manualNonWhite.filter(item => !/^europe-\d+$/i.test(item.id));
+  const manualEuropeFirst = manualEntries.filter(
+    item => /^europe-\d+$/i.test(item.id)
+  );
+  const manualOther = manualEntries.filter(
+    item => !/^europe-\d+$/i.test(item.id)
+  );
 
+  // Permanent/manual non-White-List locations remain first.
   nextEntries.push(...manualEuropeFirst);
-
   nextEntries.push(...manualOther);
 
+  // All Keyline regular locations go above the permanent White List 1.
   for (let index = 0; index < regular.length; index += 1) {
-    const id = `keyline-regular-${String(index + 1).padStart(2, "0")}`;
+    const id =
+      `keyline-regular-${String(index + 1).padStart(2, "0")}`;
+
     const item = regular[index];
 
     await fs.writeFile(
@@ -1124,22 +1190,47 @@ async function buildStagedLinks(
     });
   }
 
+  // Permanent White List entries are kept after the regular pool.
   for (const item of manualWhiteList) {
     const id = item.id;
-    const sourceFile = path.join(LINKS_DIR, `${id}.link`);
-    const stagedFile = path.join(stageDir, `${id}.link`);
+    const sourceFile =
+      path.join(LINKS_DIR, `${id}.link`);
+
+    const stagedFile =
+      path.join(stageDir, `${id}.link`);
 
     try {
-      await fs.copyFile(sourceFile, stagedFile);
-      nextEntries.push(item);
+      await fs.copyFile(
+        sourceFile,
+        stagedFile
+      );
+
+      nextEntries.push({
+        ...item,
+        ...(id.toLowerCase() === "whitelist-1"
+          ? {
+              remarks:
+                "🏳️ 🇷🇺 White List 1",
+            }
+          : {}),
+      });
     } catch (error) {
       if (error.code !== "ENOENT") throw error;
     }
   }
 
-  for (let index = 0; index < autoWhiteList.length; index += 1) {
-    const id = `keyline-whitelist-${String(index + 1).padStart(2, "0")}`;
-    const item = autoWhiteList[index];
+  // Automatically discovered White List entries come immediately
+  // after the permanent White List 1.
+  for (
+    let index = 0;
+    index < autoWhiteList.length;
+    index += 1
+  ) {
+    const id =
+      `keyline-whitelist-${String(index + 1).padStart(2, "0")}`;
+
+    const item =
+      autoWhiteList[index];
 
     await fs.writeFile(
       path.join(stageDir, `${id}.link`),
@@ -1216,17 +1307,18 @@ async function main() {
     item => item.isAutoWhiteListCandidate
   );
 
-  const whiteListLocations = normalizeAndNumber(
-    deduped.filter(item => (
-      item.whiteList &&
-      !item.isAutoWhiteListCandidate
-    ))
-  );
-
   const autoWhiteList = canonicalAutoWhiteList(autoCandidates);
   const remainingWhiteListSlots = Math.max(
     AUTO_WHITE_LIST_LIMIT - autoWhiteList.length,
     0
+  );
+
+  const whiteListLocations = normalizeWhiteListEntries(
+    deduped.filter(item => (
+      item.whiteList &&
+      !item.isAutoWhiteListCandidate
+    )),
+    autoWhiteList.length > 0 ? 3 : 2
   );
 
   const automaticWhiteList = [
