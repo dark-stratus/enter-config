@@ -585,9 +585,9 @@ async function readState() {
 
     return Number.isFinite(state.lastSuccessfulUpdateAt)
       ? state
-      : { lastSuccessfulUpdateAt: 0 };
+      : { lastSuccessfulUpdateAt: 0, healthHistory: {} };
   } catch (error) {
-    if (error.code === "ENOENT") return { lastSuccessfulUpdateAt: 0 };
+    if (error.code === "ENOENT") return { lastSuccessfulUpdateAt: 0, healthHistory: {} };
     throw error;
   }
 }
@@ -1601,7 +1601,7 @@ function sortEntries(entries) {
   });
 }
 
-function buildRetainedEntries(currentIndex) {
+function buildRetainedEntries(currentIndex, healthHistory = {}) {
   const retained = [];
 
   for (const item of currentIndex) {
@@ -1609,6 +1609,12 @@ function buildRetainedEntries(currentIndex) {
 
     const link = String(item?.link || "").trim();
     if (!link) continue;
+
+    const health = healthHistory[endpointFingerprint(link)] || null;
+    const quarantineUntil = Number(health?.quarantineUntil) || 0;
+    if (health?.lastStatus === "fail" && quarantineUntil > Date.now()) {
+      continue;
+    }
 
     const remarks = String(item?.remarks || "").trim();
     const flag = extractFlag(remarks);
@@ -1648,9 +1654,10 @@ function buildRetainedEntries(currentIndex) {
 function mergeWithRetainedEntries(
   freshRegular,
   freshWhiteList,
-  currentIndex
+  currentIndex,
+  healthHistory = {}
 ) {
-  const retained = buildRetainedEntries(currentIndex);
+  const retained = buildRetainedEntries(currentIndex, healthHistory);
   const seen = new Set(
     [...freshRegular, ...freshWhiteList]
       .map(item => String(item?.link || "").trim())
@@ -1967,10 +1974,14 @@ async function main() {
   const freshRegularCount = freshRegularEntries.length;
   const freshWhiteListCount = freshWhiteListEntries.length;
 
+  const previousState = await readState();
+  const healthHistory = previousState.healthHistory || {};
+
   const merged = mergeWithRetainedEntries(
     freshRegularEntries,
     freshWhiteListEntries,
-    currentIndex
+    currentIndex,
+    healthHistory
   );
 
   const regular = normalizeAndNumber(
@@ -2024,7 +2035,6 @@ async function main() {
     throw error;
   }
 
-  const previousState = await readState();
   const previousSourceFingerprints = previousState.sourceFingerprints || {};
   const currentSourceFingerprints = Object.fromEntries(
     sourceFetches.map(item => [item.label, item.urlFingerprint])
@@ -2093,7 +2103,7 @@ async function main() {
     regularBeforeHealthCheck: regular.length,
     autoWhiteListBeforeHealthCheck: automaticWhiteList.length,
     totalBeforeHealthCheck: regular.length + automaticWhiteList.length,
-    retainedPolicy: "previous managed links are retained until a health-check explicitly removes them",
+    retainedPolicy: "previous managed links are retained unless temporarily quarantined by a failed health check; quarantine is not a permanent blacklist",
   };
   await writeAtomic(
     path.join(ROOT, "keyline-report.json"),

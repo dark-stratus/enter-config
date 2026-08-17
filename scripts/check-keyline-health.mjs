@@ -57,19 +57,19 @@ const QUALITY_DOWNLOAD_URL =
 const QUALITY_DOWNLOAD_TIMEOUT_MS =
     Math.max(
         5000,
-        Number(process.env.HEALTHCHECK_QUALITY_TIMEOUT_MS) || 12000
+        Number(process.env.HEALTHCHECK_QUALITY_TIMEOUT_MS) || 20000
     );
 
 const QUALITY_MIN_BYTES =
     Math.max(
         16384,
-        Number(process.env.HEALTHCHECK_QUALITY_MIN_BYTES) || 65536
+        Number(process.env.HEALTHCHECK_QUALITY_MIN_BYTES) || 1048576
     );
 
 const QUALITY_MIN_KBPS =
     Math.max(
         16,
-        Number(process.env.HEALTHCHECK_QUALITY_MIN_KBPS) || 64
+        Number(process.env.HEALTHCHECK_QUALITY_MIN_KBPS) || 512
     );
 
 const HEALTH_CONCURRENCY =
@@ -115,6 +115,66 @@ function safeDecode(value) {
 
 function fingerprintLink(link) {
     return crypto.createHash("sha256").update(String(link)).digest("hex").slice(0, 12);
+}
+
+const HEALTH_STATE_FILE = path.join(ROOT, ".keyline-state.json");
+
+async function updateHealthHistory(results) {
+    let state = {};
+    try {
+        state = JSON.parse(await fs.readFile(HEALTH_STATE_FILE, "utf8"));
+    } catch {}
+
+    const history =
+        state.healthHistory && typeof state.healthHistory === "object"
+            ? state.healthHistory
+            : {};
+    const now = Date.now();
+
+    for (const result of results) {
+        const link = String(result?.item?.link || "").trim();
+        if (!link) continue;
+
+        const fingerprint = fingerprintLink(link);
+        const previous = history[fingerprint] || {};
+
+        if (result.ok) {
+            history[fingerprint] = {
+                lastStatus: "pass",
+                consecutiveFailures: 0,
+                lastCheckedAt: now,
+                lastPassedAt: now,
+                lastKbps: Number(result?.quality?.kbps) || 0,
+                lastBytes: Number(result?.quality?.bytes) || 0,
+            };
+            continue;
+        }
+
+        history[fingerprint] = {
+            lastStatus: "fail",
+            consecutiveFailures: (Number(previous.consecutiveFailures) || 0) + 1,
+            lastCheckedAt: now,
+            lastPassedAt: Number(previous.lastPassedAt) || 0,
+            lastKbps: Number(result?.quality?.kbps) || 0,
+            lastBytes: Number(result?.quality?.bytes) || 0,
+            lastReason: String(result.reason || "health check failed").slice(0, 500),
+            quarantineUntil: now + 90 * 60 * 1000,
+        };
+    }
+
+    for (const [fingerprint, entry] of Object.entries(history)) {
+        const checkedAt = Number(entry?.lastCheckedAt) || 0;
+        if (checkedAt && checkedAt < now - 14 * 24 * 60 * 60 * 1000) {
+            delete history[fingerprint];
+        }
+    }
+
+    state.healthHistory = history;
+    await fs.writeFile(
+        HEALTH_STATE_FILE,
+        `${JSON.stringify(state, null, 2)}\n`,
+        "utf8"
+    );
 }
 
 function getProtocol(link) {
@@ -1213,6 +1273,8 @@ async function main() {
         )
     );
 
+    await updateHealthHistory(healthResults);
+
     if (
         checked > 0 &&
         passed === 0
@@ -1311,6 +1373,10 @@ async function main() {
             minBytes: QUALITY_MIN_BYTES,
             minKbps: QUALITY_MIN_KBPS,
         },
+        quarantine: {
+            durationMinutes: 90,
+            policy: "failed endpoints are hidden from the active subscription immediately, but are not permanently blacklisted and may return after a later successful health check",
+        },
         results: healthResults,
     };
     report.finalManagedServers = normalizedIndex.filter(item => isManagedKeylineId(item?.id)).length;
@@ -1380,6 +1446,7 @@ async function main() {
             `- Health-check: **${passed} passed / ${failed} failed**`,
             `- Quality probe: ${QUALITY_DOWNLOAD_URL}`,
             `- Quality threshold: >= ${QUALITY_MIN_BYTES} bytes and >= ${QUALITY_MIN_KBPS} KB/s`,
+            `- Temporary quarantine: 90 minutes after a failed health check`,
             `- Final managed servers: **${report.finalManagedServers}**`,
         ];
         if (Array.isArray(report.sourceFailures) && report.sourceFailures.length) {
