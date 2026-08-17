@@ -13,9 +13,8 @@ const AUTO_WHITE_LIST_LIMIT = 20;
 const SUCCESS_INTERVAL_MS = 1 * 60 * 60 * 1000;
 
 const FETCH_TIMEOUT_MS = 60_000;
-const FETCH_RETRIES = 1;
-const FETCH_RETRY_DELAY_MS = 30_000;
-const SOURCE_DELAY_MS = 30_000;
+const FETCH_RETRIES = 4;
+const FETCH_RETRY_DELAY_MS = 2_000;
 
 const HAPP_APP_VERSION = "2.16.2";
 const HAPP_BUILD_ID = "2605221224503";
@@ -579,16 +578,105 @@ function parseSubscriptionPayload(text, contentType, source) {
   );
 }
 
+function recoverFirstJsonObject(text) {
+  const source = normalizeJsonText(text);
+
+  if (!source.startsWith("{")) return null;
+
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let index = 0; index < source.length; index += 1) {
+    const char = source[index];
+
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (char === '"') {
+      inString = true;
+      continue;
+    }
+
+    if (char === "{") {
+      depth += 1;
+      continue;
+    }
+
+    if (char === "}") {
+      depth -= 1;
+
+      if (depth === 0) {
+        const candidate = source.slice(0, index + 1);
+
+        try {
+          const parsed = JSON.parse(candidate);
+          return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+            ? parsed
+            : null;
+        } catch {
+          return null;
+        }
+      }
+    }
+  }
+
+  return null;
+}
+
 async function readState() {
   try {
     const text = await fs.readFile(STATE_FILE, "utf8");
-    const state = safeJsonParse(text, STATE_FILE);
 
-    return Number.isFinite(state.lastSuccessfulUpdateAt)
-      ? state
-      : { lastSuccessfulUpdateAt: 0, healthHistory: {} };
+    try {
+      const state = safeJsonParse(text, STATE_FILE);
+
+      return Number.isFinite(state.lastSuccessfulUpdateAt)
+        ? state
+        : { lastSuccessfulUpdateAt: 0, healthHistory: {} };
+    } catch (parseError) {
+      const recovered = recoverFirstJsonObject(text);
+
+      if (!recovered) {
+        throw parseError;
+      }
+
+      console.warn(
+        `State file ${STATE_FILE} contained trailing/concatenated data; ` +
+        `recovered the first valid JSON object and rewrote the state file.`
+      );
+
+      const normalized = {
+        ...recovered,
+        healthHistory:
+          recovered.healthHistory &&
+          typeof recovered.healthHistory === "object"
+            ? recovered.healthHistory
+            : {},
+      };
+
+      await writeAtomic(
+        STATE_FILE,
+        `${JSON.stringify(normalized, null, 2)}\\n`
+      );
+
+      return Number.isFinite(normalized.lastSuccessfulUpdateAt)
+        ? normalized
+        : { lastSuccessfulUpdateAt: 0, healthHistory: {} };
+    }
   } catch (error) {
-    if (error.code === "ENOENT") return { lastSuccessfulUpdateAt: 0, healthHistory: {} };
+    if (error.code === "ENOENT") {
+      return { lastSuccessfulUpdateAt: 0, healthHistory: {} };
+    }
+
     throw error;
   }
 }
@@ -605,53 +693,23 @@ function createHappDeviceModel() {
   return `LAPTOP-${suffix}_x86_64`;
 }
 
-async function getHappClientIdentity(sourceUrl) {
+async function getHappClientIdentity() {
   const state = await readState();
 
-  const sourceKey = fingerprintUrl(sourceUrl);
-  const existing =
-    state.keylineClientIdentities &&
-    typeof state.keylineClientIdentities === "object"
-      ? state.keylineClientIdentities[sourceKey]
-      : null;
-
-  const hwid = isUuid(existing?.hwid)
-    ? existing.hwid
+  const hwid = isUuid(state.happHwid)
+    ? state.happHwid
     : crypto.randomUUID();
 
   const deviceModel = (
-    typeof existing?.deviceModel === "string" &&
-    /^LAPTOP-[A-Z0-9]+_x86_64$/.test(existing.deviceModel)
+    typeof state.happDeviceModel === "string" &&
+    /^LAPTOP-[A-Z0-9]+_x86_64$/.test(state.happDeviceModel)
   )
-    ? existing.deviceModel
+    ? state.happDeviceModel
     : createHappDeviceModel();
-
-  const identities = {
-    ...(state.keylineClientIdentities || {}),
-    [sourceKey]: {
-      hwid,
-      deviceModel,
-    },
-  };
-
-  if (
-    !existing ||
-    existing.hwid !== hwid ||
-    existing.deviceModel !== deviceModel
-  ) {
-    await writeAtomic(
-      STATE_FILE,
-      `${JSON.stringify({
-        ...state,
-        keylineClientIdentities: identities,
-      }, null, 2)}\\n`
-    );
-  }
 
   return {
     hwid,
     deviceModel,
-    sourceKey,
   };
 }
 
@@ -776,13 +834,7 @@ async function fetchJsonUrl(url, label, clientIdentity) {
     } catch (error) {
       lastError = error;
 
-      const isKeylinePayloadError =
-        /Keyline returned an error payload/i.test(error.message);
-
-      if (
-        attempt < FETCH_RETRIES &&
-        !isKeylinePayloadError
-      ) {
+      if (attempt < FETCH_RETRIES) {
         console.warn(
           `${label}: attempt ${attempt}/${FETCH_RETRIES} failed: ` +
           `${error.message}. Retrying in ${FETCH_RETRY_DELAY_MS} ms...`
@@ -818,11 +870,18 @@ function sourceSlotLabel(scope, index) {
 }
 
 async function fetchKeylineSources() {
+  const clientIdentity = await getHappClientIdentity();
+
+  console.log(
+    `Using Happ client identity: device=${clientIdentity.deviceModel}, ` +
+    `hwid=${clientIdentity.hwid.slice(0, 8)}…`
+  );
+
   const fixtureJson = process.env.KEYLINE_FIXTURE_JSON;
 
   if (fixtureJson) {
     return {
-      clientIdentity: null,
+      clientIdentity,
       sources: [{
         label: "fixture",
         data: safeJsonParse(fixtureJson, "KEYLINE_FIXTURE_JSON"),
@@ -846,7 +905,7 @@ async function fetchKeylineSources() {
     const text = await fs.readFile(resolved, "utf8");
 
     return {
-      clientIdentity: null,
+      clientIdentity,
       sources: [{
         label: resolved,
         data: safeJsonParse(text, resolved),
@@ -908,15 +967,6 @@ async function fetchKeylineSources() {
     const startedAt = Date.now();
 
     try {
-      const clientIdentity =
-        await getHappClientIdentity(request.url);
-
-      console.log(
-        `${request.label}: using stable client identity ` +
-        `device=${clientIdentity.deviceModel}, ` +
-        `hwid=${clientIdentity.hwid.slice(0, 8)}…`
-      );
-
       const source = await fetchOneConfiguredSource(
         request.url,
         request.label,
@@ -961,10 +1011,7 @@ async function fetchKeylineSources() {
     }
 
     if (index < fetchQueue.length - 1) {
-      console.log(
-        `Waiting ${SOURCE_DELAY_MS / 1000}s before the next Keyline source...`
-      );
-      await sleep(SOURCE_DELAY_MS);
+      await sleep(750);
     }
   }
 
@@ -975,6 +1022,7 @@ async function fetchKeylineSources() {
   }
 
   return {
+    clientIdentity,
     sources,
     failures,
     sourceFetches,
@@ -1971,6 +2019,7 @@ async function main() {
   if (await shouldSkip()) return;
 
   const {
+    clientIdentity,
     sources,
     failures,
     sourceFetches,
@@ -2150,17 +2199,16 @@ async function main() {
     `${JSON.stringify(report, null, 2)}\n`
   );
 
-  const currentState = await readState();
-
   await writeAtomic(
     STATE_FILE,
     `${JSON.stringify({
-      ...currentState,
       lastSuccessfulUpdateAt: Date.now(),
       sourceCount: sources.length,
       rawEntryCount: totalRawEntries,
       regularCount: regular.length,
       autoWhiteListCount: automaticWhiteList.length,
+      happHwid: clientIdentity.hwid,
+      happDeviceModel: clientIdentity.deviceModel,
       sourceFingerprints: currentSourceFingerprints,
     }, null, 2)}\n`
   );
