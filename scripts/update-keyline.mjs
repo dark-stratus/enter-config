@@ -302,16 +302,16 @@ function normalizeCountryRemark(
   // Some Keyline White List profiles intentionally have no country
   // in `remarks` (for example `🌐 Белый интернет`). Keep them instead
   // of silently dropping them. When Keyline provides structured country
-  // metadata it is preferred above; otherwise use an explicit Global
-  // fallback rather than inventing a country.
+  // metadata it is preferred above; otherwise use the requested Russia
+  // fallback for unflagged White List profiles.
   if (isWhiteListRemark(original)) {
     return {
       flag:
         flag ||
-        "🌐",
+        "🇷🇺",
 
       country:
-        "Global",
+        flag ? country : "Russia",
 
       whiteList:
         true,
@@ -1150,11 +1150,36 @@ function normalizeProfileLink(link, index, source, forceWhiteList = false) {
     return null;
   }
 
+  let canonicalLink = value;
   let remarks = "";
 
   try {
     const url = new URL(value);
     remarks = decodeURIComponent(url.hash.replace(/^#/, "")).trim();
+
+    // Normalize URI inputs to the same minimum contract used by enter-main:
+    // transport is explicit, and protocol security has a deterministic default.
+    if (protocol === "vless") {
+      if (!url.searchParams.get("type") && !url.searchParams.get("network")) {
+        url.searchParams.set("type", "tcp");
+      }
+      if (!url.searchParams.get("security")) {
+        url.searchParams.set("security", "none");
+      }
+    } else if (protocol === "trojan") {
+      if (!url.searchParams.get("type") && !url.searchParams.get("network")) {
+        url.searchParams.set("type", "tcp");
+      }
+      if (!url.searchParams.get("security")) {
+        url.searchParams.set("security", "tls");
+      }
+    }
+
+    const hash = url.hash;
+    url.hash = "";
+    canonicalLink = url.toString();
+    url.hash = hash;
+    if (hash) canonicalLink += hash;
   } catch {}
 
   if (!remarks) {
@@ -1175,7 +1200,7 @@ function normalizeProfileLink(link, index, source, forceWhiteList = false) {
     flag: normalized.flag,
     country: normalized.country,
     whiteList: forceWhiteList || normalized.whiteList,
-    link: value,
+    link: canonicalLink,
   };
 }
 

@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import crypto from "node:crypto";
 import { spawn } from "node:child_process";
+import { parseLink, buildOutbound } from "./link-runtime.mjs";
 
 const ROOT =
     path.resolve(
@@ -144,541 +145,27 @@ function tcpProbe(
     });
 }
 
-function parseQuery(
-    url
-) {
-    return url.searchParams;
-}
-
-function buildVlessOutbound(
-    url
-) {
-    const params =
-        parseQuery(url);
-
-    const network =
-        params.get("type") ||
-        params.get("network") ||
-        "tcp";
-
-    const security =
-        params.get("security") ||
-        "none";
-
-    const vnext = {
-        address:
-            url.hostname,
-
-        port:
-            Number(url.port),
-
-        users: [
-            {
-                id:
-                    safeDecode(
-                        url.username
-                    ),
-
-                encryption:
-                    params.get(
-                        "encryption"
-                    ) ||
-                    "none",
-
-                flow:
-                    params.get(
-                        "flow"
-                    ) ||
-                    ""
-            }
-        ]
-    };
-
-    const stream = {
-        network,
-        security
-    };
-
-    if (network === "ws") {
-        stream.wsSettings = {
-            path:
-                params.get("path") ||
-                "",
-
-            headers:
-                params.get("host")
-                    ? {
-                        Host:
-                            params.get(
-                                "host"
-                            )
-                    }
-                    : {}
-        };
-    }
-
-    if (network === "grpc") {
-        stream.grpcSettings = {
-            serviceName:
-                params.get(
-                    "serviceName"
-                ) ||
-                "",
-
-            multiMode:
-                params.get(
-                    "mode"
-                ) ===
-                "multi"
-        };
-    }
-
-    if (
-        network ===
-            "httpupgrade"
-    ) {
-        stream.httpupgradeSettings = {
-            path:
-                params.get("path") ||
-                "",
-
-            host:
-                params.get("host") ||
-                ""
-        };
-    }
-
-    if (
-        network === "xhttp" ||
-        network === "splithttp"
-    ) {
-        stream.network =
-            "xhttp";
-
-        stream.xhttpSettings = {
-            path:
-                params.get("path") ||
-                "",
-
-            host:
-                params.get("host") ||
-                "",
-
-            mode:
-                params.get("mode") ||
-                "packet-up"
-        };
-    }
-
-    if (security === "tls") {
-        stream.tlsSettings = {
-            serverName:
-                params.get(
-                    "sni"
-                ) ||
-                "",
-
-            fingerprint:
-                params.get(
-                    "fp"
-                ) ||
-                "",
-
-            alpn:
-                (
-                    params.get(
-                        "alpn"
-                    ) ||
-                    ""
-                )
-                .split(",")
-                .filter(Boolean)
-        };
-    }
-
-    if (security === "reality") {
-        stream.realitySettings = {
-            fingerprint:
-                params.get(
-                    "fp"
-                ) ||
-                "chrome",
-
-            publicKey:
-                params.get(
-                    "pbk"
-                ) ||
-                "",
-
-            serverName:
-                params.get(
-                    "sni"
-                ) ||
-                "",
-
-            shortId:
-                params.get(
-                    "sid"
-                ) ||
-                ""
-        };
-    }
+function buildXrayConfig(link, socksPort) {
+    const server = parseLink(link);
+    const outbound = buildOutbound(server, "proxy");
 
     return {
-        protocol:
-            "vless",
-
-        settings: {
-            vnext: [
-                vnext
-            ]
-        },
-
-        streamSettings:
-            stream,
-
-        tag:
-            "proxy"
-    };
-}
-
-function buildTrojanOutbound(
-    url
-) {
-    const params =
-        parseQuery(url);
-
-    const stream = {
-        network:
-            params.get(
-                "type"
-            ) ||
-            "tcp",
-
-        security:
-            "tls",
-
-        tlsSettings: {
-            serverName:
-                params.get(
-                    "sni"
-                ) ||
-                "",
-
-            fingerprint:
-                params.get(
-                    "fp"
-                ) ||
-                "",
-
-            alpn:
-                (
-                    params.get(
-                        "alpn"
-                    ) ||
-                    ""
-                )
-                .split(",")
-                .filter(Boolean)
-        }
-    };
-
-    if (
-        stream.network ===
-        "ws"
-    ) {
-        stream.wsSettings = {
-            path:
-                params.get("path") ||
-                "",
-
-            headers:
-                params.get("host")
-                    ? {
-                        Host:
-                            params.get(
-                                "host"
-                            )
-                    }
-                    : {}
-        };
-    }
-
-    if (
-        stream.network ===
-        "grpc"
-    ) {
-        stream.grpcSettings = {
-            serviceName:
-                params.get(
-                    "serviceName"
-                ) ||
-                "",
-
-            multiMode:
-                params.get(
-                    "mode"
-                ) ===
-                "multi"
-        };
-    }
-
-    if (
-        stream.network ===
-        "httpupgrade"
-    ) {
-        stream.httpupgradeSettings = {
-            path:
-                params.get("path") ||
-                "",
-
-            host:
-                params.get("host") ||
-                ""
-        };
-    }
-
-    return {
-        protocol:
-            "trojan",
-
-        settings: {
-            servers: [
-                {
-                    address:
-                        url.hostname,
-
-                    port:
-                        Number(url.port),
-
-                    password:
-                        safeDecode(
-                            url.username
-                        )
-                }
-            ]
-        },
-
-        streamSettings:
-            stream,
-
-        tag:
-            "proxy"
-    };
-}
-
-function buildHysteriaOutbound(
-    url
-) {
-    const params =
-        parseQuery(url);
-
-    const finalmaskText =
-        params.get("fm");
-
-    let finalmask = {};
-
-    if (finalmaskText) {
-        try {
-            finalmask =
-                JSON.parse(
-                    safeDecode(
-                        safeDecode(
-                            finalmaskText
-                        )
-                    )
-                );
-        } catch {}
-    }
-
-    return {
-        protocol:
-            "hysteria",
-
-        settings: {
-            address:
-                url.hostname,
-
-            port:
-                Number(url.port),
-
-            version:
-                2,
-
-            auth:
-                safeDecode(
-                    url.username
-                )
-        },
-
-        streamSettings: {
-            network:
-                "hysteria",
-
-            security:
-                "tls",
-
-            isCustomFinalmask:
-                Object.keys(
-                    finalmask
-                ).length > 0,
-
-            finalmask,
-
-            hysteriaSettings: {
-                version:
-                    2,
-
-                auth:
-                    safeDecode(
-                        url.username
-                    )
-            },
-
-            tlsSettings: {
-                serverName:
-                    params.get(
-                        "sni"
-                    ) ||
-                    "",
-
-                alpn:
-                    (
-                        params.get(
-                            "alpn"
-                        ) ||
-                        "h3"
-                    )
-                    .split(",")
-                    .filter(Boolean),
-
-                ...(params.get(
-                    "insecure"
-                ) === "1" ||
-                params.get(
-                    "allowInsecure"
-                ) === "1"
-                    ? {
-                        allowInsecure:
-                            true
-                    }
-                    : {}),
-
-                ...(params.get(
-                    "pinSHA256"
-                )
-                    ? {
-                        pinnedPeerCertSha256:
-                            params.get(
-                                "pinSHA256"
-                            )
-                    }
-                    : {})
-            }
-        },
-
-        tag:
-            "proxy"
-    };
-}
-
-function buildXrayConfig(
-    link,
-    socksPort
-) {
-    const url =
-        new URL(
-            link
-        );
-
-    const protocol =
-        getProtocol(link);
-
-    let outbound;
-
-    if (
-        protocol ===
-        "vless"
-    ) {
-        outbound =
-            buildVlessOutbound(
-                url
-            );
-    } else if (
-        protocol ===
-        "trojan"
-    ) {
-        outbound =
-            buildTrojanOutbound(
-                url
-            );
-    } else if (
-        protocol ===
-            "hysteria2" ||
-        protocol ===
-            "hysteria"
-    ) {
-        outbound =
-            buildHysteriaOutbound(
-                url
-            );
-    } else {
-        throw new Error(
-            `Unsupported protocol: ${protocol}`
-        );
-    }
-
-    return {
-        log: {
-            loglevel:
-                "none"
-        },
-
+        log: { loglevel: "none" },
         inbounds: [
             {
-                listen:
-                    "127.0.0.1",
-
-                port:
-                    socksPort,
-
-                protocol:
-                    "socks",
-
-                settings: {
-                    udp:
-                        false
-                },
-
-                sniffing: {
-                    enabled:
-                        false
-                },
-
-                tag:
-                    "socks"
-            }
+                listen: "127.0.0.1",
+                port: socksPort,
+                protocol: "socks",
+                settings: { udp: false },
+                sniffing: { enabled: false },
+                tag: "socks",
+            },
         ],
-
         outbounds: [
             outbound,
-
-            {
-                protocol:
-                    "freedom",
-
-                tag:
-                    "direct"
-            },
-
-            {
-                protocol:
-                    "blackhole",
-
-                tag:
-                    "block"
-            }
-        ]
+            { protocol: "freedom", tag: "direct" },
+            { protocol: "blackhole", tag: "block" },
+        ],
     };
 }
 
@@ -928,100 +415,46 @@ async function runCurl(
     };
 }
 
-async function xrayProbe(
-    link
-) {
-    const socksPort =
-        await getFreePort();
+async function startXray(link) {
+    const socksPort = await getFreePort();
+    const tempDir = await fs.mkdtemp(
+        path.join(os.tmpdir(), "keyline-health-")
+    );
+    const configFile = path.join(tempDir, "config.json");
+    const config = buildXrayConfig(link, socksPort);
 
-    const tempDir =
-        await fs.mkdtemp(
-            path.join(
-                os.tmpdir(),
-                "keyline-health-"
-            )
-        );
+    await fs.writeFile(configFile, JSON.stringify(config), "utf8");
 
-    const configFile =
-        path.join(
-            tempDir,
-            "config.json"
-        );
-
-    const config =
-        buildXrayConfig(
-            link,
-            socksPort
-        );
-
-    await fs.writeFile(
-        configFile,
-        JSON.stringify(
-            config
-        ),
-        "utf8"
+    const child = spawn(
+        XRAY_BIN,
+        ["run", "-c", configFile],
+        { stdio: ["ignore", "ignore", "pipe"] }
     );
 
-    const child =
-        spawn(
-            XRAY_BIN,
-            [
-                "run",
-                "-c",
-                configFile
-            ],
-            {
-                stdio: [
-                    "ignore",
-                    "ignore",
-                    "ignore"
-                ]
-            }
-        );
+    let stderr = "";
+    child.stderr.on("data", chunk => { stderr += String(chunk); });
 
-    try {
-        const ready =
-            await waitForPort(
-                socksPort
-            );
-
-        if (!ready) {
-            return {
-                ok:
-                    false,
-
-                error:
-                    "xray socks inbound did not start"
-            };
-        }
-
-        return await runCurl(
-            socksPort
-        );
-    } finally {
-        child.kill(
-            "SIGTERM"
-        );
-
+    const stop = async () => {
+        if (!child.killed) child.kill("SIGTERM");
         await sleep(100);
+        if (!child.killed) child.kill("SIGKILL");
+        await fs.rm(tempDir, { recursive: true, force: true });
+    };
 
-        if (!child.killed) {
-            child.kill(
-                "SIGKILL"
-            );
-        }
-
-        await fs.rm(
-            tempDir,
-            {
-                recursive:
-                    true,
-
-                force:
-                    true
-            }
-        );
+    const ready = await waitForPort(socksPort);
+    if (!ready) {
+        await stop();
+        return {
+            ok: false,
+            error: `xray socks inbound did not start${stderr ? `: ${stderr.trim().slice(0, 400)}` : ""}`,
+        };
     }
+
+    return {
+        ok: true,
+        socksPort,
+        stop,
+    };
 }
 
 function isManagedKeylineId(
@@ -1100,12 +533,13 @@ function renumberIndex(
                     const flag =
                         extractFlag(
                             item.remarks
-                        );
+                        ) ||
+                        "🇷🇺";
 
                     const next = {
                         ...item,
                         remarks:
-                            `${flag ? `${flag} ` : ""}🏳️ White List ${whiteListNumber}`
+                            `${flag} 🏳️ White List ${whiteListNumber}`
                                 .trim()
                     };
 
@@ -1349,42 +783,64 @@ async function main() {
             };
         }
 
-        try {
-            const stage2 =
-                await xrayProbe(
-                    link
-                );
+        let xray = null;
 
-            if (!stage2.ok) {
+        try {
+            xray = await startXray(link);
+
+            if (!xray.ok) {
                 return {
                     item,
-                    ok:
-                        false,
+                    ok: false,
+                    reason: `1/3 real stages passed; xray-startup: ${xray.error}`,
+                };
+            }
 
-                    reason:
-                        `protocol probe failed (${stage2.error || "unknown"})`
+            const targets = HEALTH_TARGET_URLS.slice(0, 2);
+            if (targets.length < 2) {
+                throw new Error("Need at least two health-check target URLs");
+            }
+
+            const remote = await Promise.all(
+                targets.map(target =>
+                    probeTargetOnceWithRetries(
+                        xray.socksPort,
+                        target
+                    )
+                )
+            );
+
+            const stage1Passed = Boolean(stage1);
+            const stage2Passed = Boolean(remote[0]?.ok);
+            const stage3Passed = Boolean(remote[1]?.ok);
+            const passedStages = [stage1Passed, stage2Passed, stage3Passed]
+                .filter(Boolean).length;
+
+            if (passedStages < 2) {
+                const failedStages = [];
+                if (!stage2Passed) failedStages.push(`https-1: ${remote[0]?.error || "failed"}`);
+                if (!stage3Passed) failedStages.push(`https-2: ${remote[1]?.error || "failed"}`);
+                return {
+                    item,
+                    ok: false,
+                    reason: `${passedStages}/3 real stages passed; ${failedStages.join(" | ")}`,
                 };
             }
 
             return {
                 item,
-                ok:
-                    true,
-
-                protocol
+                ok: true,
+                protocol,
+                stages: `${passedStages}/3`,
             };
-        } catch (
-            error
-        ) {
+        } catch (error) {
             return {
                 item,
-                ok:
-                    false,
-
-                reason:
-                    error?.message ||
-                    "xray health probe error"
+                ok: false,
+                reason: error?.message || "xray health probe error",
             };
+        } finally {
+            if (xray?.stop) await xray.stop();
         }
     }
 
