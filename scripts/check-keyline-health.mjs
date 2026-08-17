@@ -239,6 +239,172 @@ async function waitForPort(
     return false;
 }
 
+async function startXray(link) {
+    const socksPort = await getFreePort();
+    const tempDir = await fs.mkdtemp(
+        path.join(
+            os.tmpdir(),
+            "keyline-xray-"
+        )
+    );
+    const configPath = path.join(
+        tempDir,
+        "config.json"
+    );
+
+    const config = buildXrayConfig(
+        link,
+        socksPort
+    );
+
+    await fs.writeFile(
+        configPath,
+        JSON.stringify(
+            config,
+            null,
+            2
+        ),
+        "utf8"
+    );
+
+    let child = null;
+    let stderr = "";
+    let settled = false;
+
+    const cleanup = async () => {
+        if (child && !child.killed) {
+            child.kill("SIGTERM");
+
+            await new Promise(resolve => {
+                const force = setTimeout(
+                    () => {
+                        try {
+                            child.kill("SIGKILL");
+                        } catch {}
+                        resolve();
+                    },
+                    1000
+                );
+
+                child.once(
+                    "exit",
+                    () => {
+                        clearTimeout(force);
+                        resolve();
+                    }
+                );
+            });
+        }
+
+        await fs.rm(
+            tempDir,
+            {
+                recursive: true,
+                force: true
+            }
+        );
+    };
+
+    try {
+        child = spawn(
+            XRAY_BIN,
+            [
+                "run",
+                "-c",
+                configPath
+            ],
+            {
+                stdio: [
+                    "ignore",
+                    "ignore",
+                    "pipe"
+                ]
+            }
+        );
+
+        child.stderr.on(
+            "data",
+            chunk => {
+                stderr += String(chunk);
+                if (stderr.length > 4000) {
+                    stderr = stderr.slice(-4000);
+                }
+            }
+        );
+
+        const exitPromise = new Promise(resolve => {
+            child.once(
+                "error",
+                error => {
+                    if (settled) return;
+                    settled = true;
+                    resolve({
+                        ok: false,
+                        error:
+                            error?.message ||
+                            "failed to start xray"
+                    });
+                }
+            );
+
+            child.once(
+                "exit",
+                (code, signal) => {
+                    if (settled) return;
+                    settled = true;
+
+                    const details =
+                        stderr.trim() ||
+                        `xray exited with code ${code}` +
+                        (signal
+                            ? ` (${signal})`
+                            : "");
+
+                    resolve({
+                        ok: false,
+                        error: details.slice(0, 500)
+                    });
+                }
+            );
+        });
+
+        const started = await Promise.race([
+            waitForPort(socksPort).then(
+                available => ({
+                    ok: available
+                })
+            ),
+            exitPromise
+        ]);
+
+        if (!started?.ok) {
+            await cleanup();
+
+            return {
+                ok: false,
+                error:
+                    started?.error ||
+                    "xray SOCKS port did not open"
+            };
+        }
+
+        return {
+            ok: true,
+            socksPort,
+            stop: cleanup
+        };
+    } catch (error) {
+        await cleanup();
+
+        return {
+            ok: false,
+            error:
+                error?.message ||
+                "xray startup error"
+        };
+    }
+}
+
 function runCurlOnce(
     socksPort,
     targetUrl
