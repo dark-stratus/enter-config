@@ -141,3 +141,16 @@ The generated HWID and device model are stored in `.keyline-state.json` after a 
 ### Keyline subscription response formats
 
 Keyline may return a subscription as either a JSON array or a `text/plain` Base64-encoded profile. The updater detects both formats. For Base64 profiles it decodes the payload, removes `#profile-*` metadata lines, and accepts supported URI lines (`vless://`, `trojan://`, `hysteria2://`). Unsupported protocols are ignored rather than emitted as broken `.link` files.
+
+
+## Two-stage health check
+
+After the Keyline pool is generated, GitHub Actions runs `scripts/check-keyline-health.mjs`.
+
+Stage 1 verifies DNS/TCP reachability of each managed Keyline server.
+
+Stage 2 starts the current Xray release on the runner, loads the exact generated VLESS/Trojan/Hysteria2 link, and performs a real HTTPS request through that proxy. Servers that fail either stage are removed from the generated Keyline pool before commit.
+
+If every managed server fails, the workflow stops instead of publishing an empty pool.
+
+The former hard regular-server limit is removed: all supported Keyline servers are retained unless they fail parsing, deduplication, or health checks.

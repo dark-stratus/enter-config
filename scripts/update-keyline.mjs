@@ -8,7 +8,7 @@ const LINKS_DIR = path.join(ROOT, "config", "links");
 const INDEX_FILE = path.join(LINKS_DIR, "index.json");
 const STATE_FILE = path.join(ROOT, ".keyline-state.json");
 
-const REGULAR_LIMIT = 40;
+const REGULAR_LIMIT = Number.POSITIVE_INFINITY;
 const AUTO_WHITE_LIST_LIMIT = 20;
 const SUCCESS_INTERVAL_MS = 12 * 60 * 60 * 1000;
 
@@ -104,7 +104,7 @@ function isWhiteListRemark(remarks = "") {
   return WHITE_LIST_PATTERNS.some(pattern => pattern.test(value));
 }
 
-function extractFlag(remarks = "") {
+function extractFlag(remarks = "", metadata = {}) {
   const value = String(remarks);
 
   // Keyline commonly puts the flag immediately before the name:
@@ -113,17 +113,64 @@ function extractFlag(remarks = "") {
     /[\u{1F1E6}-\u{1F1FF}]{2}/u
   );
 
-  return match?.[0] || "";
+  if (match?.[0]) {
+    return match[0];
+  }
+
+  const metadataFlag =
+    metadata?.flag ||
+    metadata?.countryFlag ||
+    metadata?.icon;
+
+  if (
+    typeof metadataFlag === "string" &&
+    FLAG_TO_COUNTRY[metadataFlag]
+  ) {
+    return metadataFlag;
+  }
+
+  return "";
 }
 
-function countryFromRemark(remarks = "") {
-  const flag = extractFlag(remarks);
+function countryFromRemark(
+  remarks = "",
+  metadata = {}
+) {
+  const flag = extractFlag(
+    remarks,
+    metadata
+  );
 
   if (FLAG_TO_COUNTRY[flag]) {
     return {
       flag,
       country: FLAG_TO_COUNTRY[flag],
     };
+  }
+
+  const metadataCountry =
+    metadata?.country ||
+    metadata?.countryName ||
+    metadata?.location;
+
+  if (
+    typeof metadataCountry === "string" &&
+    metadataCountry.trim()
+  ) {
+    const normalizedCountry =
+      String(metadataCountry).trim();
+
+    for (const entry of COUNTRY_NAME_PATTERNS) {
+      if (
+        entry.country.toLowerCase() ===
+        normalizedCountry.toLowerCase()
+      ) {
+        return {
+          flag: entry.flag,
+          country: entry.country,
+        };
+      }
+    }
   }
 
   // Fallback for sources that spell the country name but omit the flag.
@@ -150,18 +197,57 @@ function normalizeAutoRemark(remarks = "") {
   return isAutoSelectionRemark(remarks);
 }
 
-function normalizeCountryRemark(remarks = "") {
-  const original = String(remarks).replace(/\s+/g, " ").trim();
-  const { flag, country } = countryFromRemark(original);
+function normalizeCountryRemark(
+  remarks = "",
+  metadata = {}
+) {
+  const original =
+    String(remarks)
+      .replace(/\s+/g, " ")
+      .trim();
 
-  if (country === "Unknown") return null;
-  if (isAutoSelectionRemark(original)) return null;
-
-  return {
+  const {
     flag,
-    country,
-    whiteList: isWhiteListRemark(original),
-  };
+    country
+  } =
+    countryFromRemark(
+      original,
+      metadata
+    );
+
+  if (isAutoSelectionRemark(original)) {
+    return null;
+  }
+
+  if (country !== "Unknown") {
+    return {
+      flag,
+      country,
+      whiteList:
+        isWhiteListRemark(original),
+    };
+  }
+
+  // Some Keyline White List profiles intentionally have no country
+  // in `remarks` (for example `🌐 Белый интернет`). Keep them instead
+  // of silently dropping them. When Keyline provides structured country
+  // metadata it is preferred above; otherwise use an explicit Global
+  // fallback rather than inventing a country.
+  if (isWhiteListRemark(original)) {
+    return {
+      flag:
+        flag ||
+        "🌐",
+
+      country:
+        "Global",
+
+      whiteList:
+        true,
+    };
+  }
+
+  return null;
 }
 
 function normalizeJsonText(text) {
@@ -701,19 +787,62 @@ function buildTransportQuery(stream) {
       "";
   }
 
-  if (network === "xhttp") {
-    base.host = stream.xhttpSettings?.host || "";
-    base.path = stream.xhttpSettings?.path || "";
-    base.mode = stream.xhttpSettings?.mode || "";
+  if (
+    network === "xhttp" ||
+    network === "splithttp"
+  ) {
+    const settings =
+      stream.xhttpSettings ||
+      stream.splitHttpSettings ||
+      stream.splithttpSettings ||
+      {};
+
+    base.host =
+      settings.host || "";
+
+    base.path =
+      settings.path || "";
+
+    base.mode =
+      settings.mode || "";
+
+    base.type =
+      network;
   }
 
   return base;
 }
 
-function buildVlessLink(entry) {
-  const outbound = entry?.outbounds?.find(
-    item => item?.tag === "proxy"
+function findProxyOutbound(entry) {
+  const outbounds = Array.isArray(
+    entry?.outbounds
+  )
+    ? entry.outbounds
+    : [];
+
+  return (
+    outbounds.find(
+      item => item?.tag === "proxy"
+    ) ||
+    outbounds.find(
+      item => [
+        "vless",
+        "trojan",
+        "hysteria",
+        "hysteria2",
+      ].includes(
+        String(
+          item?.protocol || ""
+        ).toLowerCase()
+      )
+    ) ||
+    null
   );
+}
+
+function buildVlessLink(entry) {
+  const outbound =
+    findProxyOutbound(entry);
 
   if (!outbound || outbound.protocol !== "vless") return null;
 
@@ -730,11 +859,10 @@ function buildVlessLink(entry) {
     "ws",
     "httpupgrade",
     "xhttp",
+    "splithttp",
   ];
 
   if (!supportedNetworks.includes(stream.network)) return null;
-
-  const reality = stream.realitySettings || {};
 
   const transportQuery = encodeQuery({
     encryption: user.encryption || "none",
@@ -742,13 +870,51 @@ function buildVlessLink(entry) {
     ...buildTransportQuery(stream),
   });
 
-  const realityQuery = buildRealityQuery(reality, {
-    security: stream.security,
-  });
+  const security =
+    String(stream.security || "none").toLowerCase();
+
+  let securityQuery = "";
+
+  if (security === "reality") {
+    securityQuery =
+      buildRealityQuery(
+        stream.realitySettings || {},
+        {
+          security,
+          alpn:
+            Array.isArray(
+              stream.tlsSettings?.alpn
+            )
+              ? stream.tlsSettings.alpn
+              : "",
+        }
+      );
+  } else if (security === "tls") {
+    const tls =
+      stream.tlsSettings || {};
+
+    securityQuery =
+      encodeQuery({
+        security: "tls",
+        sni:
+          tls.serverName || "",
+        fp:
+          tls.fingerprint || "",
+        alpn:
+          Array.isArray(tls.alpn)
+            ? tls.alpn.join(",")
+            : "",
+      });
+  } else {
+    securityQuery =
+      encodeQuery({
+        security,
+      });
+  }
 
   const query = [
     transportQuery,
-    realityQuery,
+    securityQuery,
   ]
     .filter(Boolean)
     .join("&");
@@ -759,9 +925,8 @@ function buildVlessLink(entry) {
 }
 
 function buildTrojanLink(entry) {
-  const outbound = entry?.outbounds?.find(
-    item => item?.tag === "proxy"
-  );
+  const outbound =
+    findProxyOutbound(entry);
 
   if (!outbound || outbound.protocol !== "trojan") return null;
 
@@ -805,9 +970,8 @@ function buildTrojanLink(entry) {
 }
 
 function buildHysteria2Link(entry) {
-  const outbound = entry?.outbounds?.find(
-    item => item?.tag === "proxy"
-  );
+  const outbound =
+    findProxyOutbound(entry);
 
   if (!outbound) return null;
 
@@ -871,9 +1035,8 @@ function buildHysteria2Link(entry) {
 
 
 function buildSupportedLink(entry) {
-  const outbound = entry?.outbounds?.find(
-    item => item?.tag === "proxy"
-  );
+  const outbound =
+    findProxyOutbound(entry);
 
   if (!outbound) return null;
 
@@ -916,7 +1079,11 @@ function normalizeProfileLink(link, index, source, forceWhiteList = false) {
     remarks = `${source} ${index + 1}`;
   }
 
-  const normalized = normalizeCountryRemark(remarks);
+  const normalized =
+    normalizeCountryRemark(
+      remarks,
+      entry
+    );
   if (!normalized) return null;
 
   return {
@@ -942,9 +1109,19 @@ function normalizeSourceData(source) {
       .filter(Boolean);
   }
 
-  if (!Array.isArray(source.data)) {
+  const sourceEntries =
+    Array.isArray(source.data)
+      ? source.data
+      : (
+          source.data &&
+          typeof source.data === "object"
+            ? [source.data]
+            : null
+        );
+
+  if (!sourceEntries) {
     throw new Error(
-      `${source.label}: response must be a JSON array. ` +
+      `${source.label}: response must be a JSON object or array. ` +
       "Existing Keyline pool is preserved."
     );
   }
@@ -952,16 +1129,23 @@ function normalizeSourceData(source) {
   const result = [];
   let autoEntry = null;
 
-  for (let index = 0; index < source.data.length; index += 1) {
+  for (
+    let index = 0;
+    index < sourceEntries.length;
+    index += 1
+  ) {
     const normalized = normalizeEntry(
-      source.data[index],
+      sourceEntries[index],
       index,
       source.label
     );
 
     if (normalized === "AUTO_SELECTION") {
       if (!autoEntry) {
-        autoEntry = extractAutoLink(source.data[index]);
+        autoEntry =
+          extractAutoLink(
+            sourceEntries[index]
+          );
       }
       continue;
     }
@@ -985,9 +1169,8 @@ function normalizeSourceData(source) {
 }
 
 function extractAutoLink(entry) {
-  const outbound = entry?.outbounds?.find(
-    item => item?.tag === "proxy"
-  );
+  const outbound =
+    findProxyOutbound(entry);
 
   if (!outbound) return null;
 
@@ -1010,7 +1193,8 @@ function normalizeEntry(entry, index, source) {
     ? entry.outbounds
     : [];
 
-  const proxy = outbounds.find(item => item?.tag === "proxy");
+  const proxy =
+    findProxyOutbound(entry);
   const remarks = typeof entry.remarks === "string"
     ? entry.remarks.trim()
     : "";
@@ -1019,7 +1203,12 @@ function normalizeEntry(entry, index, source) {
   if (!proxy || !remarks || !link) return null;
   if (isAutoSelectionRemark(remarks)) return "AUTO_SELECTION";
 
-  const normalized = normalizeCountryRemark(remarks);
+  const normalized =
+    normalizeCountryRemark(
+      remarks,
+      entry
+    );
+
   if (!normalized) return null;
 
   return {
@@ -1294,7 +1483,9 @@ async function main() {
   for (const source of sources) {
     const normalized = normalizeSourceData(source);
 
-    totalRawEntries += source.data.length;
+    totalRawEntries += Array.isArray(source.data)
+      ? source.data.length
+      : 1;
     allEntries.push(...normalized);
 
     console.log(
@@ -1310,7 +1501,7 @@ async function main() {
       !item.whiteList &&
       !item.isAutoWhiteListCandidate
     ))
-  ).slice(0, REGULAR_LIMIT);
+  );
 
   const autoCandidates = deduped.filter(
     item => item.isAutoWhiteListCandidate
