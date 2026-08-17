@@ -41,11 +41,22 @@ const XRAY_START_TIMEOUT_MS =
     2500;
 
 const REQUEST_TIMEOUT_MS =
-    6000;
+    8000;
 
-const TARGET_URL =
-    process.env.HEALTHCHECK_TARGET_URL ||
-    "https://www.gstatic.com/generate_204";
+const REQUEST_RETRIES =
+    2;
+
+const HEALTH_TARGET_URLS = String(
+    process.env.HEALTHCHECK_TARGET_URLS ||
+    [
+        "https://www.gstatic.com/generate_204",
+        "https://www.google.com/generate_204",
+        "https://cp.cloudflare.com/generate_204"
+    ].join(",")
+)
+    .split(/[,\r\n;]+/)
+    .map(value => value.trim())
+    .filter(Boolean);
 
 function sleep(ms) {
     return new Promise(
@@ -732,8 +743,9 @@ async function waitForPort(
     return false;
 }
 
-function runCurl(
-    socksPort
+function runCurlOnce(
+    socksPort,
+    targetUrl
 ) {
     return new Promise(resolve => {
         const args = [
@@ -741,7 +753,7 @@ function runCurl(
             "--show-error",
             "--fail",
             "--connect-timeout",
-            "3",
+            "4",
             "--max-time",
             String(
                 Math.ceil(
@@ -751,7 +763,7 @@ function runCurl(
             ),
             "--proxy",
             `socks5h://127.0.0.1:${socksPort}`,
-            TARGET_URL,
+            targetUrl,
             "--output",
             "/dev/null",
         ];
@@ -812,6 +824,66 @@ function runCurl(
             }
         );
     });
+}
+
+async function runCurl(
+    socksPort
+) {
+    const errors = [];
+
+    // One successful target is enough. This is deliberate:
+    // a working VPN must not be rejected because one public
+    // connectivity endpoint is blocked or temporarily unavailable.
+    for (
+        const targetUrl of
+        HEALTH_TARGET_URLS
+    ) {
+        for (
+            let attempt = 1;
+            attempt <= REQUEST_RETRIES;
+            attempt += 1
+        ) {
+            const result =
+                await runCurlOnce(
+                    socksPort,
+                    targetUrl
+                );
+
+            if (result.ok) {
+                return {
+                    ok:
+                        true,
+
+                    targetUrl,
+
+                    error:
+                        ""
+                };
+            }
+
+            errors.push(
+                `${targetUrl} attempt ${attempt}: ${result.error || "curl failed"}`
+            );
+
+            await sleep(
+                150
+            );
+        }
+    }
+
+    return {
+        ok:
+            false,
+
+        error:
+            errors
+                .slice(-3)
+                .join("; ")
+                .slice(
+                    0,
+                    700
+                )
+    };
 }
 
 async function xrayProbe(
@@ -990,7 +1062,7 @@ function renumberIndex(
                 const next = {
                     ...item,
                     remarks:
-                        `${flag} White List ${whiteListNumber}`.trim()
+                        `${flag ? `${flag} ` : ""}🏳️ White List ${whiteListNumber}`.trim()
                 };
 
                 whiteListNumber +=

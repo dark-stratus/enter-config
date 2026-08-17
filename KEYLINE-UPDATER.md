@@ -154,3 +154,23 @@ Stage 2 starts the current Xray release on the runner, loads the exact generated
 If every managed server fails, the workflow stops instead of publishing an empty pool.
 
 The former hard regular-server limit is removed: all supported Keyline servers are retained unless they fail parsing, deduplication, or health checks.
+
+
+## Multiple Keyline sources
+
+Set `KEYLINE_URLS` as a JSON array or as one URL per line. Commas and semicolons are also accepted.
+For convenience the workflow also supports `KEYLINE_URL_2` through `KEYLINE_URL_10` as separate GitHub Secrets.
+
+## Health check
+
+Keyline servers are checked in two stages:
+1. TCP connection to the configured endpoint.
+2. A real Xray tunnel is started and HTTPS is tested through SOCKS.
+
+Stage 2 tries several independent connectivity endpoints with retries. A server passes when at least one target is reachable, which avoids rejecting a working VPN because one public endpoint is unavailable.
+
+## Country balances
+
+Only Keyline-managed country servers are balanced. Manual `europe-*` entries are excluded.
+Three servers form one `Country Balance N`.
+A remainder is kept as ordinary country entries and is renumbered from 1, so there is no `Country 10` after three balances.

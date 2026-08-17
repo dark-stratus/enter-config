@@ -98,6 +98,65 @@ const COUNTRY_NAME_PATTERNS = Object.entries(FLAG_TO_COUNTRY).map(
   })
 );
 
+const COUNTRY_DISPLAY_NAMES =
+  new Intl.DisplayNames(
+    ["en"],
+    {
+      type:
+        "region"
+    }
+  );
+
+function countryFromFlagValue(
+  flag
+) {
+  const value =
+    String(
+      flag ||
+      ""
+    );
+
+  const codePoints =
+    [...value];
+
+  if (
+    codePoints.length !== 2 ||
+    !codePoints.every(
+      character =>
+        character.codePointAt(0) >=
+          0x1f1e6 &&
+        character.codePointAt(0) <=
+          0x1f1ff
+    )
+  ) {
+    return "";
+  }
+
+  const isoCode =
+    codePoints
+      .map(
+        character =>
+          String.fromCharCode(
+            character.codePointAt(0) -
+              0x1f1e6 +
+              65
+          )
+      )
+      .join("");
+
+  try {
+    return (
+      COUNTRY_DISPLAY_NAMES.of(
+        isoCode
+      ) ||
+      ""
+    );
+  } catch {
+    return "";
+  }
+}
+
+
 function isWhiteListRemark(remarks = "") {
   const value = String(remarks);
 
@@ -124,9 +183,13 @@ function extractFlag(remarks = "", metadata = {}) {
 
   if (
     typeof metadataFlag === "string" &&
-    FLAG_TO_COUNTRY[metadataFlag]
+    /[\u{1F1E6}-\u{1F1FF}]{2}/u.test(
+      metadataFlag
+    )
   ) {
-    return metadataFlag;
+    return metadataFlag.match(
+      /[\u{1F1E6}-\u{1F1FF}]{2}/u
+    )?.[0] || "";
   }
 
   return "";
@@ -141,11 +204,19 @@ function countryFromRemark(
     metadata
   );
 
-  if (FLAG_TO_COUNTRY[flag]) {
-    return {
-      flag,
-      country: FLAG_TO_COUNTRY[flag],
-    };
+  if (flag) {
+    const country =
+      FLAG_TO_COUNTRY[flag] ||
+      countryFromFlagValue(
+        flag
+      );
+
+    if (country) {
+      return {
+        flag,
+        country,
+      };
+    }
   }
 
   const metadataCountry =
@@ -506,7 +577,9 @@ function parseConfiguredUrls(value) {
     const parsed = safeJsonParse(raw, "KEYLINE_URLS");
 
     if (!Array.isArray(parsed)) {
-      throw new Error("KEYLINE_URLS JSON value must be an array.");
+      throw new Error(
+        "KEYLINE_URLS JSON value must be an array."
+      );
     }
 
     return parsed
@@ -514,7 +587,10 @@ function parseConfiguredUrls(value) {
       .filter(Boolean);
   }
 
-  return parseUrlList(raw);
+  return raw
+    .split(/[\r\n,;]+/)
+    .map(item => item.trim())
+    .filter(Boolean);
 }
 
 function uniqueUrls(urls) {
@@ -630,14 +706,29 @@ async function fetchKeylineSources() {
     };
   }
 
-  const configuredRegularUrls = parseConfiguredUrls(
-    process.env.KEYLINE_URLS
-  );
+  const configuredRegularUrls = [
+    ...parseConfiguredUrls(
+      process.env.KEYLINE_URLS
+    ),
+    ...parseConfiguredUrls(
+      process.env.KEYLINE_URL
+    ),
+  ];
+
+  for (
+    let index = 2;
+    index <= 10;
+    index += 1
+  ) {
+    configuredRegularUrls.push(
+      ...parseConfiguredUrls(
+        process.env[`KEYLINE_URL_${index}`]
+      )
+    );
+  }
 
   const regularUrls = uniqueUrls(
-    configuredRegularUrls.length > 0
-      ? configuredRegularUrls
-      : parseUrlList(process.env.KEYLINE_URL)
+    configuredRegularUrls
   );
 
   const dedicatedWhiteListUrls = uniqueUrls(
@@ -1243,9 +1334,18 @@ function canonicalCountryEntries(entries) {
 function canonicalAutoWhiteList(entries) {
   if (!entries.length) return [];
 
+  const flag =
+    typeof entries[0].flag === "string" &&
+    /[\u{1F1E6}-\u{1F1FF}]{2}/u.test(
+      entries[0].flag
+    )
+      ? entries[0].flag
+      : "";
+
   return [{
     ...entries[0],
-    remarks: "⚡ Auto White List 2",
+    remarks:
+      `${flag ? `${flag} ` : ""}🏳️ White List 2`.trim(),
     whiteListIndex: 2,
   }];
 }
@@ -1297,7 +1397,8 @@ function normalizeWhiteListEntries(entries, startNumber = 2) {
 
   return sorted.map((item, index) => ({
     ...item,
-    remarks: `${item.flag} White List ${startNumber + index}`.trim(),
+    remarks:
+      `${item.flag ? `${item.flag} ` : ""}🏳️ White List ${startNumber + index}`.trim(),
     whiteListIndex: startNumber + index,
   }));
 }
@@ -1408,7 +1509,7 @@ async function buildStagedLinks(
         ...(id.toLowerCase() === "whitelist-1"
           ? {
               remarks:
-                "🇷🇺 White List 1",
+                `${extractFlag(item.remarks) || "🇷🇺"} 🏳️ White List 1`,
             }
           : {}),
       });
