@@ -99,6 +99,51 @@ const COUNTRY_NAME_PATTERNS = Object.entries(FLAG_TO_COUNTRY).map(
   })
 );
 
+function flagToIso(flag) {
+  const cps = [...String(flag || "")];
+  if (cps.length !== 2) return "";
+  return cps.map(ch => String.fromCharCode(ch.codePointAt(0) - 0x1f1e6 + 65)).join("");
+}
+
+const COUNTRY_ALIAS_PATTERNS = [
+  ["Albania", ["албания"]], ["Austria", ["австрия"]],
+  ["Belgium", ["бельгия"]], ["Brazil", ["бразилия"]],
+  ["Switzerland", ["швейцария"]], ["China", ["китай"]],
+  ["Czech Republic", ["чехия", "чешская республика"]],
+  ["Germany", ["германия", "немец"]], ["Denmark", ["дания"]],
+  ["Estonia", ["эстония"]], ["Spain", ["испания"]],
+  ["Finland", ["финляндия"]], ["France", ["франция"]],
+  ["United Kingdom", ["великобритания", "англия", "ук"]],
+  ["Greece", ["греция"]], ["Hong Kong", ["гонконг"]],
+  ["Indonesia", ["индонезия"]], ["Ireland", ["ирландия"]],
+  ["India", ["индия"]], ["Israel", ["израиль"]],
+  ["Italy", ["италия"]], ["Japan", ["япония"]],
+  ["Kazakhstan", ["казахстан"]], ["Lithuania", ["литва", "литва"]],
+  ["Latvia", ["латвия"]], ["Mexico", ["мексика"]],
+  ["Netherlands", ["нидерланды", "нидерланд", "голландия", "голланд"]],
+  ["Norway", ["норвегия"]], ["New Zealand", ["новая зеландия"]],
+  ["Poland", ["польша"]], ["Portugal", ["португалия"]],
+  ["Romania", ["румыния"]], ["Russia", ["россия", "рф"]],
+  ["Sweden", ["швеция"]], ["Singapore", ["сингапур"]],
+  ["Slovenia", ["словения"]], ["Slovakia", ["словакия"]],
+  ["Thailand", ["таиланд", "тайланд"]], ["Turkey", ["турция"]],
+  ["Ukraine", ["украина"]], ["United States", ["сша", "соединенные штаты"]],
+  ["Vietnam", ["вьетнам"]],
+].flatMap(([country, aliases]) => {
+  const flag = Object.entries(FLAG_TO_COUNTRY).find(([, value]) => value === country)?.[0] || "";
+  return aliases.map(alias => ({
+    country,
+    flag,
+    pattern: new RegExp(`(^|[\\s\\[\\]().,:;_\\-/])${alias.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\\\$&")}(?=$|[\\s\\[\\]().,:;_\\-/0-9])`, "i"),
+  }));
+});
+
+const COUNTRY_CODE_PATTERNS = Object.entries(FLAG_TO_COUNTRY).map(([flag, country]) => ({
+  flag,
+  country,
+  pattern: new RegExp(`(^|[\\s\\[\\]().,:;_\\-/])${flagToIso(flag)}(?=$|[\\s\\[\\]().,:;_\\-/0-9])`, "i"),
+}));
+
 const COUNTRY_DISPLAY_NAMES =
   new Intl.DisplayNames(
     ["en"],
@@ -248,10 +293,21 @@ function countryFromRemark(
   // Fallback for sources that spell the country name but omit the flag.
   for (const entry of COUNTRY_NAME_PATTERNS) {
     if (entry.pattern.test(String(remarks))) {
-      return {
-        flag: entry.flag,
-        country: entry.country,
-      };
+      return { flag: entry.flag, country: entry.country };
+    }
+  }
+
+  // Keyline may put the country only in the profile name/remark, often in Russian.
+  for (const entry of COUNTRY_ALIAS_PATTERNS) {
+    if (entry.pattern.test(String(remarks))) {
+      return { flag: entry.flag, country: entry.country };
+    }
+  }
+
+  // Also accept a standalone ISO country code in a server name, e.g. "FR-01" / "NL Amsterdam".
+  for (const entry of COUNTRY_CODE_PATTERNS) {
+    if (entry.pattern.test(String(remarks))) {
+      return { flag: entry.flag, country: entry.country };
     }
   }
 
@@ -1235,13 +1291,17 @@ function buildSupportedLink(entry) {
   return null;
 }
 
-function normalizeProfileLink(link, index, source, forceWhiteList = false) {
-  if (typeof link !== "string" || !link.trim()) return null;
+function normalizeProfileLink(link, index, source, forceWhiteList = false, stats = null) {
+  if (typeof link !== "string" || !link.trim()) {
+    if (stats) stats.droppedInvalid += 1;
+    return null;
+  }
 
   const value = link.trim();
   const protocol = value.split("://")[0]?.toLowerCase();
 
   if (!["vless", "trojan", "hysteria2"].includes(protocol)) {
+    if (stats) stats.droppedUnsupported += 1;
     return null;
   }
 
@@ -1282,11 +1342,12 @@ function normalizeProfileLink(link, index, source, forceWhiteList = false) {
   }
 
   const normalized =
-    normalizeCountryRemark(
-      remarks,
-      {}
-    );
-  if (!normalized) return null;
+    normalizeCountryRemark(remarks, {});
+  if (!normalized) {
+    if (stats) stats.droppedUnknownCountry += 1;
+    return null;
+  }
+  if (stats) stats.parsed += 1;
 
   return {
     sourceIndex: index,
@@ -1300,74 +1361,53 @@ function normalizeProfileLink(link, index, source, forceWhiteList = false) {
 }
 
 function normalizeSourceData(source) {
+  const stats = {
+    raw: Array.isArray(source.data) ? source.data.length : 1,
+    parsed: 0,
+    droppedInvalid: 0,
+    droppedUnsupported: 0,
+    droppedUnknownCountry: 0,
+    autoSelection: 0,
+  };
+
   if (source.payloadKind === "links") {
-    return source.data
+    const result = source.data
       .map((link, index) => normalizeProfileLink(
-        link,
-        index,
-        source.label,
-        source.forceWhiteList
+        link, index, source.label, source.forceWhiteList, stats
       ))
       .filter(Boolean);
+    return { entries: result, stats };
   }
 
-  const sourceEntries =
-    Array.isArray(source.data)
-      ? source.data
-      : (
-          source.data &&
-          typeof source.data === "object"
-            ? [source.data]
-            : null
-        );
+  const sourceEntries = Array.isArray(source.data)
+    ? source.data
+    : (source.data && typeof source.data === "object" ? [source.data] : null);
 
   if (!sourceEntries) {
-    throw new Error(
-      `${source.label}: response must be a JSON object or array. ` +
-      "Existing Keyline pool is preserved."
-    );
+    throw new Error(`${source.label}: response must be a JSON object or array. Existing Keyline pool is preserved.`);
   }
 
   const result = [];
   let autoEntry = null;
+  stats.raw = sourceEntries.length;
 
-  for (
-    let index = 0;
-    index < sourceEntries.length;
-    index += 1
-  ) {
-    const normalized = normalizeEntry(
-      sourceEntries[index],
-      index,
-      source.label
-    );
-
+  for (let index = 0; index < sourceEntries.length; index += 1) {
+    const normalized = normalizeEntry(sourceEntries[index], index, source.label, stats);
     if (normalized === "AUTO_SELECTION") {
-      if (!autoEntry) {
-        autoEntry =
-          extractAutoLink(
-            sourceEntries[index]
-          );
-      }
+      stats.autoSelection += 1;
+      if (!autoEntry) autoEntry = extractAutoLink(sourceEntries[index]);
       continue;
     }
-
     if (!normalized) continue;
     if (source.forceWhiteList) normalized.whiteList = true;
-
     result.push(normalized);
   }
 
   if (autoEntry && result.some(item => item.whiteList)) {
-    result.push({
-      ...autoEntry,
-      whiteList: true,
-      isAutoWhiteListCandidate: true,
-      originalRemarks: "⚡ Auto White List",
-    });
+    result.push({ ...autoEntry, whiteList: true, isAutoWhiteListCandidate: true, originalRemarks: "⚡ Auto White List" });
   }
 
-  return result;
+  return { entries: result, stats };
 }
 
 function extractAutoLink(entry) {
@@ -1388,8 +1428,11 @@ function extractAutoLink(entry) {
   };
 }
 
-function normalizeEntry(entry, index, source) {
-  if (!entry || typeof entry !== "object") return null;
+function normalizeEntry(entry, index, source, stats = null) {
+  if (!entry || typeof entry !== "object") {
+    if (stats) stats.droppedInvalid += 1;
+    return null;
+  }
 
   const outbounds = Array.isArray(entry.outbounds)
     ? entry.outbounds
@@ -1402,7 +1445,13 @@ function normalizeEntry(entry, index, source) {
     : "";
   const link = buildSupportedLink(entry);
 
-  if (!proxy || !remarks || !link) return null;
+  if (!proxy || !remarks || !link) {
+    if (stats) {
+      if (!proxy || !link) stats.droppedInvalid += 1;
+      else stats.droppedUnknownCountry += 1;
+    }
+    return null;
+  }
   if (isAutoSelectionRemark(remarks)) return "AUTO_SELECTION";
 
   const normalized =
@@ -1411,7 +1460,11 @@ function normalizeEntry(entry, index, source) {
       {}
     );
 
-  if (!normalized) return null;
+  if (!normalized) {
+    if (stats) stats.droppedUnknownCountry += 1;
+    return null;
+  }
+  if (stats) stats.parsed += 1;
 
   return {
     sourceIndex: index,
@@ -1811,18 +1864,24 @@ async function main() {
   } = await fetchKeylineSources();
   const allEntries = [];
   let totalRawEntries = 0;
+  const sourceReports = [];
 
   for (const source of sources) {
-    const normalized = normalizeSourceData(source);
+    const result = normalizeSourceData(source);
+    const { entries, stats } = result;
+    totalRawEntries += stats.raw;
+    allEntries.push(...entries);
 
-    totalRawEntries += Array.isArray(source.data)
-      ? source.data.length
-      : 1;
-    allEntries.push(...normalized);
+    sourceReports.push({
+      source: source.label,
+      payloadKind: source.payloadKind,
+      ...stats,
+    });
 
     console.log(
-      `${source.label}: parsed ${normalized.length} supported entries` +
-      ` (${source.payloadKind})`
+      `${source.label}: raw=${stats.raw}, parsed=${stats.parsed}, ` +
+      `no-country=${stats.droppedUnknownCountry}, invalid=${stats.droppedInvalid}, ` +
+      `unsupported=${stats.droppedUnsupported}`
     );
   }
 
@@ -1838,6 +1897,9 @@ async function main() {
     item.whiteList &&
     !item.isAutoWhiteListCandidate
   ));
+
+  const freshRegularCount = freshRegularEntries.length;
+  const freshWhiteListCount = freshWhiteListEntries.length;
 
   const merged = mergeWithRetainedEntries(
     freshRegularEntries,
@@ -1895,6 +1957,25 @@ async function main() {
     await fs.rm(stageDir, { recursive: true, force: true });
     throw error;
   }
+
+  const report = {
+    generatedAt: new Date().toISOString(),
+    sourceCount: sources.length,
+    totalRawEntries,
+    sourceReports,
+    freshBeforeDedupe: allEntries.length,
+    afterDedupe: deduped.length,
+    freshRegular: freshRegularCount,
+    freshWhiteList: freshWhiteListCount,
+    retainedFromPreviousPool: merged.retainedCount,
+    regularBeforeHealthCheck: regular.length,
+    autoWhiteListBeforeHealthCheck: automaticWhiteList.length,
+    totalBeforeHealthCheck: regular.length + automaticWhiteList.length,
+  };
+  await writeAtomic(
+    path.join(ROOT, "keyline-report.json"),
+    `${JSON.stringify(report, null, 2)}\n`
+  );
 
   await writeAtomic(
     STATE_FILE,

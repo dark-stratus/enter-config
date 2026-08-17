@@ -778,6 +778,8 @@ async function main() {
     const managedItems =
         [];
 
+    const healthResults = [];
+
     for (
         const item of index
     ) {
@@ -959,6 +961,16 @@ async function main() {
                     item
                 );
 
+            healthResults.push({
+                id: item.id,
+                remarks: item.remarks || "",
+                country: String(item.remarks || "").replace(/^\S+\s*/, "").replace(/\s+\d+$/, ""),
+                ok: result.ok,
+                protocol: result.protocol || "",
+                stages: result.stages || "",
+                reason: result.reason || ""
+            });
+
             if (result.ok) {
                 console.log(
                     `HEALTH PASS ${item.id}: ${result.protocol}`
@@ -1082,6 +1094,48 @@ async function main() {
             force: true
         }
     );
+
+    const reportFile = path.join(ROOT, "keyline-report.json");
+    let report = {};
+    try {
+        report = JSON.parse(await fs.readFile(reportFile, "utf8"));
+    } catch {}
+
+    report.healthCheck = {
+        generatedAt: new Date().toISOString(),
+        checked,
+        passed,
+        failed,
+        concurrency: HEALTH_CONCURRENCY,
+        targets: HEALTH_TARGET_URLS,
+        results: healthResults,
+    };
+    report.finalManagedServers = normalizedIndex.filter(item => isManagedKeylineId(item?.id)).length;
+    await fs.writeFile(reportFile, `${JSON.stringify(report, null, 2)}\n`, "utf8");
+
+    if (process.env.GITHUB_STEP_SUMMARY) {
+        const byReason = new Map();
+        for (const item of healthResults) {
+            if (item.ok) continue;
+            const key = item.reason || "unknown";
+            byReason.set(key, (byReason.get(key) || 0) + 1);
+        }
+        const lines = [
+            "## Keyline refresh report",
+            `- Sources: ${report.sourceCount ?? "?"}`,
+            `- Raw entries: ${report.totalRawEntries ?? "?"}`,
+            `- Parsed before dedupe: ${report.freshBeforeDedupe ?? "?"}`,
+            `- Retained from previous pool: ${report.retainedFromPreviousPool ?? "?"}`,
+            `- Before health-check: ${report.totalBeforeHealthCheck ?? "?"}`,
+            `- Health-check: **${passed} passed / ${failed} failed**`,
+            `- Final managed servers: **${report.finalManagedServers}**`,
+        ];
+        if (byReason.size) {
+            lines.push("", "### Health failures");
+            for (const [reason, count] of byReason) lines.push(`- ${count} × ${reason}`);
+        }
+        await fs.appendFile(process.env.GITHUB_STEP_SUMMARY, `${lines.join("\n")}\n`);
+    }
 
     console.log(
         `Keyline health check complete: ${passed} passed, ${failed} removed.`
