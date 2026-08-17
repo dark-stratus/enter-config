@@ -1484,6 +1484,81 @@ function sortEntries(entries) {
   });
 }
 
+function buildRetainedEntries(currentIndex) {
+  const retained = [];
+
+  for (const item of currentIndex) {
+    if (!isManagedId(item?.id)) continue;
+
+    const link = String(item?.link || "").trim();
+    if (!link) continue;
+
+    const remarks = String(item?.remarks || "").trim();
+    const flag = extractFlag(remarks);
+    const isWhiteList = MANAGED_WHITE_LIST_RE.test(item.id);
+
+    let country = "Unknown";
+    if (flag) {
+      country =
+        FLAG_TO_COUNTRY[flag] ||
+        countryFromFlagValue(flag) ||
+        "Unknown";
+    }
+
+    if (country === "Unknown") {
+      const match = remarks.match(
+        /(?:^|\s)(Albania|Austria|Belgium|Brazil|Switzerland|China|Czech Republic|Germany|Denmark|Estonia|Spain|Finland|France|United Kingdom|Greece|Hong Kong|Indonesia|Ireland|India|Israel|Italy|Japan|Kazakhstan|Lithuania|Latvia|Mexico|Netherlands|Norway|New Zealand|Poland|Portugal|Romania|Russia|Sweden|Singapore|Slovenia|Slovakia|Thailand|Turkey|Ukraine|United States|Vietnam)(?:\s+\d+)?(?:\s|$)/i
+      );
+
+      if (match?.[1]) {
+        country = match[1];
+      }
+    }
+
+    retained.push({
+      link,
+      remarks,
+      flag: flag || "🇷🇺",
+      country,
+      whiteList: isWhiteList,
+      retained: true,
+    });
+  }
+
+  return retained;
+}
+
+function mergeWithRetainedEntries(
+  freshRegular,
+  freshWhiteList,
+  currentIndex
+) {
+  const retained = buildRetainedEntries(currentIndex);
+  const seen = new Set(
+    [...freshRegular, ...freshWhiteList]
+      .map(item => String(item?.link || "").trim())
+      .filter(Boolean)
+  );
+
+  for (const item of retained) {
+    if (seen.has(item.link)) continue;
+
+    seen.add(item.link);
+
+    if (item.whiteList) {
+      freshWhiteList.push(item);
+    } else {
+      freshRegular.push(item);
+    }
+  }
+
+  return {
+    regular: freshRegular,
+    whiteList: freshWhiteList,
+    retainedCount: retained.length,
+  };
+}
+
 function normalizeAndNumber(entries) {
   const sorted = sortEntries(entries);
   const counters = new Map();
@@ -1752,12 +1827,26 @@ async function main() {
   }
 
   const deduped = dedupe(allEntries);
+  const currentIndex = await loadIndex();
+
+  const freshRegularEntries = deduped.filter(item => (
+    !item.whiteList &&
+    !item.isAutoWhiteListCandidate
+  ));
+
+  const freshWhiteListEntries = deduped.filter(item => (
+    item.whiteList &&
+    !item.isAutoWhiteListCandidate
+  ));
+
+  const merged = mergeWithRetainedEntries(
+    freshRegularEntries,
+    freshWhiteListEntries,
+    currentIndex
+  );
 
   const regular = normalizeAndNumber(
-    deduped.filter(item => (
-      !item.whiteList &&
-      !item.isAutoWhiteListCandidate
-    ))
+    merged.regular
   );
 
   const autoCandidates = deduped.filter(
@@ -1771,10 +1860,7 @@ async function main() {
   );
 
   const whiteListLocations = normalizeWhiteListEntries(
-    deduped.filter(item => (
-      item.whiteList &&
-      !item.isAutoWhiteListCandidate
-    )),
+    merged.whiteList,
     autoWhiteList.length > 0 ? 3 : 2
   );
 
@@ -1790,7 +1876,6 @@ async function main() {
     );
   }
 
-  const currentIndex = await loadIndex();
   const manualWhiteList = currentIndex.filter(item => (
     item &&
     typeof item.id === "string" &&
@@ -1826,7 +1911,8 @@ async function main() {
 
   console.log(
     `Keyline update complete: ${sources.length} sources, ` +
-    `${regular.length} regular, ${automaticWhiteList.length} auto-white-list.`
+    `${regular.length} regular, ${automaticWhiteList.length} auto-white-list, ` +
+    `${merged.retainedCount} retained from previous pool.`
   );
 }
 

@@ -885,9 +885,14 @@ async function main() {
                 };
             }
 
-            const targets = HEALTH_TARGET_URLS.slice(0, 2);
+            const targets = [...new Set(
+                HEALTH_TARGET_URLS
+                    .map(value => String(value || "").trim())
+                    .filter(Boolean)
+            )];
+
             if (targets.length < 2) {
-                throw new Error("Need at least two health-check target URLs");
+                throw new Error("Need at least two distinct health-check target URLs");
             }
 
             const remote = await Promise.all(
@@ -899,20 +904,24 @@ async function main() {
                 )
             );
 
-            const stage1Passed = Boolean(stage1);
-            const stage2Passed = Boolean(remote[0]?.ok);
-            const stage3Passed = Boolean(remote[1]?.ok);
-            const passedStages = [stage1Passed, stage2Passed, stage3Passed]
-                .filter(Boolean).length;
+            const failedTargets = remote.filter(
+                result => !result?.ok
+            );
 
-            if (passedStages < 2) {
-                const failedStages = [];
-                if (!stage2Passed) failedStages.push(`https-1: ${remote[0]?.error || "failed"}`);
-                if (!stage3Passed) failedStages.push(`https-2: ${remote[1]?.error || "failed"}`);
+            if (failedTargets.length > 0) {
+                const details = failedTargets
+                    .map(result =>
+                        `${result.targetUrl}: ${result.error || "proxy request failed"}`
+                    )
+                    .join(" | ");
+
                 return {
                     item,
                     ok: false,
-                    reason: `${passedStages}/3 real stages passed; ${failedStages.join(" | ")}`,
+                    reason:
+                        `TCP reachable, Xray SOCKS started, ` +
+                        `${targets.length - failedTargets.length}/${targets.length} ` +
+                        `HTTPS proxy probes passed; ${details}`,
                 };
             }
 
@@ -920,8 +929,9 @@ async function main() {
                 item,
                 ok: true,
                 protocol,
-                stages: `${passedStages}/3`,
+                stages: `TCP + Xray + ${targets.length}/${targets.length} HTTPS`,
             };
+
         } catch (error) {
             return {
                 item,
@@ -971,16 +981,8 @@ async function main() {
             failed +=
                 1;
 
-            await fs.rm(
-                path.join(
-                    LINKS_DIR,
-                    `${item.id}.link`
-                ),
-                {
-                    force:
-                        true
-                }
-            );
+            // Keep the live links directory untouched while checks run.
+            // Failed entries are removed only from the atomic staged pool below.
         }
     }
 
@@ -1017,14 +1019,68 @@ async function main() {
             nextIndex
         );
 
+    const stageDir = path.join(
+        ROOT,
+        `.health-stage-${process.pid}`
+    );
+    const backupDir = `${LINKS_DIR}.health-backup-${process.pid}`;
+
+    await fs.rm(stageDir, { recursive: true, force: true });
+    await fs.rm(backupDir, { recursive: true, force: true });
+    await fs.cp(LINKS_DIR, stageDir, { recursive: true });
+
+    const allowedManagedIds = new Set(
+        normalizedIndex
+            .filter(item => isManagedKeylineId(item?.id))
+            .map(item => item.id)
+    );
+
+    const stagedFiles = await fs.readdir(
+        stageDir,
+        { withFileTypes: true }
+    );
+
+    for (const entry of stagedFiles) {
+        if (!entry.isFile() || !entry.name.endsWith(".link")) continue;
+
+        const id = entry.name.slice(0, -5);
+
+        if (
+            isManagedKeylineId(id) &&
+            !allowedManagedIds.has(id)
+        ) {
+            await fs.rm(
+                path.join(stageDir, entry.name),
+                { force: true }
+            );
+        }
+    }
+
     await fs.writeFile(
-        INDEX_FILE,
+        path.join(stageDir, "index.json"),
         `${JSON.stringify(
             normalizedIndex,
             null,
             2
         )}\n`,
         "utf8"
+    );
+
+    await fs.rename(LINKS_DIR, backupDir);
+
+    try {
+        await fs.rename(stageDir, LINKS_DIR);
+    } catch (error) {
+        await fs.rename(backupDir, LINKS_DIR);
+        throw error;
+    }
+
+    await fs.rm(
+        backupDir,
+        {
+            recursive: true,
+            force: true
+        }
     );
 
     console.log(

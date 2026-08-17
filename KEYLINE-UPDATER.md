@@ -143,15 +143,19 @@ The generated HWID and device model are stored in `.keyline-state.json` after a 
 Keyline may return a subscription as either a JSON array or a `text/plain` Base64-encoded profile. The updater detects both formats. For Base64 profiles it decodes the payload, removes `#profile-*` metadata lines, and accepts supported URI lines (`vless://`, `trojan://`, `hysteria2://`). Unsupported protocols are ignored rather than emitted as broken `.link` files.
 
 
-## Two-stage health check
+## Health check
 
 After the Keyline pool is generated, GitHub Actions runs `scripts/check-keyline-health.mjs`.
 
-Stage 1 verifies DNS/TCP reachability of each managed Keyline server.
+Each managed server must pass all of these checks:
 
-Stage 2 starts the current Xray release on the runner, loads the exact generated VLESS/Trojan/Hysteria2 link, and performs a real HTTPS request through that proxy. Servers that fail either stage are removed from the generated Keyline pool before commit.
+1. TCP connection to the configured endpoint.
+2. Successful startup of Xray with the exact generated VLESS/Trojan/Hysteria2 link.
+3. Successful HTTPS requests through the resulting SOCKS proxy to all configured health targets.
 
-If every managed server fails, the workflow stops instead of publishing an empty pool.
+The health result is committed atomically. Failed servers are excluded from the next pool, but the live repository is never edited file-by-file during the check. If every managed server fails, no pool change is committed.
+
+The health check intentionally requires every configured remote probe to succeed; there is no `2/3` or `any one target` success shortcut.
 
 The former hard regular-server limit is removed: all supported Keyline servers are retained unless they fail parsing, deduplication, or health checks.
 
@@ -181,6 +185,8 @@ Health-check: сервер проходит проверку, если успе�
 
 ### Source resilience
 Live Keyline sources are fetched in parallel. A temporary source failure uses that source's last successful cached payload from `.keyline-cache` when available.
+
+In addition, every previously managed Keyline server is merged into the next candidate pool before health-checking. This means a server is not discarded merely because Keyline stopped returning it temporarily. A previously known server survives as long as it continues to pass the real health check. If it stops working, the health check removes it from the committed pool.
 
 ### File layout
 The updater entry point is `scripts/update-keyline.mjs`. There is no duplicate root-level updater.
