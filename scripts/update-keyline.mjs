@@ -568,31 +568,6 @@ function parseUrlList(value) {
     .filter(Boolean);
 }
 
-function parseConfiguredUrls(value) {
-  if (!value) return [];
-
-  const raw = String(value).trim();
-
-  if (raw.startsWith("[")) {
-    const parsed = safeJsonParse(raw, "KEYLINE_URLS");
-
-    if (!Array.isArray(parsed)) {
-      throw new Error(
-        "KEYLINE_URLS JSON value must be an array."
-      );
-    }
-
-    return parsed
-      .map(item => String(item).trim())
-      .filter(Boolean);
-  }
-
-  return raw
-    .split(/[\r\n,;]+/)
-    .map(item => item.trim())
-    .filter(Boolean);
-}
-
 function uniqueUrls(urls) {
   return [...new Set(urls)];
 }
@@ -706,22 +681,17 @@ async function fetchKeylineSources() {
     };
   }
 
-  const configuredRegularUrls = [
-    ...parseConfiguredUrls(
-      process.env.KEYLINE_URLS
-    ),
-    ...parseConfiguredUrls(
-      process.env.KEYLINE_URL
-    ),
-  ];
+  const configuredRegularUrls = [];
 
-  for (
-    let index = 2;
-    index <= 10;
-    index += 1
-  ) {
+  // Regular Keyline sources are configured only through
+  // KEYLINE_URL_1 ... KEYLINE_URL_15.
+  //
+  // Gaps are intentionally allowed. For example, if
+  // KEYLINE_URL_6 is missing and KEYLINE_URL_10 exists,
+  // URL_10 is still processed normally.
+  for (let index = 1; index <= 15; index += 1) {
     configuredRegularUrls.push(
-      ...parseConfiguredUrls(
+      ...parseUrlList(
         process.env[`KEYLINE_URL_${index}`]
       )
     );
@@ -796,7 +766,7 @@ async function fetchKeylineSources() {
 
   if (sources.length === 0 && failures.length === 0) {
     throw new Error(
-      "No Keyline URLs configured. Set KEYLINE_URLS with one /sub/... URL per line."
+      "No Keyline URLs configured. Set KEYLINE_URL_1 ... KEYLINE_URL_15 as needed."
     );
   }
 
