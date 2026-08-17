@@ -146,6 +146,58 @@ function isManagedKeylineId(id) {
     return MANAGED_REGULAR_RE.test(value) || MANAGED_WHITE_LIST_RE.test(value);
 }
 
+function renumberIndex(entries) {
+    const regular = [];
+    const whiteList = [];
+    const other = [];
+
+    for (const item of entries) {
+        if (!item || typeof item !== "object") continue;
+
+        if (MANAGED_WHITE_LIST_RE.test(String(item.id || ""))) {
+            whiteList.push(item);
+            continue;
+        }
+
+        if (MANAGED_REGULAR_RE.test(String(item.id || ""))) {
+            regular.push(item);
+            continue;
+        }
+
+        other.push(item);
+    }
+
+    // Keep the physical filenames/IDs stable. Only the human-facing
+    // country number is compacted after health-check filtering.
+    const countryCounters = new Map();
+
+    const normalizedRegular = regular.map(item => {
+        const remarks = String(item.remarks || "").trim();
+        const match = remarks.match(/^(\S+)\s+(.+?)\s+\d+\s*$/u);
+
+        if (!match) return item;
+
+        const flag = match[1];
+        const country = match[2];
+        const next = (countryCounters.get(country) || 0) + 1;
+        countryCounters.set(country, next);
+
+        return {
+            ...item,
+            remarks: `${flag} ${country} ${next}`,
+        };
+    });
+
+    // Keep the original generated ordering. This is important: health-check
+    // workers complete in arbitrary order, but the user's subscription must
+    // not be re-shuffled just because one probe finished faster than another.
+    return [
+        ...other,
+        ...normalizedRegular,
+        ...whiteList,
+    ];
+}
+
 
 const HEALTH_STATE_FILE = path.join(ROOT, ".keyline-state.json");
 
@@ -852,6 +904,33 @@ async function runQualityDownload(
             .map(probe => Number(probe?.kbps))
             .filter(Number.isFinite);
 
+    const averageBytes =
+        probes.length
+            ? Math.round(
+                probes.reduce(
+                    (sum, probe) => sum + (Number(probe?.bytes) || 0),
+                    0
+                ) / probes.length
+            )
+            : 0;
+
+    const httpCodes = [
+        ...new Set(
+            probes
+                .map(probe => Number(probe?.httpCode))
+                .filter(Number.isFinite)
+        ),
+    ];
+
+    const probeDetails = probes
+        .map(probe =>
+            `#${probe.probeIndex}: ` +
+            `${Number(probe.bytes) || 0} bytes, ` +
+            `${Number(probe.kbps) || 0} KB/s, ` +
+            `HTTP ${Number.isFinite(Number(probe.httpCode)) ? probe.httpCode : "?"}`
+        )
+        .join(" | ");
+
     return {
         ok,
         url: QUALITY_DOWNLOAD_URL,
@@ -860,6 +939,8 @@ async function runQualityDownload(
         intervalMs: QUALITY_PROBE_INTERVAL_MS,
         passedCount: passed.length,
         failedCount: probes.length - passed.length,
+        bytes: averageBytes,
+        httpCode: httpCodes.join("/"),
         kbps: passingKbps.length
             ? Math.round(
                 (
@@ -887,8 +968,9 @@ async function runQualityDownload(
             : (
                 `quality threshold failed: ` +
                 `${passed.length}/${probes.length} probes passed; ` +
-                `required ${QUALITY_MIN_PASSES}/${QUALITY_PROBE_COUNT}`
-            ).slice(0, 600)
+                `required ${QUALITY_MIN_PASSES}/${QUALITY_PROBE_COUNT}; ` +
+                `${probeDetails}`
+            ).slice(0, 1000)
     };
 }
 
@@ -1173,10 +1255,6 @@ async function main() {
                 passed +=
                     1;
 
-                nextIndex.push(
-                    item
-                );
-
                 continue;
             }
 
@@ -1209,6 +1287,18 @@ async function main() {
                 worker()
         )
     );
+
+    const passedManagedIds = new Set(
+        healthResults
+            .filter(result => result.ok)
+            .map(result => result.id)
+    );
+
+    for (const item of managedItems) {
+        if (passedManagedIds.has(item.id)) {
+            nextIndex.push(item);
+        }
+    }
 
     await updateHealthHistory(healthResults);
 
