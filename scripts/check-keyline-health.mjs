@@ -174,6 +174,14 @@ const HEALTH_TARGET_URLS = String(
     .map(value => value.trim())
     .filter(Boolean);
 
+const HEALTH_MIN_TARGET_PASSES = Math.max(
+    1,
+    Math.min(
+        HEALTH_TARGET_URLS.length,
+        Number(process.env.HEALTHCHECK_MIN_TARGET_PASSES) || 2
+    )
+);
+
 function sleep(ms) {
     return new Promise(
         resolve =>
@@ -1798,11 +1806,14 @@ async function main() {
                 )
             );
 
+            const passedTargets = remote.filter(
+                result => result?.ok
+            );
             const failedTargets = remote.filter(
                 result => !result?.ok
             );
 
-            if (failedTargets.length > 0) {
+            if (passedTargets.length < HEALTH_MIN_TARGET_PASSES) {
                 const details = failedTargets
                     .map(result =>
                         `${result.targetUrl}: ${result.error || "proxy request failed"}`
@@ -1814,8 +1825,9 @@ async function main() {
                     ok: false,
                     reason:
                         `TCP reachable, Xray SOCKS started, ` +
-                        `${targets.length - failedTargets.length}/${targets.length} ` +
-                        `HTTPS proxy probes passed; ${details}`,
+                        `${passedTargets.length}/${targets.length} HTTPS proxy probes passed; ` +
+                        `required ${HEALTH_MIN_TARGET_PASSES}/${targets.length}; ${details}`,
+                    remote,
                 };
             }
 
@@ -2172,6 +2184,7 @@ async function main() {
         failed,
         concurrency: HEALTH_CONCURRENCY,
         targets: HEALTH_TARGET_URLS,
+        minTargetPasses: HEALTH_MIN_TARGET_PASSES,
         qualityProbe: {
             url: QUALITY_DOWNLOAD_URL,
             timeoutMs: QUALITY_DOWNLOAD_TIMEOUT_MS,
@@ -2286,6 +2299,7 @@ async function main() {
             `- Retained from previous pool: ${report.retainedFromPreviousPool ?? "?"}`,
             `- Before health-check: ${report.totalBeforeHealthCheck ?? "?"}`,
             `- Health-check: **${passed} passed / ${failed} failed**`,
+            `- HTTPS health targets: ${HEALTH_TARGET_URLS.length} configured; ${HEALTH_MIN_TARGET_PASSES} must pass`,
             `- Quality probe: ${QUALITY_DOWNLOAD_URL}`,
             `- Quality threshold: >= ${QUALITY_MIN_BYTES} bytes and >= ${QUALITY_MIN_KBPS} KB/s`,
             `- Quality probes: ${QUALITY_PROBE_COUNT} total; ${QUALITY_MIN_PASSES} must pass; ${QUALITY_PROBE_INTERVAL_MS / 1000}s between probes`,

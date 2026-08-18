@@ -50,6 +50,9 @@ function buildVlessFromLink(link) {
         network,
         host: url.searchParams.get("host") || "",
         path: url.searchParams.get("path") || "",
+        headerType: url.searchParams.get("headerType") || "",
+        packetEncoding: url.searchParams.get("packetEncoding") || "",
+        extra: url.searchParams.get("extra") || "",
     };
 }
 
@@ -166,6 +169,25 @@ function buildVlessStream(server) {
         security: server.security || "none",
     };
 
+    if (server.network === "raw") {
+        stream.network = "tcp";
+        stream.tcpSettings = {
+            header: {
+                type: server.headerType || "none",
+            },
+            ...(server.packetEncoding ? { packetEncoding: server.packetEncoding } : {}),
+        };
+    }
+
+    if (server.network === "tcp") {
+        stream.tcpSettings = {
+            header: {
+                type: server.headerType || "none",
+            },
+            ...(server.packetEncoding ? { packetEncoding: server.packetEncoding } : {}),
+        };
+    }
+
     if (server.network === "grpc") {
         stream.grpcSettings = {
             serviceName: server.serviceName || "",
@@ -188,11 +210,19 @@ function buildVlessStream(server) {
     }
 
     if (server.network === "xhttp" || server.network === "splithttp") {
+        let extra = {};
+        if (server.extra) {
+            try {
+                extra = JSON.parse(safeDecodeURIComponent(server.extra));
+            } catch {}
+        }
+
         stream.network = "xhttp";
         stream.xhttpSettings = {
-            mode: server.mode || "packet-up",
-            host: server.host || "",
-            path: server.path || "",
+            mode: extra.mode || server.mode || "packet-up",
+            host: extra.host || server.host || "",
+            path: extra.path || server.path || "",
+            ...(extra.headers ? { headers: extra.headers } : {}),
         };
     }
 
