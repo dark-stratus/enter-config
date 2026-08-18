@@ -3,7 +3,9 @@ import path from "node:path";
 import process from "node:process";
 import crypto from "node:crypto";
 
-const ROOT = path.resolve(new URL("..", import.meta.url).pathname);
+const ROOT = process.env.GITHUB_WORKSPACE
+  ? path.resolve(process.env.GITHUB_WORKSPACE)
+  : path.resolve(new URL("..", import.meta.url).pathname);
 const LINKS_DIR = path.join(ROOT, "config", "links");
 const INDEX_FILE = path.join(LINKS_DIR, "index.json");
 const STATE_FILE = path.join(ROOT, ".keyline-state.json");
@@ -2170,9 +2172,19 @@ async function buildStagedLinks(
     });
   }
 
+  const uniqueNextEntries = [];
+  const seenEntryIds = new Set();
+
+  for (const item of nextEntries) {
+    const id = typeof item?.id === "string" ? item.id.toLowerCase() : "";
+    if (!id || seenEntryIds.has(id)) continue;
+    seenEntryIds.add(id);
+    uniqueNextEntries.push(item);
+  }
+
   await fs.writeFile(
     path.join(stageDir, "index.json"),
-    `${JSON.stringify(nextEntries, null, 2)}\n`,
+    `${JSON.stringify(uniqueNextEntries, null, 2)}\n`,
     "utf8"
   );
 
@@ -2336,7 +2348,7 @@ async function main() {
   ].filter(item => item.link);
 
   const healthCandidatesFile =
-    path.join(ROOT, "keyline-health-candidates.json");
+    path.join(ROOT, "config", "keyline-health-candidates.json");
 
   await writeAtomic(
     healthCandidatesFile,

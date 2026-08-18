@@ -29,7 +29,7 @@ const INDEX_FILE =
 
 const HEALTH_CANDIDATES_FILE =
     process.env.HEALTH_CANDIDATES_FILE ||
-    path.join(ROOT, "keyline-health-candidates.json");
+    path.join(ROOT, "config", "keyline-health-candidates.json");
 
 const XRAY_BIN =
     process.env.XRAY_BIN ||
