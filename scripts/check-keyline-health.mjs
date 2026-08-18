@@ -27,7 +27,9 @@ const INDEX_FILE =
         "index.json"
     );
 
-const HEALTH_CANDIDATES_FILE = path.join(ROOT, "keyline-health-candidates.json");
+const HEALTH_CANDIDATES_FILE =
+    process.env.HEALTH_CANDIDATES_FILE ||
+    path.join(ROOT, "keyline-health-candidates.json");
 
 const XRAY_BIN =
     process.env.XRAY_BIN ||
@@ -1560,32 +1562,23 @@ async function main() {
 
     let index = [];
 
-    try {
-        const candidateText = await fs.readFile(
+    const candidateText =
+        await fs.readFile(
             HEALTH_CANDIDATES_FILE,
             "utf8"
         );
-        const candidates = JSON.parse(candidateText);
 
-        if (!Array.isArray(candidates)) {
-            throw new Error("keyline-health-candidates.json must be an array");
-        }
+    const candidates =
+        JSON.parse(candidateText);
 
-        index = candidates;
-    } catch (error) {
-        if (error?.code !== "ENOENT") throw error;
-
-        const indexText = await fs.readFile(
-            INDEX_FILE,
-            "utf8"
+    if (!Array.isArray(candidates)) {
+        throw new Error(
+            `${path.basename(HEALTH_CANDIDATES_FILE)} must be an array`
         );
-
-        index = JSON.parse(indexText);
-
-        if (!Array.isArray(index)) {
-            throw new Error("index.json must be an array");
-        }
     }
+
+    index = candidates;
+
 
     const committedIndexText = await fs.readFile(
         INDEX_FILE,
@@ -1616,6 +1609,20 @@ async function main() {
     } catch {}
 
     const candidateMap = diagnosticReport.candidateMap || {};
+
+    const expectedCandidateCount =
+        Number(diagnosticReport.totalBeforeHealthCheck) || 0;
+
+    if (
+        expectedCandidateCount > 0 &&
+        index.length !== expectedCandidateCount
+    ) {
+        throw new Error(
+            `Health candidate manifest mismatch: ` +
+            `manifest=${index.length}, expected=${expectedCandidateCount}. ` +
+            `Refusing to fall back to index.json.`
+        );
+    }
 
     const nextIndex =
         [...nextIndexSeed];

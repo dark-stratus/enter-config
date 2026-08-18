@@ -2319,10 +2319,21 @@ async function main() {
       link: item.link.trim(),
     }));
 
+  const healthCandidatesFile =
+    path.join(ROOT, "keyline-health-candidates.json");
+
   await writeAtomic(
-    path.join(ROOT, "keyline-health-candidates.json"),
+    healthCandidatesFile,
     `${JSON.stringify(healthCandidates, null, 2)}\n`
   );
+
+  if (healthCandidates.length !== regular.length + automaticWhiteList.length) {
+    throw new Error(
+      `Health candidate manifest mismatch: ` +
+      `manifest=${healthCandidates.length}, ` +
+      `expected=${regular.length + automaticWhiteList.length}`
+    );
+  }
 
   const previousSourceFingerprints = previousState.sourceFingerprints || {};
   const currentSourceFingerprints = Object.fromEntries(
@@ -2392,6 +2403,10 @@ async function main() {
     regularBeforeHealthCheck: regular.length,
     autoWhiteListBeforeHealthCheck: automaticWhiteList.length,
     totalBeforeHealthCheck: regular.length + automaticWhiteList.length,
+    healthCandidateManifest: {
+      path: "keyline-health-candidates.json",
+      count: healthCandidates.length,
+    },
     retainedPolicy: "previous managed links are retained unless temporarily quarantined by a failed health check; quarantine is not a permanent blacklist",
   };
   await writeAtomic(
