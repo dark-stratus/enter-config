@@ -663,7 +663,16 @@ function parseSubscriptionPayload(text, contentType, source) {
       kind: "json",
       data: parsed,
     };
-  } catch {}
+  } catch (error) {
+    // A syntactically valid JSON error response must stay an error.
+    // Do not silently reinterpret it as a successful subscription.
+    if (
+      error instanceof Error &&
+      /Keyline returned an error payload/i.test(error.message)
+    ) {
+      throw error;
+    }
+  }
 
   const candidates = [raw];
 
@@ -682,12 +691,26 @@ function parseSubscriptionPayload(text, contentType, source) {
       const parsed = extractJsonAfterMetadata(candidate, source);
 
       if (parsed !== null) {
+        if (isKeylineErrorPayload(parsed)) {
+          throw new Error(
+            `${source}: Keyline returned an error payload; ` +
+            `content-type=${contentType || "unknown"}; ` +
+            `preview=${JSON.stringify(responsePreview(candidate))}`
+          );
+        }
+
         return {
           kind: "json",
           data: parsed,
         };
       }
     } catch (error) {
+      if (
+        error instanceof Error &&
+        /Keyline returned an error payload/i.test(error.message)
+      ) {
+        throw error;
+      }
       lastError = error;
     }
 
@@ -1621,11 +1644,11 @@ function normalizeProfileLink(link, index, source, forceWhiteList = false, stats
       }
     }
 
-    const hash = url.hash;
-    url.hash = "";
-    canonicalLink = url.toString();
-    url.hash = hash;
-    if (hash) canonicalLink += hash;
+    // Preserve the Keyline-provided URI byte-for-byte. Do not add missing
+    // transport/security parameters or otherwise rewrite the source link.
+    // The source configuration is the authority; downstream parsing applies
+    // its own protocol defaults only when the source truly omits them.
+    canonicalLink = value;
   } catch {}
 
   if (!remarks) {
