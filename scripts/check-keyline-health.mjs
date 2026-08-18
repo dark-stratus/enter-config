@@ -1069,40 +1069,185 @@ function standardDeviation(values) {
     return Math.sqrt(variance);
 }
 
+
+function directTcpLatencyProbe(
+    hostname,
+    port,
+    timeoutMs = TCP_TIMEOUT_MS
+) {
+    return new Promise(resolve => {
+        const startedAt = Date.now();
+        const socket = net.createConnection({
+            host: hostname,
+            port: Number(port),
+            timeout: timeoutMs,
+        });
+
+        let settled = false;
+
+        const finish = result => {
+            if (settled) return;
+            settled = true;
+            socket.destroy();
+            resolve(result);
+        };
+
+        socket.once("connect", () => {
+            finish({
+                ok: true,
+                latencyMs: Math.max(Date.now() - startedAt, 0),
+            });
+        });
+
+        socket.once("timeout", () => {
+            finish({
+                ok: false,
+                latencyMs: 0,
+                error: "TCP latency probe timeout",
+            });
+        });
+
+        socket.once("error", error => {
+            finish({
+                ok: false,
+                latencyMs: 0,
+                error: error?.message || "TCP latency probe failed",
+            });
+        });
+    });
+}
+
+async function measureGamingLatency(link) {
+    let server;
+
+    try {
+        server = parseLink(link);
+    } catch (error) {
+        return {
+            ok: false,
+            samples: [],
+            medianLatencyMs: 0,
+            maxLatencyMs: Infinity,
+            latencySpreadMs: Infinity,
+            latencyStdDevMs: Infinity,
+            error: error?.message || "unable to parse server link",
+        };
+    }
+
+    const protocol = String(server?.protocol || "").toLowerCase();
+
+    // Gaming latency must represent the endpoint's actual network reachability.
+    // Keep the ordinary health probes unchanged; this is an additional metric
+    // used only after a candidate has already passed health + quality.
+    if (!server?.address || !server?.port) {
+        return {
+            ok: false,
+            samples: [],
+            medianLatencyMs: 0,
+            maxLatencyMs: Infinity,
+            latencySpreadMs: Infinity,
+            latencyStdDevMs: Infinity,
+            error: "missing endpoint address/port",
+        };
+    }
+
+    // Hysteria is UDP/QUIC-oriented, while this probe measures TCP handshake
+    // time. Do not incorrectly label a Hysteria endpoint as Gaming-eligible.
+    if (protocol === "hysteria2" || protocol === "hysteria") {
+        return {
+            ok: false,
+            samples: [],
+            medianLatencyMs: 0,
+            maxLatencyMs: Infinity,
+            latencySpreadMs: Infinity,
+            latencyStdDevMs: Infinity,
+            error: "direct TCP latency metric is not valid for Hysteria",
+        };
+    }
+
+    const samples = [];
+    const errors = [];
+
+    for (let index = 0; index < 3; index += 1) {
+        const result = await directTcpLatencyProbe(
+            server.address,
+            server.port,
+            TCP_TIMEOUT_MS
+        );
+
+        if (!result.ok) {
+            errors.push(
+                `probe ${index + 1}: ${result.error || "failed"}`
+            );
+        } else {
+            samples.push(Number(result.latencyMs));
+        }
+
+        if (index < 2) {
+            await sleep(250);
+        }
+    }
+
+    const finite = samples.filter(Number.isFinite);
+
+    if (finite.length !== 3) {
+        return {
+            ok: false,
+            samples: finite,
+            medianLatencyMs: finite.length ? median(finite) : 0,
+            maxLatencyMs: finite.length ? Math.max(...finite) : Infinity,
+            latencySpreadMs: finite.length
+                ? Math.max(...finite) - Math.min(...finite)
+                : Infinity,
+            latencyStdDevMs: standardDeviation(finite),
+            error: errors.join("; ").slice(0, 500) || "not all latency probes passed",
+        };
+    }
+
+    return {
+        ok: true,
+        samples: finite,
+        medianLatencyMs: median(finite),
+        maxLatencyMs: Math.max(...finite),
+        latencySpreadMs: Math.max(...finite) - Math.min(...finite),
+        latencyStdDevMs: standardDeviation(finite),
+        error: "",
+    };
+}
+
 function getGamingMetrics(
     remote,
-    quality
+    quality,
+    gamingLatency
 ) {
     const latencies =
-        remote
-            .filter(
-                result =>
-                    result?.ok &&
-                    Number.isFinite(
-                        Number(result.latencyMs)
-                    )
-            )
-            .map(
-                result =>
-                    Number(result.latencyMs)
-            );
+        Array.isArray(gamingLatency?.samples)
+            ? gamingLatency.samples.filter(Number.isFinite)
+            : [];
 
     const medianLatencyMs =
-        median(latencies);
+        Number.isFinite(Number(gamingLatency?.medianLatencyMs))
+            ? Number(gamingLatency.medianLatencyMs)
+            : median(latencies);
 
     const maxLatencyMs =
-        latencies.length
-            ? Math.max(...latencies)
-            : Infinity;
+        Number.isFinite(Number(gamingLatency?.maxLatencyMs))
+            ? Number(gamingLatency.maxLatencyMs)
+            : (latencies.length ? Math.max(...latencies) : Infinity);
 
     const latencySpreadMs =
-        latencies.length
-            ? Math.max(...latencies) -
-              Math.min(...latencies)
-            : Infinity;
+        Number.isFinite(Number(gamingLatency?.latencySpreadMs))
+            ? Number(gamingLatency.latencySpreadMs)
+            : (
+                latencies.length
+                    ? Math.max(...latencies) - Math.min(...latencies)
+                    : Infinity
+            );
 
     const latencyStdDevMs =
-        standardDeviation(latencies);
+        Number.isFinite(Number(gamingLatency?.latencyStdDevMs))
+            ? Number(gamingLatency.latencyStdDevMs)
+            : standardDeviation(latencies);
 
     const qualityPassed =
         Number(quality?.passedCount) || 0;
@@ -1115,6 +1260,8 @@ function getGamingMetrics(
         allHealthTargetsPassed &&
         qualityPassed >= GAMING_MIN_QUALITY_PASSES &&
         Number(quality?.kbps) >= GAMING_MIN_KBPS &&
+        gamingLatency?.ok === true &&
+        latencies.length === 3 &&
         maxLatencyMs <= GAMING_MAX_LATENCY_MS &&
         latencySpreadMs <= GAMING_MAX_LATENCY_SPREAD_MS;
 
@@ -1137,7 +1284,10 @@ function getGamingMetrics(
         );
 
     const stabilityScore =
-        allHealthTargetsPassed ? 25 : 0;
+        allHealthTargetsPassed &&
+        latencies.length === 3
+            ? 25
+            : 0;
 
     return {
         eligible,
@@ -1157,10 +1307,21 @@ function getGamingMetrics(
             Number.isFinite(latencyStdDevMs)
                 ? Math.round(latencyStdDevMs * 10) / 10
                 : 0,
+        latencySamples:
+            latencies.map(value => Math.round(value)),
+        speedScore:
+            Math.round(speedScore * 10) / 10,
+        latencyScore:
+            Math.round(latencyScore * 10) / 10,
+        stabilityScore,
         score:
             Math.round(
-                (speedScore + latencyScore + stabilityScore) * 10
-            ) / 10
+                (
+                    speedScore +
+                    latencyScore +
+                    stabilityScore
+                ) * 10
+            ) / 10,
     };
 }
 
@@ -1611,10 +1772,16 @@ async function main() {
                 };
             }
 
+            const gamingLatency =
+                await measureGamingLatency(
+                    item.link
+                );
+
             const gaming =
                 getGamingMetrics(
                     remote,
-                    quality
+                    quality,
+                    gamingLatency
                 );
 
             return {
@@ -1626,7 +1793,11 @@ async function main() {
                     `quality ${quality.passedCount}/${quality.probeCount} probes passed ` +
                     `(avg passing ${quality.kbps} KB/s)`,
                 quality,
-                gaming,
+                gaming: {
+                    ...gaming,
+                    latencyProbeError:
+                        gamingLatency.error || "",
+                },
                 remote,
             };
 
