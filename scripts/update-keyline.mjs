@@ -16,11 +16,145 @@ const FETCH_TIMEOUT_MS = 60_000;
 const FETCH_RETRIES = 4;
 const FETCH_RETRY_DELAY_MS = 2_000;
 
-const HAPP_APP_VERSION = "2.16.2";
-const HAPP_BUILD_ID = "2605221224503";
-const HAPP_DEVICE_LOCALE = "RU";
-const HAPP_DEVICE_OS = "Windows";
-const HAPP_OS_VERSION = "10_10.0.19045";
+const KEYLINE_DEVICE_PROFILES = [
+  {
+    "appVersion": "2.16.2",
+    "buildId": "2605221224503",
+    "locale": "RU",
+    "deviceOs": "Windows",
+    "osVersion": "10_10.0.19045",
+    "deviceModel": "LAPTOP-A14F8C2D_x86_64",
+    "hwid": "151521b1-d5f0-4c34-8791-692b5cd25463"
+  },
+  {
+    "appVersion": "2.16.2",
+    "buildId": "2605221224503",
+    "locale": "RU",
+    "deviceOs": "Windows",
+    "osVersion": "10_10.0.19045",
+    "deviceModel": "LAPTOP-C72B91E4_x86_64",
+    "hwid": "631d8135-09ed-4b10-8585-568b116f451b"
+  },
+  {
+    "appVersion": "2.16.2",
+    "buildId": "2605221224503",
+    "locale": "RU",
+    "deviceOs": "Windows",
+    "osVersion": "10_10.0.19045",
+    "deviceModel": "LAPTOP-E53A7F19_x86_64",
+    "hwid": "021646b8-d366-4087-bc8c-f21c8e2b67b4"
+  },
+  {
+    "appVersion": "2.16.2",
+    "buildId": "2605221224503",
+    "locale": "RU",
+    "deviceOs": "Windows",
+    "osVersion": "10_10.0.19045",
+    "deviceModel": "LAPTOP-F81D2A63_x86_64",
+    "hwid": "5458ad0e-c2f1-4e64-8a8a-d8c9602b196a"
+  },
+  {
+    "appVersion": "2.16.2",
+    "buildId": "2605221224503",
+    "locale": "RU",
+    "deviceOs": "Windows",
+    "osVersion": "10_10.0.19045",
+    "deviceModel": "LAPTOP-19CE74B5_x86_64",
+    "hwid": "16fdb924-5fd2-4533-b564-f28d656de953"
+  },
+  {
+    "appVersion": "2.16.2",
+    "buildId": "2605221224503",
+    "locale": "RU",
+    "deviceOs": "Windows",
+    "osVersion": "10_10.0.19045",
+    "deviceModel": "LAPTOP-4B92E7D1_x86_64",
+    "hwid": "3ccd38ec-8283-4ca1-a0b0-80e97440d95f"
+  },
+  {
+    "appVersion": "2.16.2",
+    "buildId": "2605221224503",
+    "locale": "RU",
+    "deviceOs": "Windows",
+    "osVersion": "10_10.0.19045",
+    "deviceModel": "LAPTOP-73AF16C9_x86_64",
+    "hwid": "0704708c-e3d3-4173-993c-a25774e8257b"
+  },
+  {
+    "appVersion": "2.16.2",
+    "buildId": "2605221224503",
+    "locale": "RU",
+    "deviceOs": "Windows",
+    "osVersion": "10_10.0.19045",
+    "deviceModel": "LAPTOP-B5D84E21_x86_64",
+    "hwid": "f3f7421b-9825-4694-952e-76a0f8e301c6"
+  },
+  {
+    "appVersion": "2.16.2",
+    "buildId": "2605221224503",
+    "locale": "RU",
+    "deviceOs": "Windows",
+    "osVersion": "10_10.0.19045",
+    "deviceModel": "LAPTOP-D61F93A8_x86_64",
+    "hwid": "fcc45362-0562-4dd0-a7cb-f617a813ad7a"
+  },
+  {
+    "appVersion": "2.16.2",
+    "buildId": "2605221224503",
+    "locale": "RU",
+    "deviceOs": "Windows",
+    "osVersion": "10_10.0.19045",
+    "deviceModel": "LAPTOP-28E7C4F6_x86_64",
+    "hwid": "569c9a22-7fe2-4005-a793-f6af45ce3bc3"
+  },
+  {
+    "appVersion": "2.16.2",
+    "buildId": "2605221224503",
+    "locale": "RU",
+    "deviceOs": "Windows",
+    "osVersion": "10_10.0.19045",
+    "deviceModel": "LAPTOP-9A31F6C8_x86_64",
+    "hwid": "9f8f7c8e-4c60-4b15-9c4f-de6080e5e139"
+  },
+  {
+    "appVersion": "2.16.2",
+    "buildId": "2605221224503",
+    "locale": "RU",
+    "deviceOs": "Windows",
+    "osVersion": "10_10.0.19045",
+    "deviceModel": "LAPTOP-CE84A217_x86_64",
+    "hwid": "8deb93f3-6b63-4ef0-8f21-5ce9ff820f7a"
+  },
+  {
+    "appVersion": "2.16.2",
+    "buildId": "2605221224503",
+    "locale": "RU",
+    "deviceOs": "Windows",
+    "osVersion": "10_10.0.19045",
+    "deviceModel": "LAPTOP-16D9B3E5_x86_64",
+    "hwid": "4a2ee4b1-1962-4e51-b9ba-7e8b58dd1d1a"
+  },
+  {
+    "appVersion": "2.16.2",
+    "buildId": "2605221224503",
+    "locale": "RU",
+    "deviceOs": "Windows",
+    "osVersion": "10_10.0.19045",
+    "deviceModel": "LAPTOP-5F27C8A1_x86_64",
+    "hwid": "14a5e72c-2190-4f32-a3f3-2c42acfa42a3"
+  },
+  {
+    "appVersion": "2.16.2",
+    "buildId": "2605221224503",
+    "locale": "RU",
+    "deviceOs": "Windows",
+    "osVersion": "10_10.0.19045",
+    "deviceModel": "LAPTOP-A7E42D9B_x86_64",
+    "hwid": "5c988abf-1fb2-4db8-934f-18bf1c91bcdc"
+  },
+];
+
+const MAX_KEYLINE_DEVICE_PROFILES = KEYLINE_DEVICE_PROFILES.length;
 
 const MANAGED_REGULAR_RE = /^keyline-regular-\d+$/i;
 const MANAGED_WHITE_LIST_RE = /^keyline-whitelist-\d+$/i;
@@ -693,24 +827,73 @@ function createHappDeviceModel() {
   return `LAPTOP-${suffix}_x86_64`;
 }
 
-async function getHappClientIdentity() {
+async function getHappClientIdentity(url) {
   const state = await readState();
 
-  const hwid = isUuid(state.happHwid)
-    ? state.happHwid
-    : crypto.randomUUID();
+  if (
+    !state.keylineDeviceAssignments ||
+    typeof state.keylineDeviceAssignments !== "object"
+  ) {
+    state.keylineDeviceAssignments = {};
+  }
 
-  const deviceModel = (
-    typeof state.happDeviceModel === "string" &&
-    /^LAPTOP-[A-Z0-9]+_x86_64$/.test(state.happDeviceModel)
-  )
-    ? state.happDeviceModel
-    : createHappDeviceModel();
+  const fingerprint = fingerprintUrl(url);
+  const existingIndex = Number(
+    state.keylineDeviceAssignments[fingerprint]
+  );
 
-  return {
-    hwid,
-    deviceModel,
-  };
+  if (
+    Number.isInteger(existingIndex) &&
+    existingIndex >= 0 &&
+    existingIndex < MAX_KEYLINE_DEVICE_PROFILES
+  ) {
+    return KEYLINE_DEVICE_PROFILES[existingIndex];
+  }
+
+  const usedIndexes = new Set(
+    Object.values(state.keylineDeviceAssignments)
+      .map(value => Number(value))
+      .filter(
+        value =>
+          Number.isInteger(value) &&
+          value >= 0 &&
+          value < MAX_KEYLINE_DEVICE_PROFILES
+      )
+  );
+
+  let profileIndex = -1;
+
+  for (
+    let index = 0;
+    index < MAX_KEYLINE_DEVICE_PROFILES;
+    index += 1
+  ) {
+    if (!usedIndexes.has(index)) {
+      profileIndex = index;
+      break;
+    }
+  }
+
+  if (profileIndex === -1) {
+    throw new Error(
+      `No free dedicated Keyline device profile remains. ` +
+      `Maximum supported unique Keyline URLs: ${MAX_KEYLINE_DEVICE_PROFILES}.`
+    );
+  }
+
+  state.keylineDeviceAssignments[fingerprint] = profileIndex;
+
+  await writeAtomic(
+    STATE_FILE,
+    `${JSON.stringify(state, null, 2)}\n`
+  );
+
+  console.log(
+    `Assigned ${fingerprint} -> device profile #${profileIndex + 1} ` +
+    `(${KEYLINE_DEVICE_PROFILES[profileIndex].deviceModel})`
+  );
+
+  return KEYLINE_DEVICE_PROFILES[profileIndex];
 }
 
 async function shouldSkip() {
@@ -792,13 +975,13 @@ async function fetchJsonUrl(url, label, clientIdentity) {
   let lastError = null;
 
   const headers = {
-    "user-agent": `Happ/${HAPP_APP_VERSION}/${HAPP_DEVICE_OS}/${HAPP_BUILD_ID}`,
-    "x-app-version": HAPP_APP_VERSION,
-    "x-device-locale": HAPP_DEVICE_LOCALE,
-    "x-device-os": HAPP_DEVICE_OS,
+    "user-agent": `Happ/${clientIdentity.appVersion}/${clientIdentity.deviceOs}/${clientIdentity.buildId}`,
+    "x-app-version": clientIdentity.appVersion,
+    "x-device-locale": clientIdentity.locale,
+    "x-device-os": clientIdentity.deviceOs,
     "x-device-model": clientIdentity.deviceModel,
     "x-hwid": clientIdentity.hwid,
-    "x-ver-os": HAPP_OS_VERSION,
+    "x-ver-os": clientIdentity.osVersion,
     accept: "*/*",
     "accept-language": "ru-RU,en,*",
     "accept-encoding": "gzip, deflate",
@@ -870,13 +1053,7 @@ function sourceSlotLabel(scope, index) {
 }
 
 async function fetchKeylineSources() {
-  const clientIdentity = await getHappClientIdentity();
-
-  console.log(
-    `Using Happ client identity: device=${clientIdentity.deviceModel}, ` +
-    `hwid=${clientIdentity.hwid.slice(0, 8)}…`
-  );
-
+  const clientIdentity = KEYLINE_DEVICE_PROFILES[0];
   const fixtureJson = process.env.KEYLINE_FIXTURE_JSON;
 
   if (fixtureJson) {
@@ -965,6 +1142,12 @@ async function fetchKeylineSources() {
     const request = fetchQueue[index];
     const urlFingerprint = fingerprintUrl(request.url);
     const startedAt = Date.now();
+    const clientIdentity = await getHappClientIdentity(request.url);
+
+    console.log(
+      `${request.label}: device=${clientIdentity.deviceModel}, ` +
+      `hwid=${clientIdentity.hwid.slice(0, 8)}…`
+    );
 
     try {
       const source = await fetchOneConfiguredSource(
@@ -2199,9 +2382,12 @@ async function main() {
     `${JSON.stringify(report, null, 2)}\n`
   );
 
+  const stateAfterUpdate = await readState();
+
   await writeAtomic(
     STATE_FILE,
     `${JSON.stringify({
+      ...stateAfterUpdate,
       lastSuccessfulUpdateAt: Date.now(),
       sourceCount: sources.length,
       rawEntryCount: totalRawEntries,
@@ -2210,6 +2396,8 @@ async function main() {
       happHwid: clientIdentity.hwid,
       happDeviceModel: clientIdentity.deviceModel,
       sourceFingerprints: currentSourceFingerprints,
+      keylineDeviceAssignments:
+        stateAfterUpdate.keylineDeviceAssignments || {},
     }, null, 2)}\n`
   );
 
