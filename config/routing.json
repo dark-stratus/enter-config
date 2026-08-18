@@ -2,24 +2,75 @@
   "domainStrategy": "IPIfNonMatch",
   "rules": [
     {
-    "type": "field",
-    "domain": [
-        "geosite:category-ads-all"
-    ],
-    "outboundTag": "block"
+      "type": "field",
+      "domain": [
+        "domain:doubleclick.net",
+        "domain:googlesyndication.com",
+        "domain:googleadservices.com",
+        "domain:pagead2.googlesyndication.com",
+        "domain:adservice.google.com",
+        "domain:adnxs.com",
+        "domain:adsrvr.org",
+        "domain:advertising.com",
+        "domain:amazon-adsystem.com",
+        "domain:criteo.com",
+        "domain:criteo.net",
+        "domain:taboola.com",
+        "domain:outbrain.com",
+        "domain:pubmatic.com",
+        "domain:rubiconproject.com",
+        "domain:openx.net",
+        "domain:3lift.com",
+        "domain:smartadserver.com",
+        "domain:casalemedia.com",
+        "domain:sharethrough.com",
+        "domain:yieldmo.com",
+        "domain:lijit.com",
+        "domain:contextweb.com",
+        "domain:33across.com",
+        "domain:appnexus.com",
+        "domain:adform.net",
+        "domain:adroll.com",
+        "domain:media.net",
+        "domain:scorecardresearch.com",
+        "domain:quantserve.com",
+        "domain:zedo.com",
+        "domain:moatads.com",
+        "domain:doubleverify.com",
+        "domain:adsafeprotected.com",
+        "domain:everesttech.net",
+        "domain:bidswitch.net",
+        "domain:loopme.me",
+        "domain:smaato.net",
+        "domain:spotxchange.com",
+        "domain:rhythmone.com",
+        "domain:opera.com",
+        "domain:adcolony.com",
+        "domain:applovin.com",
+        "domain:unityads.unity3d.com",
+        "domain:ironsource.com",
+        "domain:vungle.com",
+        "domain:inmobi.com",
+        "domain:mopub.com",
+        "domain:tapjoy.com",
+        "domain:pubnative.net",
+        "domain:startapp.com",
+        "domain:mintegral.com",
+        "domain:chartboost.com",
+        "domain:fyber.com",
+        "domain:adpushup.com",
+        "domain:exoclick.com",
+        "domain:trafficjunky.net",
+        "domain:popads.net",
+        "domain:popcash.net"
+      ],
+      "outboundTag": "block"
     },
     {
       "type": "field",
       "domain": [
         "domain:.ru",
         "domain:.xn--p1ai"
-      ],
-      "outboundTag": "direct"
-    },
-    {
-      "type": "field",
-      "ip": [
-        "geoip:private"
       ],
       "outboundTag": "direct"
     },
@@ -40,5 +91,6 @@
       "network": "tcp,udp",
       "outboundTag": "proxy"
     }
-  ]
+  ],
+  "domainMatcher": "hybrid"
 }
