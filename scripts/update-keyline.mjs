@@ -904,6 +904,30 @@ async function shouldSkip() {
     return false;
   }
 
+  // A previous successful run may have left a recent timestamp in state.
+  // Never skip the fetch if the health candidate manifest is missing, because
+  // the workflow cannot safely continue to health-check the old managed pool.
+  const healthCandidatesFile = path.join(
+    ROOT,
+    "config",
+    "keyline-health-candidates.json"
+  );
+
+  try {
+    const stat = await fs.stat(healthCandidatesFile);
+    if (!stat.isFile() || stat.size === 0) {
+      console.log(
+        "Health candidate manifest is missing/empty; forcing a Keyline refresh."
+      );
+      return false;
+    }
+  } catch {
+    console.log(
+      "Health candidate manifest does not exist; forcing a Keyline refresh."
+    );
+    return false;
+  }
+
   const state = await readState();
   const elapsed = Date.now() - state.lastSuccessfulUpdateAt;
 
@@ -2349,6 +2373,11 @@ async function main() {
 
   const healthCandidatesFile =
     path.join(ROOT, "config", "keyline-health-candidates.json");
+
+  await fs.mkdir(
+    path.dirname(healthCandidatesFile),
+    { recursive: true }
+  );
 
   await writeAtomic(
     healthCandidatesFile,
