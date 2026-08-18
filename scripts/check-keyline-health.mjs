@@ -31,6 +31,12 @@ const HEALTH_CANDIDATES_FILE =
     process.env.HEALTH_CANDIDATES_FILE ||
     path.join(ROOT, "config", "keyline-health-candidates.json");
 
+const UPDATE_STATUS_FILE =
+    path.join(ROOT, "config", "keyline-update-status.json");
+
+const HEALTH_REPORT_FILE =
+    path.join(ROOT, "config", "keyline-health-report.json");
+
 const XRAY_BIN =
     process.env.XRAY_BIN ||
     path.join(
@@ -1613,6 +1619,46 @@ async function main() {
 
     index = candidates;
 
+    let updateStatus = null;
+    try {
+        updateStatus = JSON.parse(
+            await fs.readFile(UPDATE_STATUS_FILE, "utf8")
+        );
+    } catch {
+        throw new Error(
+            "Keyline update status is missing; refusing to health-check a potentially stale candidate manifest."
+        );
+    }
+
+    if (updateStatus?.refreshed !== true) {
+        throw new Error(
+            `Keyline refresh was not performed (${updateStatus?.reason || "unknown reason"}); refusing to reuse the previous candidate manifest.`
+        );
+    }
+
+    const manifestText = await fs.readFile(HEALTH_CANDIDATES_FILE, "utf8");
+    const manifestSha256 = crypto.createHash("sha256").update(manifestText).digest("hex");
+    if (updateStatus.manifestSha256 !== manifestSha256) {
+        throw new Error(
+            `Keyline manifest generation mismatch: status=${updateStatus.manifestSha256 || "missing"}, manifest=${manifestSha256}`
+        );
+    }
+
+    const missingManifestLinks = [];
+    for (const candidate of candidates.filter(item => isManagedKeylineId(item?.id))) {
+        const linkFile = path.join(LINKS_DIR, `${candidate.id}.link`);
+        try {
+            await fs.access(linkFile);
+        } catch {
+            missingManifestLinks.push(candidate.id);
+        }
+    }
+    if (missingManifestLinks.length) {
+        throw new Error(
+            `Fresh health manifest is out of sync with config/links: ${missingManifestLinks.length} managed .link files are missing. First ids: ${missingManifestLinks.slice(0, 10).join(", ")}`
+        );
+    }
+
 
     const committedIndexText = await fs.readFile(
         INDEX_FILE,
@@ -2326,6 +2372,20 @@ async function main() {
     }
 
     await fs.writeFile(reportFile, `${JSON.stringify(report, null, 2)}\n`, "utf8");
+    await fs.writeFile(HEALTH_REPORT_FILE, `${JSON.stringify({
+        generatedAt: report.healthGeneratedAt,
+        generationId: report.generationId,
+        manifestSha256: report.manifestSha256,
+        candidates: report.totalBeforeHealthCheck ?? report.stageComparison?.candidatesBeforeHealthCheck ?? 0,
+        checked,
+        passed,
+        failed,
+        healthCheckBySource: report.healthCheckBySource || {},
+        healthCheckByCountry: report.healthCheckByCountry || {},
+        failureReasons: Object.fromEntries([...byReason.entries()]),
+        finalManagedServers: report.finalManagedServers ?? 0,
+        results: healthResults,
+    }, null, 2)}\n`, "utf8");
 
     console.log(
         `Keyline health check complete: ${passed} passed, ${failed} removed.`

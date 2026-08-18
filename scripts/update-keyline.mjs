@@ -9,6 +9,7 @@ const ROOT = process.env.GITHUB_WORKSPACE
 const LINKS_DIR = path.join(ROOT, "config", "links");
 const INDEX_FILE = path.join(LINKS_DIR, "index.json");
 const STATE_FILE = path.join(ROOT, ".keyline-state.json");
+const UPDATE_STATUS_FILE = path.join(ROOT, "config", "keyline-update-status.json");
 
 const REGULAR_LIMIT = Number.POSITIVE_INFINITY;
 const AUTO_WHITE_LIST_LIMIT = 20;
@@ -2384,7 +2385,19 @@ async function replaceLinksDirectory(stageDir) {
 }
 
 async function main() {
-  if (await shouldSkip()) return;
+  if (await shouldSkip()) {
+    await writeAtomic(
+      UPDATE_STATUS_FILE,
+      `${JSON.stringify({
+        generatedAt: new Date().toISOString(),
+        refreshed: false,
+        reason: "success_interval",
+        message: "Keyline refresh was skipped by the success interval.",
+      }, null, 2)}\n`
+    );
+    console.log("Keyline update skipped; health stage must not reuse the previous candidate manifest.");
+    return;
+  }
 
   const {
     clientIdentity,
@@ -2630,8 +2643,34 @@ async function main() {
   const endpointCloneGroups =
     buildEndpointCloneGroups(deduped);
 
+  const manifestText = await fs.readFile(healthCandidatesFile, "utf8");
+  const manifestSha256 = crypto.createHash("sha256").update(manifestText).digest("hex");
+  const generationId = manifestSha256.slice(0, 16);
+
+  await writeAtomic(
+    UPDATE_STATUS_FILE,
+    `${JSON.stringify({
+      generatedAt: new Date().toISOString(),
+      refreshed: true,
+      generationId,
+      manifestSha256,
+      sourceCount: sources.length,
+      configuredSourceCount: sourceFetches.length,
+      totalRawEntries,
+      freshBeforeDedupe: allEntries.length,
+      afterDedupe: deduped.length,
+      freshRegular: freshRegularCount,
+      freshWhiteList: freshWhiteListCount,
+      retainedFromPreviousPool: merged.retainedCount,
+      totalBeforeHealthCheck: healthCandidates.length,
+      sourceCandidateCounts,
+    }, null, 2)}\n`
+  );
+
   const report = {
     generatedAt: new Date().toISOString(),
+    generationId,
+    manifestSha256,
     sourceCount: sources.length,
     configuredSourceCount: sourceFetches.length,
     sourceFetches,
