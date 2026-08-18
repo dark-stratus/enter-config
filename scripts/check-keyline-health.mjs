@@ -2309,32 +2309,33 @@ async function main() {
             gamingAssignments,
     };
 
-    if (process.env.GITHUB_STEP_SUMMARY) {
-        const byReason = new Map();
-        const bySource = new Map();
-        const byCountry = new Map();
-        for (const item of healthResults) {
-            if (!item.ok) {
-                const key = item.reason || "unknown";
-                byReason.set(key, (byReason.get(key) || 0) + 1);
-            }
-            const sourceKey = item.source || "retained/manual";
-            const sourceRow = bySource.get(sourceKey) || { checked: 0, passed: 0, failed: 0 };
-            sourceRow.checked += 1;
-            sourceRow[item.ok ? "passed" : "failed"] += 1;
-            bySource.set(sourceKey, sourceRow);
-            const countryKey = item.country || "Unknown";
-            const countryRow = byCountry.get(countryKey) || { checked: 0, passed: 0, failed: 0 };
-            countryRow.checked += 1;
-            countryRow[item.ok ? "passed" : "failed"] += 1;
-            byCountry.set(countryKey, countryRow);
+    const byReason = new Map();
+    const bySource = new Map();
+    const byCountry = new Map();
+    for (const item of healthResults) {
+        if (!item.ok) {
+            const key = item.reason || "unknown";
+            byReason.set(key, (byReason.get(key) || 0) + 1);
         }
-        report.healthCheckBySource = Object.fromEntries(
-            [...bySource.entries()].map(([key, value]) => [key, value])
-        );
-        report.healthCheckByCountry = Object.fromEntries(
-            [...byCountry.entries()].map(([key, value]) => [key, value])
-        );
+        const sourceKey = item.source || "retained/manual";
+        const sourceRow = bySource.get(sourceKey) || { checked: 0, passed: 0, failed: 0 };
+        sourceRow.checked += 1;
+        sourceRow[item.ok ? "passed" : "failed"] += 1;
+        bySource.set(sourceKey, sourceRow);
+        const countryKey = item.country || "Unknown";
+        const countryRow = byCountry.get(countryKey) || { checked: 0, passed: 0, failed: 0 };
+        countryRow.checked += 1;
+        countryRow[item.ok ? "passed" : "failed"] += 1;
+        byCountry.set(countryKey, countryRow);
+    }
+    report.healthCheckBySource = Object.fromEntries(
+        [...bySource.entries()].map(([key, value]) => [key, value])
+    );
+    report.healthCheckByCountry = Object.fromEntries(
+        [...byCountry.entries()].map(([key, value]) => [key, value])
+    );
+
+    if (process.env.GITHUB_STEP_SUMMARY) {
         const lines = [
             "## Keyline refresh report",
             `- Sources: ${report.sourceCount ?? "?"} / configured ${report.configuredSourceCount ?? "?"}`,
