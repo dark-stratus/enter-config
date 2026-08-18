@@ -89,7 +89,7 @@ const QUALITY_MIN_PASSES =
 
 const QUALITY_PROBE_INTERVAL_MS =
     Math.max(
-        1000,
+        5000,
         Number(process.env.HEALTHCHECK_QUALITY_PROBE_INTERVAL_MS) || 5000
     );
 
@@ -97,7 +97,7 @@ const HEALTH_CONCURRENCY =
     Math.max(
         1,
         Math.min(
-            12,
+            8,
             Number(process.env.HEALTHCHECK_CONCURRENCY) || 8
         )
     );
@@ -142,6 +142,13 @@ const GAMING_MIN_QUALITY_PASSES =
             QUALITY_PROBE_COUNT,
             Number(process.env.HEALTHCHECK_GAMING_MIN_QUALITY_PASSES) || QUALITY_PROBE_COUNT
         )
+    );
+
+const HEALTH_STATE_FILE =
+    path.join(
+        ROOT,
+        "config",
+        ".keyline-state.json"
     );
 
 const GAMING_STATE_FILE =
