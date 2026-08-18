@@ -2866,10 +2866,10 @@
   "totalBeforeHealthCheck": 450,
   "retainedPolicy": "previous managed links are retained unless temporarily quarantined by a failed health check; quarantine is not a permanent blacklist",
   "healthCheck": {
-    "generatedAt": "2026-08-18T11:31:15.275Z",
+    "generatedAt": "2026-08-18T11:36:05.225Z",
     "checked": 13,
-    "passed": 13,
-    "failed": 0,
+    "passed": 12,
+    "failed": 1,
     "concurrency": 8,
     "targets": [
       "https://www.gstatic.com/generate_204",
@@ -2897,206 +2897,28 @@
     },
     "results": [
       {
-        "id": "keyline-regular-441",
-        "remarks": "🇺🇸 United States",
-        "country": "United States",
-        "source": "Keyline URL 1",
-        "linkFingerprint": "5b5799678533",
-        "ok": true,
-        "protocol": "trojan",
-        "stages": "TCP + Xray + 3/3 HTTPS + quality 3/3 probes passed (avg passing 6155.4 KB/s)",
-        "reason": "",
-        "quality": {
-          "ok": true,
-          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
-          "probeCount": 3,
-          "requiredPasses": 2,
-          "intervalMs": 5000,
-          "passedCount": 3,
-          "failedCount": 0,
-          "bytes": 1048576,
-          "httpCode": "200",
-          "kbps": 6155.4,
-          "probes": [
-            {
-              "probeIndex": 1,
-              "ok": true,
-              "url": "https://speed.cloudflare.com/__down?bytes=1048576&hc_probe=1787052643580-2232-1-e96yfa3byxa",
-              "httpCode": 200,
-              "bytes": 1048576,
-              "elapsedMs": 281,
-              "kbps": 3648.4,
-              "error": ""
-            },
-            {
-              "probeIndex": 2,
-              "ok": true,
-              "url": "https://speed.cloudflare.com/__down?bytes=1048576&hc_probe=1787052648892-2232-2-tphpwvait9",
-              "httpCode": 200,
-              "bytes": 1048576,
-              "elapsedMs": 131,
-              "kbps": 7811.4,
-              "error": ""
-            },
-            {
-              "probeIndex": 3,
-              "ok": true,
-              "url": "https://speed.cloudflare.com/__down?bytes=1048576&hc_probe=1787052654034-2232-3-p4mkzc9ytx",
-              "httpCode": 200,
-              "bytes": 1048576,
-              "elapsedMs": 146,
-              "kbps": 7006.3,
-              "error": ""
-            }
-          ],
-          "error": ""
-        },
-        "gaming": {
-          "eligible": true,
-          "medianLatencyMs": 3,
-          "maxLatencyMs": 5,
-          "latencySpreadMs": 3,
-          "latencyStdDevMs": 1.2,
-          "latencySamples": [
-            2,
-            3,
-            5
-          ],
-          "speedScore": 25,
-          "latencyScore": 48.3,
-          "stabilityScore": 25,
-          "score": 98.3,
-          "latencyProbeError": ""
-        },
-        "remote": [
-          {
-            "ok": true,
-            "targetUrl": "https://www.gstatic.com/generate_204",
-            "latencyMs": 193,
-            "attempts": 1,
-            "error": ""
-          },
-          {
-            "ok": true,
-            "targetUrl": "https://www.google.com/generate_204",
-            "latencyMs": 192,
-            "attempts": 1,
-            "error": ""
-          },
-          {
-            "ok": true,
-            "targetUrl": "https://cp.cloudflare.com/generate_204",
-            "latencyMs": 190,
-            "attempts": 1,
-            "error": ""
-          }
-        ]
-      },
-      {
-        "id": "keyline-regular-440",
-        "remarks": "🇺🇸 United States",
-        "country": "United States",
-        "source": "Keyline URL 1",
-        "linkFingerprint": "39bea7005584",
-        "ok": true,
-        "protocol": "trojan",
-        "stages": "TCP + Xray + 3/3 HTTPS + quality 3/3 probes passed (avg passing 5535.3 KB/s)",
-        "reason": "",
-        "quality": {
-          "ok": true,
-          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
-          "probeCount": 3,
-          "requiredPasses": 2,
-          "intervalMs": 5000,
-          "passedCount": 3,
-          "failedCount": 0,
-          "bytes": 1048576,
-          "httpCode": "200",
-          "kbps": 5535.3,
-          "probes": [
-            {
-              "probeIndex": 1,
-              "ok": true,
-              "url": "https://speed.cloudflare.com/__down?bytes=1048576&hc_probe=1787052643652-2232-1-e979vkpsfh",
-              "httpCode": 200,
-              "bytes": 1048576,
-              "elapsedMs": 180,
-              "kbps": 5688.8,
-              "error": ""
-            },
-            {
-              "probeIndex": 2,
-              "ok": true,
-              "url": "https://speed.cloudflare.com/__down?bytes=1048576&hc_probe=1787052648855-2232-2-4zd3ibcl9yn",
-              "httpCode": 200,
-              "bytes": 1048576,
-              "elapsedMs": 166,
-              "kbps": 6187.1,
-              "error": ""
-            },
-            {
-              "probeIndex": 3,
-              "ok": true,
-              "url": "https://speed.cloudflare.com/__down?bytes=1048576&hc_probe=1787052654032-2232-3-9hag099jl1o",
-              "httpCode": 200,
-              "bytes": 1048576,
-              "elapsedMs": 216,
-              "kbps": 4730.1,
-              "error": ""
-            }
-          ],
-          "error": ""
-        },
-        "gaming": {
-          "eligible": true,
-          "medianLatencyMs": 9,
-          "maxLatencyMs": 9,
-          "latencySpreadMs": 0,
-          "latencyStdDevMs": 0,
-          "latencySamples": [
-            9,
-            9,
-            9
-          ],
-          "speedScore": 25,
-          "latencyScore": 45,
-          "stabilityScore": 25,
-          "score": 95,
-          "latencyProbeError": ""
-        },
-        "remote": [
-          {
-            "ok": true,
-            "targetUrl": "https://www.gstatic.com/generate_204",
-            "latencyMs": 202,
-            "attempts": 1,
-            "error": ""
-          },
-          {
-            "ok": true,
-            "targetUrl": "https://www.google.com/generate_204",
-            "latencyMs": 258,
-            "attempts": 1,
-            "error": ""
-          },
-          {
-            "ok": true,
-            "targetUrl": "https://cp.cloudflare.com/generate_204",
-            "latencyMs": 196,
-            "attempts": 1,
-            "error": ""
-          }
-        ]
-      },
-      {
         "id": "keyline-regular-137",
         "remarks": "🇮🇳 India",
         "country": "India",
         "source": "Keyline URL 3",
         "linkFingerprint": "8dedfd2ca9f9",
+        "ok": false,
+        "protocol": "",
+        "stages": "",
+        "reason": "TCP unreachable",
+        "quality": null,
+        "gaming": null,
+        "remote": []
+      },
+      {
+        "id": "keyline-regular-430",
+        "remarks": "🇺🇸 United States",
+        "country": "United States",
+        "source": "retained",
+        "linkFingerprint": "e2cc202d75a1",
         "ok": true,
-        "protocol": "hysteria2",
-        "stages": "TCP + Xray + 3/3 HTTPS + quality 3/3 probes passed (avg passing 1471.8 KB/s)",
+        "protocol": "vless",
+        "stages": "TCP + Xray + 3/3 HTTPS + quality 3/3 probes passed (avg passing 2487 KB/s)",
         "reason": "",
         "quality": {
           "ok": true,
@@ -3108,73 +2930,77 @@
           "failedCount": 0,
           "bytes": 1048576,
           "httpCode": "200",
-          "kbps": 1471.8,
+          "kbps": 2487,
           "probes": [
             {
               "probeIndex": 1,
               "ok": true,
-              "url": "https://speed.cloudflare.com/__down?bytes=1048576&hc_probe=1787052644413-2232-1-ytpeupq2x9o",
+              "url": "https://speed.cloudflare.com/__down?bytes=1048576&hc_probe=1787052937549-2250-1-yndwd5xnv4a",
               "httpCode": 200,
               "bytes": 1048576,
-              "elapsedMs": 1155,
-              "kbps": 886.4,
+              "elapsedMs": 422,
+              "kbps": 2428.2,
               "error": ""
             },
             {
               "probeIndex": 2,
               "ok": true,
-              "url": "https://speed.cloudflare.com/__down?bytes=1048576&hc_probe=1787052650578-2232-2-qb4g6lnbvnj",
+              "url": "https://speed.cloudflare.com/__down?bytes=1048576&hc_probe=1787052942990-2250-2-ob1lqpdeb5",
               "httpCode": 200,
               "bytes": 1048576,
-              "elapsedMs": 589,
-              "kbps": 1739.6,
+              "elapsedMs": 412,
+              "kbps": 2487.9,
               "error": ""
             },
             {
               "probeIndex": 3,
               "ok": true,
-              "url": "https://speed.cloudflare.com/__down?bytes=1048576&hc_probe=1787052656176-2232-3-b5qrbdq8du6",
+              "url": "https://speed.cloudflare.com/__down?bytes=1048576&hc_probe=1787052948411-2250-3-jt3vut2qv5s",
               "httpCode": 200,
               "bytes": 1048576,
-              "elapsedMs": 572,
-              "kbps": 1789.5,
+              "elapsedMs": 402,
+              "kbps": 2545,
               "error": ""
             }
           ],
           "error": ""
         },
         "gaming": {
-          "eligible": false,
-          "medianLatencyMs": 0,
-          "maxLatencyMs": 0,
-          "latencySpreadMs": 0,
-          "latencyStdDevMs": 0,
-          "latencySamples": [],
+          "eligible": true,
+          "medianLatencyMs": 28,
+          "maxLatencyMs": 29,
+          "latencySpreadMs": 1,
+          "latencyStdDevMs": 0.5,
+          "latencySamples": [
+            28,
+            29,
+            28
+          ],
           "speedScore": 25,
-          "latencyScore": 50,
-          "stabilityScore": 0,
-          "score": 75,
-          "latencyProbeError": "direct TCP latency metric is not valid for Hysteria"
+          "latencyScore": 34.4,
+          "stabilityScore": 25,
+          "score": 84.4,
+          "latencyProbeError": ""
         },
         "remote": [
           {
             "ok": true,
             "targetUrl": "https://www.gstatic.com/generate_204",
-            "latencyMs": 748,
+            "latencyMs": 244,
             "attempts": 1,
             "error": ""
           },
           {
             "ok": true,
             "targetUrl": "https://www.google.com/generate_204",
-            "latencyMs": 740,
+            "latencyMs": 256,
             "attempts": 1,
             "error": ""
           },
           {
             "ok": true,
             "targetUrl": "https://cp.cloudflare.com/generate_204",
-            "latencyMs": 735,
+            "latencyMs": 220,
             "attempts": 1,
             "error": ""
           }
@@ -3188,7 +3014,7 @@
         "linkFingerprint": "c4669373e9b6",
         "ok": true,
         "protocol": "hysteria2",
-        "stages": "TCP + Xray + 3/3 HTTPS + quality 3/3 probes passed (avg passing 1290.5 KB/s)",
+        "stages": "TCP + Xray + 3/3 HTTPS + quality 3/3 probes passed (avg passing 2529.2 KB/s)",
         "reason": "",
         "quality": {
           "ok": true,
@@ -3200,36 +3026,36 @@
           "failedCount": 0,
           "bytes": 1048576,
           "httpCode": "200",
-          "kbps": 1290.5,
+          "kbps": 2529.2,
           "probes": [
             {
               "probeIndex": 1,
               "ok": true,
-              "url": "https://speed.cloudflare.com/__down?bytes=1048576&hc_probe=1787052644389-2232-1-gszxokcedh",
+              "url": "https://speed.cloudflare.com/__down?bytes=1048576&hc_probe=1787052937925-2250-1-df1481t50wk",
               "httpCode": 200,
               "bytes": 1048576,
-              "elapsedMs": 1197,
-              "kbps": 855.8,
+              "elapsedMs": 882,
+              "kbps": 1160.6,
               "error": ""
             },
             {
               "probeIndex": 2,
               "ok": true,
-              "url": "https://speed.cloudflare.com/__down?bytes=1048576&hc_probe=1787052650595-2232-2-c3r0xn4ncaq",
+              "url": "https://speed.cloudflare.com/__down?bytes=1048576&hc_probe=1787052943818-2250-2-3uwc58pqmxm",
               "httpCode": 200,
               "bytes": 1048576,
-              "elapsedMs": 657,
-              "kbps": 1558.9,
+              "elapsedMs": 374,
+              "kbps": 2738.4,
               "error": ""
             },
             {
               "probeIndex": 3,
               "ok": true,
-              "url": "https://speed.cloudflare.com/__down?bytes=1048576&hc_probe=1787052656263-2232-3-oz29a8jbdc",
+              "url": "https://speed.cloudflare.com/__down?bytes=1048576&hc_probe=1787052949200-2250-3-mog0zpeo7bq",
               "httpCode": 200,
               "bytes": 1048576,
-              "elapsedMs": 703,
-              "kbps": 1456.9,
+              "elapsedMs": 278,
+              "kbps": 3688.5,
               "error": ""
             }
           ],
@@ -3252,117 +3078,21 @@
           {
             "ok": true,
             "targetUrl": "https://www.gstatic.com/generate_204",
-            "latencyMs": 789,
+            "latencyMs": 517,
             "attempts": 1,
             "error": ""
           },
           {
             "ok": true,
             "targetUrl": "https://www.google.com/generate_204",
-            "latencyMs": 777,
+            "latencyMs": 515,
             "attempts": 1,
             "error": ""
           },
           {
             "ok": true,
             "targetUrl": "https://cp.cloudflare.com/generate_204",
-            "latencyMs": 772,
-            "attempts": 1,
-            "error": ""
-          }
-        ]
-      },
-      {
-        "id": "keyline-regular-430",
-        "remarks": "🇺🇸 United States",
-        "country": "United States",
-        "source": "retained",
-        "linkFingerprint": "e2cc202d75a1",
-        "ok": true,
-        "protocol": "vless",
-        "stages": "TCP + Xray + 3/3 HTTPS + quality 3/3 probes passed (avg passing 1006.2 KB/s)",
-        "reason": "",
-        "quality": {
-          "ok": true,
-          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
-          "probeCount": 3,
-          "requiredPasses": 2,
-          "intervalMs": 5000,
-          "passedCount": 3,
-          "failedCount": 0,
-          "bytes": 1048576,
-          "httpCode": "200",
-          "kbps": 1006.2,
-          "probes": [
-            {
-              "probeIndex": 1,
-              "ok": true,
-              "url": "https://speed.cloudflare.com/__down?bytes=1048576&hc_probe=1787052643924-2232-1-sobsxx7pa9g",
-              "httpCode": 200,
-              "bytes": 1048576,
-              "elapsedMs": 995,
-              "kbps": 1028.8,
-              "error": ""
-            },
-            {
-              "probeIndex": 2,
-              "ok": true,
-              "url": "https://speed.cloudflare.com/__down?bytes=1048576&hc_probe=1787052649930-2232-2-51a4y76lkia",
-              "httpCode": 200,
-              "bytes": 1048576,
-              "elapsedMs": 1044,
-              "kbps": 980.7,
-              "error": ""
-            },
-            {
-              "probeIndex": 3,
-              "ok": true,
-              "url": "https://speed.cloudflare.com/__down?bytes=1048576&hc_probe=1787052655985-2232-3-i1e79h52kyf",
-              "httpCode": 200,
-              "bytes": 1048576,
-              "elapsedMs": 1015,
-              "kbps": 1009,
-              "error": ""
-            }
-          ],
-          "error": ""
-        },
-        "gaming": {
-          "eligible": true,
-          "medianLatencyMs": 79,
-          "maxLatencyMs": 85,
-          "latencySpreadMs": 6,
-          "latencyStdDevMs": 2.8,
-          "latencySamples": [
-            79,
-            85,
-            79
-          ],
-          "speedScore": 25,
-          "latencyScore": 6.1,
-          "stabilityScore": 25,
-          "score": 56.1,
-          "latencyProbeError": ""
-        },
-        "remote": [
-          {
-            "ok": true,
-            "targetUrl": "https://www.gstatic.com/generate_204",
-            "latencyMs": 401,
-            "attempts": 1,
-            "error": ""
-          },
-          {
-            "ok": true,
-            "targetUrl": "https://www.google.com/generate_204",
-            "latencyMs": 455,
-            "attempts": 1,
-            "error": ""
-          },
-          {
-            "ok": true,
-            "targetUrl": "https://cp.cloudflare.com/generate_204",
-            "latencyMs": 417,
+            "latencyMs": 507,
             "attempts": 1,
             "error": ""
           }
@@ -3376,7 +3106,7 @@
         "linkFingerprint": "b1dc81c9289f",
         "ok": true,
         "protocol": "vless",
-        "stages": "TCP + Xray + 3/3 HTTPS + quality 3/3 probes passed (avg passing 906 KB/s)",
+        "stages": "TCP + Xray + 3/3 HTTPS + quality 3/3 probes passed (avg passing 2322.9 KB/s)",
         "reason": "",
         "quality": {
           "ok": true,
@@ -3388,36 +3118,36 @@
           "failedCount": 0,
           "bytes": 1048576,
           "httpCode": "200",
-          "kbps": 906,
+          "kbps": 2322.9,
           "probes": [
             {
               "probeIndex": 1,
               "ok": true,
-              "url": "https://speed.cloudflare.com/__down?bytes=1048576&hc_probe=1787052644099-2232-1-589h3jux1is",
+              "url": "https://speed.cloudflare.com/__down?bytes=1048576&hc_probe=1787052938294-2250-1-bwigrrh4h5q",
               "httpCode": 200,
               "bytes": 1048576,
-              "elapsedMs": 1134,
-              "kbps": 903.1,
+              "elapsedMs": 440,
+              "kbps": 2329.3,
               "error": ""
             },
             {
               "probeIndex": 2,
               "ok": true,
-              "url": "https://speed.cloudflare.com/__down?bytes=1048576&hc_probe=1787052650243-2232-2-09l57apd0mk5",
+              "url": "https://speed.cloudflare.com/__down?bytes=1048576&hc_probe=1787052943743-2250-2-p24zzyu2qj",
               "httpCode": 200,
               "bytes": 1048576,
-              "elapsedMs": 1140,
-              "kbps": 898.2,
+              "elapsedMs": 433,
+              "kbps": 2365.9,
               "error": ""
             },
             {
               "probeIndex": 3,
               "ok": true,
-              "url": "https://speed.cloudflare.com/__down?bytes=1048576&hc_probe=1787052656392-2232-3-l93x2b1rcz",
+              "url": "https://speed.cloudflare.com/__down?bytes=1048576&hc_probe=1787052949186-2250-3-xjboko55qs",
               "httpCode": 200,
               "bytes": 1048576,
-              "elapsedMs": 1117,
-              "kbps": 916.6,
+              "elapsedMs": 450,
+              "kbps": 2273.6,
               "error": ""
             }
           ],
@@ -3425,54 +3155,54 @@
         },
         "gaming": {
           "eligible": true,
-          "medianLatencyMs": 69,
-          "maxLatencyMs": 69,
-          "latencySpreadMs": 2,
-          "latencyStdDevMs": 0.9,
+          "medianLatencyMs": 7,
+          "maxLatencyMs": 8,
+          "latencySpreadMs": 1,
+          "latencyStdDevMs": 0.5,
           "latencySamples": [
-            67,
-            69,
-            69
+            7,
+            7,
+            8
           ],
           "speedScore": 25,
-          "latencyScore": 11.7,
+          "latencyScore": 46.1,
           "stabilityScore": 25,
-          "score": 61.7,
+          "score": 96.1,
           "latencyProbeError": ""
         },
         "remote": [
           {
             "ok": true,
             "targetUrl": "https://www.gstatic.com/generate_204",
-            "latencyMs": 638,
+            "latencyMs": 388,
             "attempts": 1,
             "error": ""
           },
           {
             "ok": true,
             "targetUrl": "https://www.google.com/generate_204",
-            "latencyMs": 607,
+            "latencyMs": 597,
             "attempts": 1,
             "error": ""
           },
           {
             "ok": true,
             "targetUrl": "https://cp.cloudflare.com/generate_204",
-            "latencyMs": 646,
+            "latencyMs": 1016,
             "attempts": 1,
             "error": ""
           }
         ]
       },
       {
-        "id": "keyline-regular-116",
-        "remarks": "🇩🇪 Germany",
-        "country": "Germany",
-        "source": "retained",
-        "linkFingerprint": "03a20399a407",
+        "id": "keyline-regular-440",
+        "remarks": "🇺🇸 United States",
+        "country": "United States",
+        "source": "Keyline URL 1",
+        "linkFingerprint": "39bea7005584",
         "ok": true,
-        "protocol": "vless",
-        "stages": "TCP + Xray + 3/3 HTTPS + quality 2/3 probes passed (avg passing 651.5 KB/s)",
+        "protocol": "trojan",
+        "stages": "TCP + Xray + 3/3 HTTPS + quality 3/3 probes passed (avg passing 1489.5 KB/s)",
         "reason": "",
         "quality": {
           "ok": true,
@@ -3480,40 +3210,136 @@
           "probeCount": 3,
           "requiredPasses": 2,
           "intervalMs": 5000,
-          "passedCount": 2,
-          "failedCount": 1,
+          "passedCount": 3,
+          "failedCount": 0,
           "bytes": 1048576,
           "httpCode": "200",
-          "kbps": 651.5,
+          "kbps": 1489.5,
           "probes": [
             {
               "probeIndex": 1,
-              "ok": false,
-              "url": "https://speed.cloudflare.com/__down?bytes=1048576&hc_probe=1787052644317-2232-1-vmzv43zgqh8",
+              "ok": true,
+              "url": "https://speed.cloudflare.com/__down?bytes=1048576&hc_probe=1787052937699-2250-1-4h9iapwfhlv",
               "httpCode": 200,
               "bytes": 1048576,
-              "elapsedMs": 1936,
-              "kbps": 529,
-              "error": "quality threshold failed: 1048576 bytes, 529 KB/s, HTTP 200"
+              "elapsedMs": 685,
+              "kbps": 1494,
+              "error": ""
             },
             {
               "probeIndex": 2,
               "ok": true,
-              "url": "https://speed.cloudflare.com/__down?bytes=1048576&hc_probe=1787052651261-2232-2-qruo5ktklhm",
+              "url": "https://speed.cloudflare.com/__down?bytes=1048576&hc_probe=1787052943394-2250-2-41azb77f3qz",
               "httpCode": 200,
               "bytes": 1048576,
-              "elapsedMs": 1560,
-              "kbps": 656.4,
+              "elapsedMs": 704,
+              "kbps": 1454.3,
               "error": ""
             },
             {
               "probeIndex": 3,
               "ok": true,
-              "url": "https://speed.cloudflare.com/__down?bytes=1048576&hc_probe=1787052657830-2232-3-qi7ndq3fjo",
+              "url": "https://speed.cloudflare.com/__down?bytes=1048576&hc_probe=1787052949106-2250-3-kzpjam9jmr",
               "httpCode": 200,
               "bytes": 1048576,
-              "elapsedMs": 1584,
-              "kbps": 646.6,
+              "elapsedMs": 674,
+              "kbps": 1520.1,
+              "error": ""
+            }
+          ],
+          "error": ""
+        },
+        "gaming": {
+          "eligible": true,
+          "medianLatencyMs": 60,
+          "maxLatencyMs": 60,
+          "latencySpreadMs": 0,
+          "latencyStdDevMs": 0,
+          "latencySamples": [
+            60,
+            60,
+            60
+          ],
+          "speedScore": 25,
+          "latencyScore": 16.7,
+          "stabilityScore": 25,
+          "score": 66.7,
+          "latencyProbeError": ""
+        },
+        "remote": [
+          {
+            "ok": true,
+            "targetUrl": "https://www.gstatic.com/generate_204",
+            "latencyMs": 380,
+            "attempts": 1,
+            "error": ""
+          },
+          {
+            "ok": true,
+            "targetUrl": "https://www.google.com/generate_204",
+            "latencyMs": 373,
+            "attempts": 1,
+            "error": ""
+          },
+          {
+            "ok": true,
+            "targetUrl": "https://cp.cloudflare.com/generate_204",
+            "latencyMs": 363,
+            "attempts": 1,
+            "error": ""
+          }
+        ]
+      },
+      {
+        "id": "keyline-regular-213",
+        "remarks": "🇳🇱 Netherlands",
+        "country": "Netherlands",
+        "source": "Keyline URL 2",
+        "linkFingerprint": "59cc0769d43e",
+        "ok": true,
+        "protocol": "vless",
+        "stages": "TCP + Xray + 3/3 HTTPS + quality 3/3 probes passed (avg passing 1878.7 KB/s)",
+        "reason": "",
+        "quality": {
+          "ok": true,
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
+          "probeCount": 3,
+          "requiredPasses": 2,
+          "intervalMs": 5000,
+          "passedCount": 3,
+          "failedCount": 0,
+          "bytes": 1048576,
+          "httpCode": "200",
+          "kbps": 1878.7,
+          "probes": [
+            {
+              "probeIndex": 1,
+              "ok": true,
+              "url": "https://speed.cloudflare.com/__down?bytes=1048576&hc_probe=1787052937887-2250-1-1ea5eu9c6fv",
+              "httpCode": 200,
+              "bytes": 1048576,
+              "elapsedMs": 1091,
+              "kbps": 938.3,
+              "error": ""
+            },
+            {
+              "probeIndex": 2,
+              "ok": true,
+              "url": "https://speed.cloudflare.com/__down?bytes=1048576&hc_probe=1787052943989-2250-2-3iha0nht56h",
+              "httpCode": 200,
+              "bytes": 1048576,
+              "elapsedMs": 381,
+              "kbps": 2686.7,
+              "error": ""
+            },
+            {
+              "probeIndex": 3,
+              "ok": true,
+              "url": "https://speed.cloudflare.com/__down?bytes=1048576&hc_probe=1787052949379-2250-3-kfur5l9qjtr",
+              "httpCode": 200,
+              "bytes": 1048576,
+              "elapsedMs": 509,
+              "kbps": 2011.1,
               "error": ""
             }
           ],
@@ -3521,14 +3347,14 @@
         },
         "gaming": {
           "eligible": false,
-          "medianLatencyMs": 158,
-          "maxLatencyMs": 161,
-          "latencySpreadMs": 6,
-          "latencyStdDevMs": 2.4,
+          "medianLatencyMs": 90,
+          "maxLatencyMs": 96,
+          "latencySpreadMs": 7,
+          "latencyStdDevMs": 3.1,
           "latencySamples": [
-            155,
-            158,
-            161
+            89,
+            90,
+            96
           ],
           "speedScore": 25,
           "latencyScore": 0,
@@ -3540,21 +3366,117 @@
           {
             "ok": true,
             "targetUrl": "https://www.gstatic.com/generate_204",
-            "latencyMs": 749,
+            "latencyMs": 429,
             "attempts": 1,
             "error": ""
           },
           {
             "ok": true,
             "targetUrl": "https://www.google.com/generate_204",
-            "latencyMs": 717,
+            "latencyMs": 458,
             "attempts": 1,
             "error": ""
           },
           {
             "ok": true,
             "targetUrl": "https://cp.cloudflare.com/generate_204",
-            "latencyMs": 747,
+            "latencyMs": 503,
+            "attempts": 1,
+            "error": ""
+          }
+        ]
+      },
+      {
+        "id": "keyline-regular-441",
+        "remarks": "🇺🇸 United States",
+        "country": "United States",
+        "source": "Keyline URL 1",
+        "linkFingerprint": "5b5799678533",
+        "ok": true,
+        "protocol": "trojan",
+        "stages": "TCP + Xray + 3/3 HTTPS + quality 3/3 probes passed (avg passing 1352.1 KB/s)",
+        "reason": "",
+        "quality": {
+          "ok": true,
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
+          "probeCount": 3,
+          "requiredPasses": 2,
+          "intervalMs": 5000,
+          "passedCount": 3,
+          "failedCount": 0,
+          "bytes": 1048576,
+          "httpCode": "200",
+          "kbps": 1352.1,
+          "probes": [
+            {
+              "probeIndex": 1,
+              "ok": true,
+              "url": "https://speed.cloudflare.com/__down?bytes=1048576&hc_probe=1787052937753-2250-1-j319y0z7d9c",
+              "httpCode": 200,
+              "bytes": 1048576,
+              "elapsedMs": 754,
+              "kbps": 1358.5,
+              "error": ""
+            },
+            {
+              "probeIndex": 2,
+              "ok": true,
+              "url": "https://speed.cloudflare.com/__down?bytes=1048576&hc_probe=1787052943516-2250-2-8chb4okoqol",
+              "httpCode": 200,
+              "bytes": 1048576,
+              "elapsedMs": 782,
+              "kbps": 1308.9,
+              "error": ""
+            },
+            {
+              "probeIndex": 3,
+              "ok": true,
+              "url": "https://speed.cloudflare.com/__down?bytes=1048576&hc_probe=1787052949307-2250-3-m9dhcsqi2ss",
+              "httpCode": 200,
+              "bytes": 1048576,
+              "elapsedMs": 737,
+              "kbps": 1389,
+              "error": ""
+            }
+          ],
+          "error": ""
+        },
+        "gaming": {
+          "eligible": true,
+          "medianLatencyMs": 69,
+          "maxLatencyMs": 73,
+          "latencySpreadMs": 8,
+          "latencyStdDevMs": 3.3,
+          "latencySamples": [
+            69,
+            73,
+            65
+          ],
+          "speedScore": 25,
+          "latencyScore": 11.7,
+          "stabilityScore": 25,
+          "score": 61.7,
+          "latencyProbeError": ""
+        },
+        "remote": [
+          {
+            "ok": true,
+            "targetUrl": "https://www.gstatic.com/generate_204",
+            "latencyMs": 400,
+            "attempts": 1,
+            "error": ""
+          },
+          {
+            "ok": true,
+            "targetUrl": "https://www.google.com/generate_204",
+            "latencyMs": 407,
+            "attempts": 1,
+            "error": ""
+          },
+          {
+            "ok": true,
+            "targetUrl": "https://cp.cloudflare.com/generate_204",
+            "latencyMs": 395,
             "attempts": 1,
             "error": ""
           }
@@ -3568,7 +3490,7 @@
         "linkFingerprint": "893cbb28f2a8",
         "ok": true,
         "protocol": "vless",
-        "stages": "TCP + Xray + 3/3 HTTPS + quality 3/3 probes passed (avg passing 1126.3 KB/s)",
+        "stages": "TCP + Xray + 3/3 HTTPS + quality 2/3 probes passed (avg passing 767.3 KB/s)",
         "reason": "",
         "quality": {
           "ok": true,
@@ -3576,40 +3498,40 @@
           "probeCount": 3,
           "requiredPasses": 2,
           "intervalMs": 5000,
-          "passedCount": 3,
-          "failedCount": 0,
+          "passedCount": 2,
+          "failedCount": 1,
           "bytes": 1048576,
           "httpCode": "200",
-          "kbps": 1126.3,
+          "kbps": 767.3,
           "probes": [
             {
               "probeIndex": 1,
-              "ok": true,
-              "url": "https://speed.cloudflare.com/__down?bytes=1048576&hc_probe=1787052650324-2232-1-012i6udjq90kg",
+              "ok": false,
+              "url": "https://speed.cloudflare.com/__down?bytes=1048576&hc_probe=1787052938364-2250-1-uzibjf52t68",
               "httpCode": 200,
               "bytes": 1048576,
-              "elapsedMs": 1581,
-              "kbps": 647.8,
-              "error": ""
+              "elapsedMs": 1650,
+              "kbps": 620.7,
+              "error": "quality threshold failed: 1048576 bytes, 620.7 KB/s, HTTP 200"
             },
             {
               "probeIndex": 2,
               "ok": true,
-              "url": "https://speed.cloudflare.com/__down?bytes=1048576&hc_probe=1787052656913-2232-2-qdl3k5dlrl",
+              "url": "https://speed.cloudflare.com/__down?bytes=1048576&hc_probe=1787052945023-2250-2-qk9fy15062",
               "httpCode": 200,
               "bytes": 1048576,
-              "elapsedMs": 865,
-              "kbps": 1184.5,
+              "elapsedMs": 1417,
+              "kbps": 722.9,
               "error": ""
             },
             {
               "probeIndex": 3,
               "ok": true,
-              "url": "https://speed.cloudflare.com/__down?bytes=1048576&hc_probe=1787052662789-2232-3-t2zt6zjzhfo",
+              "url": "https://speed.cloudflare.com/__down?bytes=1048576&hc_probe=1787052951449-2250-3-yqtxe15oew",
               "httpCode": 200,
               "bytes": 1048576,
-              "elapsedMs": 662,
-              "kbps": 1546.7,
+              "elapsedMs": 1262,
+              "kbps": 811.6,
               "error": ""
             }
           ],
@@ -3617,14 +3539,14 @@
         },
         "gaming": {
           "eligible": false,
-          "medianLatencyMs": 165,
-          "maxLatencyMs": 175,
+          "medianLatencyMs": 109,
+          "maxLatencyMs": 120,
           "latencySpreadMs": 14,
-          "latencyStdDevMs": 5.9,
+          "latencyStdDevMs": 6,
           "latencySamples": [
-            161,
-            175,
-            165
+            106,
+            109,
+            120
           ],
           "speedScore": 25,
           "latencyScore": 0,
@@ -3636,213 +3558,21 @@
           {
             "ok": true,
             "targetUrl": "https://www.gstatic.com/generate_204",
-            "latencyMs": 2483,
-            "attempts": 2,
-            "error": ""
-          },
-          {
-            "ok": true,
-            "targetUrl": "https://www.google.com/generate_204",
-            "latencyMs": 2490,
-            "attempts": 2,
-            "error": ""
-          },
-          {
-            "ok": true,
-            "targetUrl": "https://cp.cloudflare.com/generate_204",
-            "latencyMs": 2444,
-            "attempts": 2,
-            "error": ""
-          }
-        ]
-      },
-      {
-        "id": "keyline-regular-213",
-        "remarks": "🇳🇱 Netherlands",
-        "country": "Netherlands",
-        "source": "Keyline URL 2",
-        "linkFingerprint": "59cc0769d43e",
-        "ok": true,
-        "protocol": "vless",
-        "stages": "TCP + Xray + 3/3 HTTPS + quality 2/3 probes passed (avg passing 1186.6 KB/s)",
-        "reason": "",
-        "quality": {
-          "ok": true,
-          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
-          "probeCount": 3,
-          "requiredPasses": 2,
-          "intervalMs": 5000,
-          "passedCount": 2,
-          "failedCount": 1,
-          "bytes": 1048576,
-          "httpCode": "200",
-          "kbps": 1186.6,
-          "probes": [
-            {
-              "probeIndex": 1,
-              "ok": false,
-              "url": "https://speed.cloudflare.com/__down?bytes=1048576&hc_probe=1787052655810-2232-1-6ydjj64vjcp",
-              "httpCode": 200,
-              "bytes": 1048576,
-              "elapsedMs": 1711,
-              "kbps": 598.4,
-              "error": "quality threshold failed: 1048576 bytes, 598.4 KB/s, HTTP 200"
-            },
-            {
-              "probeIndex": 2,
-              "ok": true,
-              "url": "https://speed.cloudflare.com/__down?bytes=1048576&hc_probe=1787052662530-2232-2-9otdoyq2n5a",
-              "httpCode": 200,
-              "bytes": 1048576,
-              "elapsedMs": 1408,
-              "kbps": 727.2,
-              "error": ""
-            },
-            {
-              "probeIndex": 3,
-              "ok": true,
-              "url": "https://speed.cloudflare.com/__down?bytes=1048576&hc_probe=1787052668948-2232-3-dup7sk4dfoe",
-              "httpCode": 200,
-              "bytes": 1048576,
-              "elapsedMs": 622,
-              "kbps": 1646,
-              "error": ""
-            }
-          ],
-          "error": ""
-        },
-        "gaming": {
-          "eligible": false,
-          "medianLatencyMs": 148,
-          "maxLatencyMs": 160,
-          "latencySpreadMs": 16,
-          "latencyStdDevMs": 6.8,
-          "latencySamples": [
-            160,
-            148,
-            144
-          ],
-          "speedScore": 25,
-          "latencyScore": 0,
-          "stabilityScore": 25,
-          "score": 50,
-          "latencyProbeError": ""
-        },
-        "remote": [
-          {
-            "ok": true,
-            "targetUrl": "https://www.gstatic.com/generate_204",
-            "latencyMs": 694,
+            "latencyMs": 935,
             "attempts": 1,
             "error": ""
           },
           {
             "ok": true,
             "targetUrl": "https://www.google.com/generate_204",
-            "latencyMs": 685,
+            "latencyMs": 928,
             "attempts": 1,
             "error": ""
           },
           {
             "ok": true,
             "targetUrl": "https://cp.cloudflare.com/generate_204",
-            "latencyMs": 755,
-            "attempts": 1,
-            "error": ""
-          }
-        ]
-      },
-      {
-        "id": "keyline-regular-117",
-        "remarks": "🇩🇪 Germany",
-        "country": "Germany",
-        "source": "retained",
-        "linkFingerprint": "3754410df75b",
-        "ok": true,
-        "protocol": "vless",
-        "stages": "TCP + Xray + 3/3 HTTPS + quality 2/3 probes passed (avg passing 664.2 KB/s)",
-        "reason": "",
-        "quality": {
-          "ok": true,
-          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
-          "probeCount": 3,
-          "requiredPasses": 2,
-          "intervalMs": 5000,
-          "passedCount": 2,
-          "failedCount": 1,
-          "bytes": 1048576,
-          "httpCode": "200",
-          "kbps": 664.2,
-          "probes": [
-            {
-              "probeIndex": 1,
-              "ok": false,
-              "url": "https://speed.cloudflare.com/__down?bytes=1048576&hc_probe=1787052655819-2232-1-olcrkzwiivp",
-              "httpCode": 200,
-              "bytes": 1048576,
-              "elapsedMs": 1968,
-              "kbps": 520.4,
-              "error": "quality threshold failed: 1048576 bytes, 520.4 KB/s, HTTP 200"
-            },
-            {
-              "probeIndex": 2,
-              "ok": true,
-              "url": "https://speed.cloudflare.com/__down?bytes=1048576&hc_probe=1787052662794-2232-2-y1i1fyykkxg",
-              "httpCode": 200,
-              "bytes": 1048576,
-              "elapsedMs": 1546,
-              "kbps": 662.2,
-              "error": ""
-            },
-            {
-              "probeIndex": 3,
-              "ok": true,
-              "url": "https://speed.cloudflare.com/__down?bytes=1048576&hc_probe=1787052669349-2232-3-0ji6ukyd0lwg",
-              "httpCode": 200,
-              "bytes": 1048576,
-              "elapsedMs": 1537,
-              "kbps": 666.1,
-              "error": ""
-            }
-          ],
-          "error": ""
-        },
-        "gaming": {
-          "eligible": false,
-          "medianLatencyMs": 189,
-          "maxLatencyMs": 234,
-          "latencySpreadMs": 76,
-          "latencyStdDevMs": 31.2,
-          "latencySamples": [
-            158,
-            234,
-            189
-          ],
-          "speedScore": 25,
-          "latencyScore": 0,
-          "stabilityScore": 25,
-          "score": 50,
-          "latencyProbeError": ""
-        },
-        "remote": [
-          {
-            "ok": true,
-            "targetUrl": "https://www.gstatic.com/generate_204",
-            "latencyMs": 768,
-            "attempts": 1,
-            "error": ""
-          },
-          {
-            "ok": true,
-            "targetUrl": "https://www.google.com/generate_204",
-            "latencyMs": 777,
-            "attempts": 1,
-            "error": ""
-          },
-          {
-            "ok": true,
-            "targetUrl": "https://cp.cloudflare.com/generate_204",
-            "latencyMs": 774,
+            "latencyMs": 924,
             "attempts": 1,
             "error": ""
           }
@@ -3856,7 +3586,7 @@
         "linkFingerprint": "85d257ca1095",
         "ok": true,
         "protocol": "vless",
-        "stages": "TCP + Xray + 3/3 HTTPS + quality 2/3 probes passed (avg passing 976 KB/s)",
+        "stages": "TCP + Xray + 3/3 HTTPS + quality 3/3 probes passed (avg passing 1010.7 KB/s)",
         "reason": "",
         "quality": {
           "ok": true,
@@ -3864,40 +3594,40 @@
           "probeCount": 3,
           "requiredPasses": 2,
           "intervalMs": 5000,
-          "passedCount": 2,
-          "failedCount": 1,
+          "passedCount": 3,
+          "failedCount": 0,
           "bytes": 1048576,
           "httpCode": "200",
-          "kbps": 976,
+          "kbps": 1010.7,
           "probes": [
             {
               "probeIndex": 1,
-              "ok": false,
-              "url": "https://speed.cloudflare.com/__down?bytes=1048576&hc_probe=1787052657738-2232-1-xne7a6l3v0j",
+              "ok": true,
+              "url": "https://speed.cloudflare.com/__down?bytes=1048576&hc_probe=1787052940320-2250-1-4wdbqkqqbk2",
               "httpCode": 200,
               "bytes": 1048576,
-              "elapsedMs": 1746,
-              "kbps": 586.6,
-              "error": "quality threshold failed: 1048576 bytes, 586.6 KB/s, HTTP 200"
+              "elapsedMs": 1103,
+              "kbps": 928.5,
+              "error": ""
             },
             {
               "probeIndex": 2,
               "ok": true,
-              "url": "https://speed.cloudflare.com/__down?bytes=1048576&hc_probe=1787052664493-2232-2-w3xofl5501",
+              "url": "https://speed.cloudflare.com/__down?bytes=1048576&hc_probe=1787052946433-2250-2-d5r1ov4u8sk",
               "httpCode": 200,
               "bytes": 1048576,
-              "elapsedMs": 1428,
-              "kbps": 717.2,
+              "elapsedMs": 932,
+              "kbps": 1098.8,
               "error": ""
             },
             {
               "probeIndex": 3,
               "ok": true,
-              "url": "https://speed.cloudflare.com/__down?bytes=1048576&hc_probe=1787052670930-2232-3-8vfmsshrmtg",
+              "url": "https://speed.cloudflare.com/__down?bytes=1048576&hc_probe=1787052952374-2250-3-mvmq6yo1l5",
               "httpCode": 200,
               "bytes": 1048576,
-              "elapsedMs": 829,
-              "kbps": 1234.7,
+              "elapsedMs": 1019,
+              "kbps": 1004.8,
               "error": ""
             }
           ],
@@ -3905,14 +3635,14 @@
         },
         "gaming": {
           "eligible": false,
-          "medianLatencyMs": 149,
-          "maxLatencyMs": 151,
-          "latencySpreadMs": 7,
-          "latencyStdDevMs": 2.9,
+          "medianLatencyMs": 91,
+          "maxLatencyMs": 93,
+          "latencySpreadMs": 6,
+          "latencyStdDevMs": 2.5,
           "latencySamples": [
-            151,
-            144,
-            149
+            93,
+            91,
+            87
           ],
           "speedScore": 25,
           "latencyScore": 0,
@@ -3924,21 +3654,21 @@
           {
             "ok": true,
             "targetUrl": "https://www.gstatic.com/generate_204",
-            "latencyMs": 723,
+            "latencyMs": 422,
             "attempts": 1,
             "error": ""
           },
           {
             "ok": true,
             "targetUrl": "https://www.google.com/generate_204",
-            "latencyMs": 640,
+            "latencyMs": 444,
             "attempts": 1,
             "error": ""
           },
           {
             "ok": true,
             "targetUrl": "https://cp.cloudflare.com/generate_204",
-            "latencyMs": 664,
+            "latencyMs": 441,
             "attempts": 1,
             "error": ""
           }
@@ -3952,7 +3682,7 @@
         "linkFingerprint": "dfa217f58219",
         "ok": true,
         "protocol": "vless",
-        "stages": "TCP + Xray + 3/3 HTTPS + quality 2/3 probes passed (avg passing 668.3 KB/s)",
+        "stages": "TCP + Xray + 3/3 HTTPS + quality 3/3 probes passed (avg passing 1048 KB/s)",
         "reason": "",
         "quality": {
           "ok": true,
@@ -3960,40 +3690,40 @@
           "probeCount": 3,
           "requiredPasses": 2,
           "intervalMs": 5000,
-          "passedCount": 2,
-          "failedCount": 1,
+          "passedCount": 3,
+          "failedCount": 0,
           "bytes": 1048576,
           "httpCode": "200",
-          "kbps": 668.3,
+          "kbps": 1048,
           "probes": [
             {
               "probeIndex": 1,
-              "ok": false,
-              "url": "https://speed.cloudflare.com/__down?bytes=1048576&hc_probe=1787052659155-2232-1-c5l57jg50up",
+              "ok": true,
+              "url": "https://speed.cloudflare.com/__down?bytes=1048576&hc_probe=1787052950377-2250-1-3bpq0c6u92w",
               "httpCode": 200,
               "bytes": 1048576,
-              "elapsedMs": 1794,
-              "kbps": 570.7,
-              "error": "quality threshold failed: 1048576 bytes, 570.7 KB/s, HTTP 200"
+              "elapsedMs": 1103,
+              "kbps": 928.5,
+              "error": ""
             },
             {
               "probeIndex": 2,
               "ok": true,
-              "url": "https://speed.cloudflare.com/__down?bytes=1048576&hc_probe=1787052665958-2232-2-tik7pbb4k9",
+              "url": "https://speed.cloudflare.com/__down?bytes=1048576&hc_probe=1787052956490-2250-2-pavlfom15xb",
               "httpCode": 200,
               "bytes": 1048576,
-              "elapsedMs": 1537,
-              "kbps": 666.2,
+              "elapsedMs": 957,
+              "kbps": 1069.9,
               "error": ""
             },
             {
               "probeIndex": 3,
               "ok": true,
-              "url": "https://speed.cloudflare.com/__down?bytes=1048576&hc_probe=1787052672505-2232-3-vr12z0fa0un",
+              "url": "https://speed.cloudflare.com/__down?bytes=1048576&hc_probe=1787052962457-2250-3-72pouxif1i5",
               "httpCode": 200,
               "bytes": 1048576,
-              "elapsedMs": 1527,
-              "kbps": 670.4,
+              "elapsedMs": 894,
+              "kbps": 1145.5,
               "error": ""
             }
           ],
@@ -4001,14 +3731,14 @@
         },
         "gaming": {
           "eligible": false,
-          "medianLatencyMs": 161,
-          "maxLatencyMs": 172,
-          "latencySpreadMs": 13,
-          "latencyStdDevMs": 5.7,
+          "medianLatencyMs": 105,
+          "maxLatencyMs": 106,
+          "latencySpreadMs": 3,
+          "latencyStdDevMs": 1.2,
           "latencySamples": [
-            172,
-            159,
-            161
+            106,
+            105,
+            103
           ],
           "speedScore": 25,
           "latencyScore": 0,
@@ -4020,21 +3750,21 @@
           {
             "ok": true,
             "targetUrl": "https://www.gstatic.com/generate_204",
-            "latencyMs": 1136,
+            "latencyMs": 755,
             "attempts": 1,
             "error": ""
           },
           {
             "ok": true,
             "targetUrl": "https://www.google.com/generate_204",
-            "latencyMs": 1019,
+            "latencyMs": 708,
             "attempts": 1,
             "error": ""
           },
           {
             "ok": true,
             "targetUrl": "https://cp.cloudflare.com/generate_204",
-            "latencyMs": 961,
+            "latencyMs": 672,
             "attempts": 1,
             "error": ""
           }
@@ -4048,7 +3778,7 @@
         "linkFingerprint": "d456ba2a4150",
         "ok": true,
         "protocol": "vless",
-        "stages": "TCP + Xray + 3/3 HTTPS + quality 2/3 probes passed (avg passing 663.4 KB/s)",
+        "stages": "TCP + Xray + 3/3 HTTPS + quality 3/3 probes passed (avg passing 1021 KB/s)",
         "reason": "",
         "quality": {
           "ok": true,
@@ -4056,40 +3786,40 @@
           "probeCount": 3,
           "requiredPasses": 2,
           "intervalMs": 5000,
-          "passedCount": 2,
-          "failedCount": 1,
+          "passedCount": 3,
+          "failedCount": 0,
           "bytes": 1048576,
           "httpCode": "200",
-          "kbps": 663.4,
+          "kbps": 1021,
           "probes": [
             {
               "probeIndex": 1,
-              "ok": false,
-              "url": "https://speed.cloudflare.com/__down?bytes=1048576&hc_probe=1787052658848-2232-1-1ismrkxh00o",
+              "ok": true,
+              "url": "https://speed.cloudflare.com/__down?bytes=1048576&hc_probe=1787052950682-2250-1-uiv6bgv1rw",
               "httpCode": 200,
               "bytes": 1048576,
-              "elapsedMs": 1928,
-              "kbps": 531.1,
-              "error": "quality threshold failed: 1048576 bytes, 531.1 KB/s, HTTP 200"
+              "elapsedMs": 1046,
+              "kbps": 978.5,
+              "error": ""
             },
             {
               "probeIndex": 2,
               "ok": true,
-              "url": "https://speed.cloudflare.com/__down?bytes=1048576&hc_probe=1787052665786-2232-2-lcogp9qckbo",
+              "url": "https://speed.cloudflare.com/__down?bytes=1048576&hc_probe=1787052956739-2250-2-ijcverda5o",
               "httpCode": 200,
               "bytes": 1048576,
-              "elapsedMs": 1542,
-              "kbps": 663.9,
+              "elapsedMs": 934,
+              "kbps": 1096.8,
               "error": ""
             },
             {
               "probeIndex": 3,
               "ok": true,
-              "url": "https://speed.cloudflare.com/__down?bytes=1048576&hc_probe=1787052672338-2232-3-0ilon2wyqibp",
+              "url": "https://speed.cloudflare.com/__down?bytes=1048576&hc_probe=1787052962682-2250-3-gqw3hhmcnsn",
               "httpCode": 200,
               "bytes": 1048576,
-              "elapsedMs": 1545,
-              "kbps": 662.9,
+              "elapsedMs": 1037,
+              "kbps": 987.7,
               "error": ""
             }
           ],
@@ -4097,14 +3827,14 @@
         },
         "gaming": {
           "eligible": false,
-          "medianLatencyMs": 247,
-          "maxLatencyMs": 372,
-          "latencySpreadMs": 132,
-          "latencyStdDevMs": 60.6,
+          "medianLatencyMs": 135,
+          "maxLatencyMs": 336,
+          "latencySpreadMs": 232,
+          "latencyStdDevMs": 102.8,
           "latencySamples": [
-            247,
-            240,
-            372
+            104,
+            135,
+            336
           ],
           "speedScore": 25,
           "latencyScore": 0,
@@ -4116,21 +3846,213 @@
           {
             "ok": true,
             "targetUrl": "https://www.gstatic.com/generate_204",
-            "latencyMs": 1430,
+            "latencyMs": 757,
             "attempts": 1,
             "error": ""
           },
           {
             "ok": true,
             "targetUrl": "https://www.google.com/generate_204",
-            "latencyMs": 1281,
+            "latencyMs": 717,
             "attempts": 1,
             "error": ""
           },
           {
             "ok": true,
             "targetUrl": "https://cp.cloudflare.com/generate_204",
-            "latencyMs": 1245,
+            "latencyMs": 674,
+            "attempts": 1,
+            "error": ""
+          }
+        ]
+      },
+      {
+        "id": "keyline-regular-117",
+        "remarks": "🇩🇪 Germany",
+        "country": "Germany",
+        "source": "retained",
+        "linkFingerprint": "3754410df75b",
+        "ok": true,
+        "protocol": "vless",
+        "stages": "TCP + Xray + 3/3 HTTPS + quality 3/3 probes passed (avg passing 957.9 KB/s)",
+        "reason": "",
+        "quality": {
+          "ok": true,
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
+          "probeCount": 3,
+          "requiredPasses": 2,
+          "intervalMs": 5000,
+          "passedCount": 3,
+          "failedCount": 0,
+          "bytes": 1048576,
+          "httpCode": "200",
+          "kbps": 957.9,
+          "probes": [
+            {
+              "probeIndex": 1,
+              "ok": true,
+              "url": "https://speed.cloudflare.com/__down?bytes=1048576&hc_probe=1787052950876-2250-1-wkerz7cz5vg",
+              "httpCode": 200,
+              "bytes": 1048576,
+              "elapsedMs": 1283,
+              "kbps": 798.1,
+              "error": ""
+            },
+            {
+              "probeIndex": 2,
+              "ok": true,
+              "url": "https://speed.cloudflare.com/__down?bytes=1048576&hc_probe=1787052957168-2250-2-rldtg4lz5pa",
+              "httpCode": 200,
+              "bytes": 1048576,
+              "elapsedMs": 1020,
+              "kbps": 1003.6,
+              "error": ""
+            },
+            {
+              "probeIndex": 3,
+              "ok": true,
+              "url": "https://speed.cloudflare.com/__down?bytes=1048576&hc_probe=1787052963197-2250-3-ojpsqkanae",
+              "httpCode": 200,
+              "bytes": 1048576,
+              "elapsedMs": 955,
+              "kbps": 1072.1,
+              "error": ""
+            }
+          ],
+          "error": ""
+        },
+        "gaming": {
+          "eligible": false,
+          "medianLatencyMs": 112,
+          "maxLatencyMs": 115,
+          "latencySpreadMs": 7,
+          "latencyStdDevMs": 2.9,
+          "latencySamples": [
+            115,
+            112,
+            108
+          ],
+          "speedScore": 25,
+          "latencyScore": 0,
+          "stabilityScore": 25,
+          "score": 50,
+          "latencyProbeError": ""
+        },
+        "remote": [
+          {
+            "ok": true,
+            "targetUrl": "https://www.gstatic.com/generate_204",
+            "latencyMs": 494,
+            "attempts": 1,
+            "error": ""
+          },
+          {
+            "ok": true,
+            "targetUrl": "https://www.google.com/generate_204",
+            "latencyMs": 477,
+            "attempts": 1,
+            "error": ""
+          },
+          {
+            "ok": true,
+            "targetUrl": "https://cp.cloudflare.com/generate_204",
+            "latencyMs": 490,
+            "attempts": 1,
+            "error": ""
+          }
+        ]
+      },
+      {
+        "id": "keyline-regular-116",
+        "remarks": "🇩🇪 Germany",
+        "country": "Germany",
+        "source": "retained",
+        "linkFingerprint": "03a20399a407",
+        "ok": true,
+        "protocol": "vless",
+        "stages": "TCP + Xray + 3/3 HTTPS + quality 3/3 probes passed (avg passing 978.7 KB/s)",
+        "reason": "",
+        "quality": {
+          "ok": true,
+          "url": "https://speed.cloudflare.com/__down?bytes=1048576",
+          "probeCount": 3,
+          "requiredPasses": 2,
+          "intervalMs": 5000,
+          "passedCount": 3,
+          "failedCount": 0,
+          "bytes": 1048576,
+          "httpCode": "200",
+          "kbps": 978.7,
+          "probes": [
+            {
+              "probeIndex": 1,
+              "ok": true,
+              "url": "https://speed.cloudflare.com/__down?bytes=1048576&hc_probe=1787052951182-2250-1-0czynbltojd",
+              "httpCode": 200,
+              "bytes": 1048576,
+              "elapsedMs": 1263,
+              "kbps": 810.9,
+              "error": ""
+            },
+            {
+              "probeIndex": 2,
+              "ok": true,
+              "url": "https://speed.cloudflare.com/__down?bytes=1048576&hc_probe=1787052957453-2250-2-cinay4u68l",
+              "httpCode": 200,
+              "bytes": 1048576,
+              "elapsedMs": 970,
+              "kbps": 1055.7,
+              "error": ""
+            },
+            {
+              "probeIndex": 3,
+              "ok": true,
+              "url": "https://speed.cloudflare.com/__down?bytes=1048576&hc_probe=1787052963432-2250-3-8paabf1fsmw",
+              "httpCode": 200,
+              "bytes": 1048576,
+              "elapsedMs": 957,
+              "kbps": 1069.6,
+              "error": ""
+            }
+          ],
+          "error": ""
+        },
+        "gaming": {
+          "eligible": false,
+          "medianLatencyMs": 103,
+          "maxLatencyMs": 103,
+          "latencySpreadMs": 6,
+          "latencyStdDevMs": 2.8,
+          "latencySamples": [
+            103,
+            103,
+            97
+          ],
+          "speedScore": 25,
+          "latencyScore": 0,
+          "stabilityScore": 25,
+          "score": 50,
+          "latencyProbeError": ""
+        },
+        "remote": [
+          {
+            "ok": true,
+            "targetUrl": "https://www.gstatic.com/generate_204",
+            "latencyMs": 505,
+            "attempts": 1,
+            "error": ""
+          },
+          {
+            "ok": true,
+            "targetUrl": "https://www.google.com/generate_204",
+            "latencyMs": 452,
+            "attempts": 1,
+            "error": ""
+          },
+          {
+            "ok": true,
+            "targetUrl": "https://cp.cloudflare.com/generate_204",
+            "latencyMs": 449,
             "attempts": 1,
             "error": ""
           }
@@ -4138,143 +4060,147 @@
       }
     ]
   },
-  "finalManagedServers": 13,
+  "finalManagedServers": 12,
   "stageComparison": {
     "candidatesBeforeHealthCheck": 450,
     "checked": 13,
-    "healthPassed": 13,
-    "healthFailed": 0,
-    "finalManagedServers": 13,
-    "removedByHealthCheck": [],
+    "healthPassed": 12,
+    "healthFailed": 1,
+    "finalManagedServers": 12,
+    "removedByHealthCheck": [
+      {
+        "id": "keyline-regular-137",
+        "remarks": "🇮🇳 India",
+        "country": "India",
+        "source": "Keyline URL 3",
+        "linkFingerprint": "8dedfd2ca9f9",
+        "ok": false,
+        "protocol": "",
+        "stages": "",
+        "reason": "TCP unreachable",
+        "quality": null,
+        "gaming": null,
+        "remote": []
+      }
+    ],
     "finalLinkFingerprints": [
-      "5b5799678533",
-      "39bea7005584",
+      "c4669373e9b6",
       "e2cc202d75a1",
       "b1dc81c9289f",
-      "8dedfd2ca9f9",
-      "c4669373e9b6",
-      "893cbb28f2a8",
+      "39bea7005584",
+      "5b5799678533",
       "59cc0769d43e",
       "85d257ca1095",
       "dfa217f58219",
       "d456ba2a4150",
+      "03a20399a407",
       "3754410df75b",
-      "03a20399a407"
+      "893cbb28f2a8"
     ],
     "maxVisibleCountries": 20,
     "countryPoolSize": 4,
     "selectedCountries": [
       {
-        "country": "United States",
-        "members": [
-          {
-            "id": "keyline-regular-441",
-            "kbps": 6155.4
-          },
-          {
-            "id": "keyline-regular-440",
-            "kbps": 5535.3
-          },
-          {
-            "id": "keyline-regular-430",
-            "kbps": 1006.2
-          },
-          {
-            "id": "keyline-regular-438",
-            "kbps": 906
-          }
-        ],
-        "score": 4280.4
-      },
-      {
-        "country": "India",
-        "members": [
-          {
-            "id": "keyline-regular-137",
-            "kbps": 1471.8
-          }
-        ],
-        "score": 1471.8
-      },
-      {
         "country": "France",
         "members": [
           {
             "id": "keyline-regular-78",
-            "kbps": 1290.5
+            "kbps": 2529.2
           }
         ],
-        "score": 1290.5
+        "score": 2529.2
       },
       {
-        "country": "Finland",
+        "country": "United States",
         "members": [
           {
-            "id": "keyline-regular-72",
-            "kbps": 1126.3
+            "id": "keyline-regular-430",
+            "kbps": 2487
+          },
+          {
+            "id": "keyline-regular-438",
+            "kbps": 2322.9
+          },
+          {
+            "id": "keyline-regular-440",
+            "kbps": 1489.5
+          },
+          {
+            "id": "keyline-regular-441",
+            "kbps": 1352.1
           }
         ],
-        "score": 1126.3
+        "score": 2109.5
       },
       {
         "country": "Netherlands",
         "members": [
           {
             "id": "keyline-regular-213",
-            "kbps": 1186.6
+            "kbps": 1878.7
           },
           {
             "id": "keyline-regular-211",
-            "kbps": 976
+            "kbps": 1010.7
           }
         ],
-        "score": 1118.2
+        "score": 1596.6
       },
       {
         "country": "Poland",
         "members": [
           {
             "id": "keyline-regular-242",
-            "kbps": 668.3
+            "kbps": 1048
           },
           {
             "id": "keyline-regular-230",
-            "kbps": 663.4
+            "kbps": 1021
           }
         ],
-        "score": 666.7
+        "score": 1039.2
       },
       {
         "country": "Germany",
         "members": [
           {
-            "id": "keyline-regular-117",
-            "kbps": 664.2
+            "id": "keyline-regular-116",
+            "kbps": 978.7
           },
           {
-            "id": "keyline-regular-116",
-            "kbps": 651.5
+            "id": "keyline-regular-117",
+            "kbps": 957.9
           }
         ],
-        "score": 660.1
+        "score": 971.9
+      },
+      {
+        "country": "Finland",
+        "members": [
+          {
+            "id": "keyline-regular-72",
+            "kbps": 767.3
+          }
+        ],
+        "score": 767.3
       }
     ],
     "gaming": []
   },
   "healthCheckBySource": {
-    "Keyline URL 1": {
-      "checked": 3,
-      "passed": 3,
-      "failed": 0
-    },
     "Keyline URL 3": {
       "checked": 1,
-      "passed": 1,
-      "failed": 0
+      "passed": 0,
+      "failed": 1
     },
     "retained": {
       "checked": 4,
       "passed": 4,
+      "failed": 0
+    },
+    "Keyline URL 1": {
+      "checked": 3,
+      "passed": 3,
       "failed": 0
     },
     "Keyline URL 5": {
@@ -4289,27 +4215,17 @@
     }
   },
   "healthCheckByCountry": {
+    "India": {
+      "checked": 1,
+      "passed": 0,
+      "failed": 1
+    },
     "United States": {
       "checked": 4,
       "passed": 4,
       "failed": 0
     },
-    "India": {
-      "checked": 1,
-      "passed": 1,
-      "failed": 0
-    },
     "France": {
-      "checked": 1,
-      "passed": 1,
-      "failed": 0
-    },
-    "Germany": {
-      "checked": 2,
-      "passed": 2,
-      "failed": 0
-    },
-    "Finland": {
       "checked": 1,
       "passed": 1,
       "failed": 0
@@ -4319,7 +4235,17 @@
       "passed": 2,
       "failed": 0
     },
+    "Finland": {
+      "checked": 1,
+      "passed": 1,
+      "failed": 0
+    },
     "Poland": {
+      "checked": 2,
+      "passed": 2,
+      "failed": 0
+    },
+    "Germany": {
       "checked": 2,
       "passed": 2,
       "failed": 0
