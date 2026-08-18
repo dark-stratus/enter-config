@@ -2487,8 +2487,15 @@ async function main() {
     sourceCandidateCounts[item.source].unique += 1;
   }
 
-  const candidateMap = Object.fromEntries(
-    [...regular, ...automaticWhiteList].map(item => [
+  // Build candidate metadata using the exact managed IDs that were assigned
+  // when the staged config files were written. `regular` / `automaticWhiteList`
+  // are source objects and intentionally do not carry the managed ID themselves.
+  // Using item.id here therefore produced `undefined.json` in the report.
+  const candidateMapEntries = [];
+
+  regular.forEach((item, index) => {
+    const id = `keyline-regular-${String(index + 1).padStart(2, "0")}`;
+    candidateMapEntries.push([
       fingerprintUrl(item.link),
       {
         source: item.source || (item.retained ? "retained" : "unknown"),
@@ -2498,11 +2505,33 @@ async function main() {
         sourceKind: item.sourceKind || "links",
         configFile:
           item.sourceKind === "json"
-            ? `${String(item.id)}.json`
+            ? `${id}.json`
             : "",
-      }
-    ])
-  );
+        managedId: id,
+      },
+    ]);
+  });
+
+  automaticWhiteList.forEach((item, index) => {
+    const id = `keyline-whitelist-${String(index + 1).padStart(2, "0")}`;
+    candidateMapEntries.push([
+      fingerprintUrl(item.link),
+      {
+        source: item.source || (item.retained ? "retained" : "unknown"),
+        country: item.country || "Unknown",
+        whiteList: true,
+        retained: Boolean(item.retained),
+        sourceKind: item.sourceKind || "links",
+        configFile:
+          item.sourceKind === "json"
+            ? `${id}.json`
+            : "",
+        managedId: id,
+      },
+    ]);
+  });
+
+  const candidateMap = Object.fromEntries(candidateMapEntries);
 
   const endpointCloneGroups =
     buildEndpointCloneGroups(deduped);
