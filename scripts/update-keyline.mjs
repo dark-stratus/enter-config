@@ -2287,11 +2287,22 @@ async function main() {
     );
   }
 
-  const manualWhiteList = currentIndex.filter(item => (
-    item &&
-    typeof item.id === "string" &&
-    /^whitelist-\d+$/i.test(item.id)
-  ));
+  const manualWhiteList = [];
+  const manualWhiteListIds = new Set();
+
+  for (const item of currentIndex) {
+    if (
+      !item ||
+      typeof item.id !== "string" ||
+      !/^whitelist-\d+$/i.test(item.id)
+    ) continue;
+
+    const id = item.id.toLowerCase();
+    if (manualWhiteListIds.has(id)) continue;
+
+    manualWhiteListIds.add(id);
+    manualWhiteList.push(item);
+  }
 
   const { stageDir, nextEntries } = await buildStagedLinks(
     currentIndex,
@@ -2311,13 +2322,18 @@ async function main() {
   // candidate pool, not whatever subset happened to be present in the
   // previous committed index. Keep this manifest separate from index.json so
   // the health stage is never coupled to the previous managed pool size.
-  const healthCandidates = nextEntries
-    .filter(item => isManagedId(item?.id) && typeof item?.link === "string" && item.link.trim())
-    .map(item => ({
-      id: item.id,
+  const healthCandidates = [
+    ...regular.map((item, index) => ({
+      id: `keyline-regular-${String(index + 1).padStart(2, "0")}`,
       remarks: item.remarks || "",
-      link: item.link.trim(),
-    }));
+      link: String(item.link || "").trim(),
+    })),
+    ...automaticWhiteList.map((item, index) => ({
+      id: `keyline-whitelist-${String(index + 1).padStart(2, "0")}`,
+      remarks: item.remarks || "",
+      link: String(item.link || "").trim(),
+    })),
+  ].filter(item => item.link);
 
   const healthCandidatesFile =
     path.join(ROOT, "keyline-health-candidates.json");
