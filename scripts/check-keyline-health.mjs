@@ -27,6 +27,8 @@ const INDEX_FILE =
         "index.json"
     );
 
+const HEALTH_CANDIDATES_FILE = path.join(ROOT, "keyline-health-candidates.json");
+
 const XRAY_BIN =
     process.env.XRAY_BIN ||
     path.join(
@@ -1556,24 +1558,55 @@ async function main() {
         XRAY_BIN
     );
 
-    const indexText =
-        await fs.readFile(
+    let index = [];
+
+    try {
+        const candidateText = await fs.readFile(
+            HEALTH_CANDIDATES_FILE,
+            "utf8"
+        );
+        const candidates = JSON.parse(candidateText);
+
+        if (!Array.isArray(candidates)) {
+            throw new Error("keyline-health-candidates.json must be an array");
+        }
+
+        index = candidates;
+    } catch (error) {
+        if (error?.code !== "ENOENT") throw error;
+
+        const indexText = await fs.readFile(
             INDEX_FILE,
             "utf8"
         );
 
-    const index =
-        JSON.parse(
-            indexText
-        );
+        index = JSON.parse(indexText);
 
-    if (
-        !Array.isArray(index)
-    ) {
-        throw new Error(
-            "index.json must be an array"
-        );
+        if (!Array.isArray(index)) {
+            throw new Error("index.json must be an array");
+        }
     }
+
+    const committedIndexText = await fs.readFile(
+        INDEX_FILE,
+        "utf8"
+    );
+
+    const committedIndex = JSON.parse(committedIndexText);
+
+    if (!Array.isArray(committedIndex)) {
+        throw new Error("index.json must be an array");
+    }
+
+    const managedCandidateIds = new Set(
+        index
+            .filter(item => isManagedKeylineId(item?.id))
+            .map(item => item.id)
+    );
+
+    const nextIndexSeed = committedIndex.filter(
+        item => !isManagedKeylineId(item?.id)
+    );
 
     let diagnosticReport = {};
     try {
@@ -1585,7 +1618,7 @@ async function main() {
     const candidateMap = diagnosticReport.candidateMap || {};
 
     const nextIndex =
-        [];
+        [...nextIndexSeed];
 
     let passed =
         0;

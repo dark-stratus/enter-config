@@ -2293,7 +2293,7 @@ async function main() {
     /^whitelist-\d+$/i.test(item.id)
   ));
 
-  const { stageDir } = await buildStagedLinks(
+  const { stageDir, nextEntries } = await buildStagedLinks(
     currentIndex,
     regular,
     automaticWhiteList,
@@ -2306,6 +2306,23 @@ async function main() {
     await fs.rm(stageDir, { recursive: true, force: true });
     throw error;
   }
+
+  // Health-check must always evaluate the complete freshly generated Keyline
+  // candidate pool, not whatever subset happened to be present in the
+  // previous committed index. Keep this manifest separate from index.json so
+  // the health stage is never coupled to the previous managed pool size.
+  const healthCandidates = nextEntries
+    .filter(item => isManagedId(item?.id) && typeof item?.link === "string" && item.link.trim())
+    .map(item => ({
+      id: item.id,
+      remarks: item.remarks || "",
+      link: item.link.trim(),
+    }));
+
+  await writeAtomic(
+    path.join(ROOT, "keyline-health-candidates.json"),
+    `${JSON.stringify(healthCandidates, null, 2)}\n`
+  );
 
   const previousSourceFingerprints = previousState.sourceFingerprints || {};
   const currentSourceFingerprints = Object.fromEntries(
