@@ -17,7 +17,6 @@ const FETCH_RETRIES = 4;
 const FETCH_RETRY_DELAY_MS = 2_000;
 
 const KEYLINE_DEVICE_PROFILES = [
-const KEYLINE_DEVICE_PROFILES = [
   {
     appVersion: "3.3.6",
     buildId: "2607200909000",
@@ -152,31 +151,6 @@ const KEYLINE_DEVICE_PROFILES = [
   "osVersion": "14.0.0",
   "deviceModel": "SM-S928B",
   "hwid": "3d5f9e11-6a2c-4b88-a7d1-e6301bf5409a"
-  },
-];
-
-const MAX_KEYLINE_DEVICE_PROFILES = KEYLINE_DEVICE_PROFILES.length;  
-  
-  
-  
-  
- 
- 
-
-
-
- 
- 
-
- 
-  {
-    "appVersion": "2.16.2",
-    "buildId": "2605221224503",
-    "locale": "RU",
-    "deviceOs": "Windows",
-    "osVersion": "10_10.0.19045",
-    "deviceModel": "LAPTOP-A7E42D9B_x86_64",
-    "hwid": "5c988abf-1fb2-4db8-934f-18bf1c91bcdc"
   },
 ];
 
