@@ -102,6 +102,55 @@ const HEALTH_CONCURRENCY =
         )
     );
 
+const MAX_VISIBLE_COUNTRIES =
+    Math.max(
+        1,
+        Number(process.env.HEALTHCHECK_MAX_COUNTRIES) || 20
+    );
+
+const COUNTRY_POOL_SIZE =
+    Math.max(
+        2,
+        Math.min(
+            8,
+            Number(process.env.HEALTHCHECK_COUNTRY_POOL_SIZE) || 4
+        )
+    );
+
+const GAMING_MIN_KBPS =
+    Math.max(
+        128,
+        Number(process.env.HEALTHCHECK_GAMING_MIN_KBPS) || 512
+    );
+
+const GAMING_MAX_LATENCY_MS =
+    Math.max(
+        20,
+        Number(process.env.HEALTHCHECK_GAMING_MAX_LATENCY_MS) || 90
+    );
+
+const GAMING_MAX_LATENCY_SPREAD_MS =
+    Math.max(
+        5,
+        Number(process.env.HEALTHCHECK_GAMING_MAX_LATENCY_SPREAD_MS) || 25
+    );
+
+const GAMING_MIN_QUALITY_PASSES =
+    Math.max(
+        1,
+        Math.min(
+            QUALITY_PROBE_COUNT,
+            Number(process.env.HEALTHCHECK_GAMING_MIN_QUALITY_PASSES) || QUALITY_PROBE_COUNT
+        )
+    );
+
+const GAMING_STATE_FILE =
+    path.join(
+        ROOT,
+        "config",
+        "gaming.json"
+    );
+
 const HEALTH_TARGET_URLS = String(
     process.env.HEALTHCHECK_TARGET_URLS ||
     [
@@ -147,59 +196,30 @@ function isManagedKeylineId(id) {
 }
 
 function renumberIndex(entries) {
-    const regular = [];
-    const whiteList = [];
-    const other = [];
+    return entries.map(
+        item => {
+            if (!item || typeof item !== "object") {
+                return item;
+            }
 
-    for (const item of entries) {
-        if (!item || typeof item !== "object") continue;
+            if (
+                MANAGED_REGULAR_RE.test(
+                    String(item.id || "")
+                )
+            ) {
+                return {
+                    ...item,
+                    remarks:
+                        String(item.remarks || "")
+                            .replace(/\s+\d+\s*$/u, "")
+                            .trim()
+                };
+            }
 
-        if (MANAGED_WHITE_LIST_RE.test(String(item.id || ""))) {
-            whiteList.push(item);
-            continue;
+            return item;
         }
-
-        if (MANAGED_REGULAR_RE.test(String(item.id || ""))) {
-            regular.push(item);
-            continue;
-        }
-
-        other.push(item);
-    }
-
-    // Keep the physical filenames/IDs stable. Only the human-facing
-    // country number is compacted after health-check filtering.
-    const countryCounters = new Map();
-
-    const normalizedRegular = regular.map(item => {
-        const remarks = String(item.remarks || "").trim();
-        const match = remarks.match(/^(\S+)\s+(.+?)\s+\d+\s*$/u);
-
-        if (!match) return item;
-
-        const flag = match[1];
-        const country = match[2];
-        const next = (countryCounters.get(country) || 0) + 1;
-        countryCounters.set(country, next);
-
-        return {
-            ...item,
-            remarks: `${flag} ${country} ${next}`,
-        };
-    });
-
-    // Keep the original generated ordering. This is important: health-check
-    // workers complete in arbitrary order, but the user's subscription must
-    // not be re-shuffled just because one probe finished faster than another.
-    return [
-        ...other,
-        ...normalizedRegular,
-        ...whiteList,
-    ];
+    );
 }
-
-
-const HEALTH_STATE_FILE = path.join(ROOT, ".keyline-state.json");
 
 async function updateHealthHistory(results) {
     let state = {};
@@ -228,6 +248,9 @@ async function updateHealthHistory(results) {
                 lastPassedAt: now,
                 lastKbps: Number(result?.quality?.kbps) || 0,
                 lastBytes: Number(result?.quality?.bytes) || 0,
+                gamingEligible: Boolean(result?.gaming?.eligible),
+                gamingScore: Number(result?.gaming?.score) || 0,
+                lastMedianLatencyMs: Number(result?.gaming?.medianLatencyMs) || 0,
             };
             continue;
         }
@@ -239,6 +262,9 @@ async function updateHealthHistory(results) {
             lastPassedAt: Number(previous.lastPassedAt) || 0,
             lastKbps: Number(result?.quality?.kbps) || 0,
             lastBytes: Number(result?.quality?.bytes) || 0,
+            gamingEligible: Boolean(result?.gaming?.eligible),
+            gamingScore: Number(result?.gaming?.score) || 0,
+            lastMedianLatencyMs: Number(result?.gaming?.medianLatencyMs) || 0,
             lastReason: String(result.reason || "health check failed").slice(0, 500),
             quarantineUntil: now + 90 * 60 * 1000,
         };
@@ -581,6 +607,9 @@ function runCurlOnce(
     targetUrl
 ) {
     return new Promise(resolve => {
+        const startedAt =
+            Date.now();
+
         const args = [
             "--silent",
             "--show-error",
@@ -646,6 +675,13 @@ function runCurlOnce(
                     ok:
                         code === 0,
 
+                    latencyMs:
+                        Math.max(
+                            Date.now() -
+                            startedAt,
+                            0
+                        ),
+
                     error:
                         stderr
                             .trim()
@@ -664,12 +700,15 @@ async function probeTargetOnceWithRetries(
     targetUrl
 ) {
     const errors = [];
+    let attempts = 0;
 
     for (
         let attempt = 1;
         attempt <= REQUEST_RETRIES;
         attempt += 1
     ) {
+        attempts += 1;
+
         const result =
             await runCurlOnce(
                 socksPort,
@@ -678,9 +717,14 @@ async function probeTargetOnceWithRetries(
 
         if (result.ok) {
             return {
-                ok: true,
+                ok:
+                    true,
                 targetUrl,
-                error: ""
+                latencyMs:
+                    Number(result.latencyMs) || 0,
+                attempts,
+                error:
+                    ""
             };
         }
 
@@ -694,9 +738,14 @@ async function probeTargetOnceWithRetries(
     }
 
     return {
-        ok: false,
+        ok:
+            false,
         targetUrl,
-        error: errors.join("; ").slice(0, 1000)
+        latencyMs:
+            0,
+        attempts,
+        error:
+            errors.join("; ").slice(0, 1000)
     };
 }
 
@@ -974,6 +1023,366 @@ async function runQualityDownload(
     };
 }
 
+
+function median(values) {
+    const sorted =
+        values
+            .filter(Number.isFinite)
+            .sort((a, b) => a - b);
+
+    if (!sorted.length) return 0;
+
+    const middle =
+        Math.floor(sorted.length / 2);
+
+    return sorted.length % 2
+        ? sorted[middle]
+        : (sorted[middle - 1] + sorted[middle]) / 2;
+}
+
+function standardDeviation(values) {
+    const normalized =
+        values.filter(Number.isFinite);
+
+    if (normalized.length < 2) return 0;
+
+    const mean =
+        normalized.reduce(
+            (sum, value) => sum + value,
+            0
+        ) / normalized.length;
+
+    const variance =
+        normalized.reduce(
+            (sum, value) =>
+                sum + Math.pow(value - mean, 2),
+            0
+        ) / normalized.length;
+
+    return Math.sqrt(variance);
+}
+
+function getGamingMetrics(
+    remote,
+    quality
+) {
+    const latencies =
+        remote
+            .filter(
+                result =>
+                    result?.ok &&
+                    Number.isFinite(
+                        Number(result.latencyMs)
+                    )
+            )
+            .map(
+                result =>
+                    Number(result.latencyMs)
+            );
+
+    const medianLatencyMs =
+        median(latencies);
+
+    const maxLatencyMs =
+        latencies.length
+            ? Math.max(...latencies)
+            : Infinity;
+
+    const latencySpreadMs =
+        latencies.length
+            ? Math.max(...latencies) -
+              Math.min(...latencies)
+            : Infinity;
+
+    const latencyStdDevMs =
+        standardDeviation(latencies);
+
+    const qualityPassed =
+        Number(quality?.passedCount) || 0;
+
+    const allHealthTargetsPassed =
+        remote.length === HEALTH_TARGET_URLS.length &&
+        remote.every(result => result?.ok);
+
+    const eligible =
+        allHealthTargetsPassed &&
+        qualityPassed >= GAMING_MIN_QUALITY_PASSES &&
+        Number(quality?.kbps) >= GAMING_MIN_KBPS &&
+        maxLatencyMs <= GAMING_MAX_LATENCY_MS &&
+        latencySpreadMs <= GAMING_MAX_LATENCY_SPREAD_MS;
+
+    const speedScore =
+        Math.min(
+            25,
+            (Number(quality?.kbps) / Math.max(GAMING_MIN_KBPS, 1)) * 25
+        );
+
+    const latencyScore =
+        Math.max(
+            0,
+            50 * (
+                1 -
+                Math.min(
+                    medianLatencyMs / Math.max(GAMING_MAX_LATENCY_MS, 1),
+                    1
+                )
+            )
+        );
+
+    const stabilityScore =
+        allHealthTargetsPassed ? 25 : 0;
+
+    return {
+        eligible,
+        medianLatencyMs:
+            Number.isFinite(medianLatencyMs)
+                ? Math.round(medianLatencyMs)
+                : 0,
+        maxLatencyMs:
+            Number.isFinite(maxLatencyMs)
+                ? Math.round(maxLatencyMs)
+                : 0,
+        latencySpreadMs:
+            Number.isFinite(latencySpreadMs)
+                ? Math.round(latencySpreadMs)
+                : 0,
+        latencyStdDevMs:
+            Number.isFinite(latencyStdDevMs)
+                ? Math.round(latencyStdDevMs * 10) / 10
+                : 0,
+        score:
+            Math.round(
+                (speedScore + latencyScore + stabilityScore) * 10
+            ) / 10
+    };
+}
+
+async function readGamingAssignments() {
+    try {
+        const text =
+            await fs.readFile(
+                GAMING_STATE_FILE,
+                "utf8"
+            );
+
+        const parsed =
+            JSON.parse(text);
+
+        return Array.isArray(parsed)
+            ? parsed
+            : [];
+    } catch {
+        return [];
+    }
+}
+
+async function writeGamingAssignments(
+    assignments
+) {
+    await fs.writeFile(
+        GAMING_STATE_FILE,
+        `${JSON.stringify(assignments, null, 2)}\n`,
+        "utf8"
+    );
+}
+
+function buildCountryHealthPool(
+    healthResults
+) {
+    const groups = new Map();
+
+    for (const result of healthResults) {
+        if (
+            !result.ok ||
+            !result.country ||
+            MANAGED_WHITE_LIST_RE.test(
+                String(result.id || "")
+            )
+        ) {
+            continue;
+        }
+
+        const bucket =
+            groups.get(result.country) || [];
+
+        bucket.push(result);
+        groups.set(result.country, bucket);
+    }
+
+    return [...groups.entries()]
+        .map(([country, members]) => {
+            const sorted =
+                [...members].sort((a, b) => {
+                    const aSpeed =
+                        Number(a.quality?.kbps) || 0;
+                    const bSpeed =
+                        Number(b.quality?.kbps) || 0;
+
+                    if (aSpeed !== bSpeed) {
+                        return bSpeed - aSpeed;
+                    }
+
+                    const aLatency =
+                        Number(a.gaming?.medianLatencyMs) || Infinity;
+                    const bLatency =
+                        Number(b.gaming?.medianLatencyMs) || Infinity;
+
+                    return aLatency - bLatency;
+                });
+
+            const top =
+                sorted.slice(
+                    0,
+                    COUNTRY_POOL_SIZE
+                );
+
+            const speeds =
+                top
+                    .map(item => Number(item.quality?.kbps))
+                    .filter(Number.isFinite);
+
+            const medianSpeed =
+                median(speeds);
+
+            const bestSpeed =
+                speeds.length
+                    ? Math.max(...speeds)
+                    : 0;
+
+            return {
+                country,
+                members: top,
+                countryScore:
+                    Math.round(
+                        (
+                            medianSpeed * 0.65 +
+                            bestSpeed * 0.35
+                        ) * 10
+                    ) / 10
+            };
+        })
+        .sort(
+            (a, b) =>
+                b.countryScore -
+                a.countryScore
+        )
+        .slice(
+            0,
+            MAX_VISIBLE_COUNTRIES
+        );
+}
+
+function sanitizeId(
+    value
+) {
+    return String(value)
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "");
+}
+
+function extractFlag(
+    remarks = ""
+) {
+    return String(remarks).match(
+        /[\u{1F1E6}-\u{1F1FF}]{2}/u
+    )?.[0] || "";
+}
+
+async function buildGamingAssignments(
+    selectedCountries,
+    healthResults
+) {
+    const previous =
+        await readGamingAssignments();
+
+    const byFingerprint =
+        new Map(
+            healthResults.map(
+                result => [
+                    result.linkFingerprint,
+                    result
+                ]
+            )
+        );
+
+    const candidatesByCountry =
+        new Map();
+
+    for (const result of healthResults) {
+        if (
+            !result.ok ||
+            !result.gaming?.eligible
+        ) {
+            continue;
+        }
+
+        const bucket =
+            candidatesByCountry.get(result.country) || [];
+
+        bucket.push(result);
+        candidatesByCountry.set(result.country, bucket);
+    }
+
+    const output = [];
+
+    for (const countryEntry of selectedCountries) {
+        const candidates =
+            candidatesByCountry.get(
+                countryEntry.country
+            ) || [];
+
+        if (!candidates.length) continue;
+
+        const old =
+            previous.find(
+                item =>
+                    item?.country ===
+                    countryEntry.country
+            );
+
+        const oldResult =
+            old?.linkFingerprint
+                ? byFingerprint.get(old.linkFingerprint)
+                : null;
+
+        const selected =
+            oldResult?.ok &&
+            oldResult?.gaming?.eligible
+                ? oldResult
+                : [...candidates].sort(
+                    (a, b) =>
+                        Number(b.gaming?.score || 0) -
+                        Number(a.gaming?.score || 0)
+                )[0];
+
+        output.push({
+            id:
+                `gaming-${sanitizeId(countryEntry.country)}`,
+            country:
+                countryEntry.country,
+            flag:
+                extractFlag(selected.remarks),
+            remarks:
+                `${extractFlag(selected.remarks)} ${countryEntry.country} GAMING`.trim(),
+            linkFingerprint:
+                selected.linkFingerprint,
+            link:
+                String(
+                    selected.item?.link || ""
+                ).trim(),
+            quality:
+                selected.quality,
+            gaming:
+                selected.gaming
+        });
+    }
+
+    return output.filter(
+        item => item.link
+    );
+}
+
 async function main() {
     await fs.access(
         XRAY_BIN
@@ -1195,6 +1604,12 @@ async function main() {
                 };
             }
 
+            const gaming =
+                getGamingMetrics(
+                    remote,
+                    quality
+                );
+
             return {
                 item,
                 ok: true,
@@ -1204,6 +1619,8 @@ async function main() {
                     `quality ${quality.passedCount}/${quality.probeCount} probes passed ` +
                     `(avg passing ${quality.kbps} KB/s)`,
                 quality,
+                gaming,
+                remote,
             };
 
         } catch (error) {
@@ -1244,7 +1661,9 @@ async function main() {
                 protocol: result.protocol || "",
                 stages: result.stages || "",
                 reason: result.reason || "",
-                quality: result.quality || null
+                quality: result.quality || null,
+                gaming: result.gaming || null,
+                remote: result.remote || []
             });
 
             if (result.ok) {
@@ -1288,20 +1707,6 @@ async function main() {
         )
     );
 
-    const passedManagedIds = new Set(
-        healthResults
-            .filter(result => result.ok)
-            .map(result => result.id)
-    );
-
-    for (const item of managedItems) {
-        if (passedManagedIds.has(item.id)) {
-            nextIndex.push(item);
-        }
-    }
-
-    await updateHealthHistory(healthResults);
-
     if (
         checked > 0 &&
         passed === 0
@@ -1311,6 +1716,131 @@ async function main() {
             "existing generated pool is preserved."
         );
     }
+
+    const selectedCountries =
+        buildCountryHealthPool(
+            healthResults
+        );
+
+    const selectedFingerprints =
+        new Set(
+            selectedCountries.flatMap(
+                country =>
+                    country.members.map(
+                        member =>
+                            member.linkFingerprint
+                    )
+            )
+        );
+
+    const selectedRegularIds =
+        new Set(
+            healthResults
+                .filter(
+                    result =>
+                        result.ok &&
+                        selectedFingerprints.has(
+                            result.linkFingerprint
+                        )
+                )
+                .map(
+                    result =>
+                        result.id
+                )
+        );
+
+    for (const item of managedItems) {
+        const id =
+            String(item.id || "");
+
+        if (
+            MANAGED_WHITE_LIST_RE.test(id)
+        ) {
+            const passedWhiteList =
+                healthResults.some(
+                    result =>
+                        result.id === id &&
+                        result.ok
+                );
+
+            if (passedWhiteList) {
+                nextIndex.push(item);
+            }
+
+            continue;
+        }
+
+        if (
+            selectedRegularIds.has(id)
+        ) {
+            nextIndex.push(item);
+        }
+    }
+
+    const gamingAssignments =
+        await buildGamingAssignments(
+            selectedCountries,
+            healthResults
+        );
+
+    await updateHealthHistory(
+        healthResults
+    );
+
+    await writeGamingAssignments(
+        gamingAssignments
+    );
+
+    const selectedRegularOrder =
+        selectedCountries.flatMap(
+            country =>
+                country.members.map(
+                    member =>
+                        member.id
+                )
+        );
+
+    const regularById =
+        new Map(
+            nextIndex
+                .filter(
+                    item =>
+                        MANAGED_REGULAR_RE.test(
+                            String(item.id || "")
+                        )
+                )
+                .map(
+                    item => [
+                        item.id,
+                        item
+                    ]
+                )
+        );
+
+    const nonManaged =
+        nextIndex.filter(
+            item =>
+                !isManagedKeylineId(
+                    item?.id
+                )
+        );
+
+    const selectedWhiteLists =
+        nextIndex.filter(
+            item =>
+                MANAGED_WHITE_LIST_RE.test(
+                    String(item.id || "")
+                )
+        );
+
+    nextIndex.length = 0;
+    nextIndex.push(
+        ...nonManaged,
+        ...selectedRegularOrder
+            .map(id => regularById.get(id))
+            .filter(Boolean),
+        ...selectedWhiteLists
+    );
 
     const normalizedIndex =
         renumberIndex(
@@ -1403,6 +1933,16 @@ async function main() {
             requiredPasses: QUALITY_MIN_PASSES,
             intervalMs: QUALITY_PROBE_INTERVAL_MS,
         },
+        gamingCriteria: {
+            minKbps:
+                GAMING_MIN_KBPS,
+            maxLatencyMs:
+                GAMING_MAX_LATENCY_MS,
+            maxLatencySpreadMs:
+                GAMING_MAX_LATENCY_SPREAD_MS,
+            minQualityPasses:
+                GAMING_MIN_QUALITY_PASSES,
+        },
         quarantine: {
             durationMinutes: 90,
             policy: "failed endpoints are hidden from the active subscription immediately, but are not permanently blacklisted and may return after a later successful health check",
@@ -1436,6 +1976,30 @@ async function main() {
             removedByHealth,
         finalLinkFingerprints:
             [...finalFingerprints],
+        maxVisibleCountries:
+            MAX_VISIBLE_COUNTRIES,
+        countryPoolSize:
+            COUNTRY_POOL_SIZE,
+        selectedCountries:
+            selectedCountries.map(
+                country => ({
+                    country:
+                        country.country,
+                    members:
+                        country.members.map(
+                            member => ({
+                                id:
+                                    member.id,
+                                kbps:
+                                    Number(member.quality?.kbps) || 0
+                            })
+                        ),
+                    score:
+                        country.countryScore
+                })
+            ),
+        gaming:
+            gamingAssignments,
     };
 
     if (process.env.GITHUB_STEP_SUMMARY) {
