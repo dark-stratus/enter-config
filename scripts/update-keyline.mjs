@@ -1669,6 +1669,7 @@ function normalizeProfileLink(link, index, source, forceWhiteList = false, stats
   return {
     sourceIndex: index,
     source,
+    sourceKind: "links",
     originalRemarks: remarks,
     flag: normalized.flag,
     country: normalized.country,
@@ -1796,6 +1797,8 @@ function normalizeEntry(entry, index, source, stats = null) {
   return {
     sourceIndex: index,
     source,
+    sourceKind: "json",
+    sourceConfig: structuredClone(entry),
     originalRemarks: remarks,
     flag: normalized.flag,
     country: normalized.country,
@@ -2101,9 +2104,12 @@ async function buildStagedLinks(
   });
 
   for (const item of stagedManagedFiles) {
-    if (!item.isFile() || !item.name.endsWith(".link")) continue;
+    if (
+      !item.isFile() ||
+      (!item.name.endsWith(".link") && !item.name.endsWith(".json"))
+    ) continue;
 
-    const id = item.name.slice(0, -".link".length);
+    const id = item.name.replace(/\.(?:link|json)$/i, "");
 
     if (!isManagedId(id)) continue;
 
@@ -2154,11 +2160,24 @@ async function buildStagedLinks(
       "utf8"
     );
 
-    nextEntries.push({
+    const entry = {
       id,
       remarks: item.remarks,
       link: item.link,
-    });
+    };
+
+    if (item.sourceKind === "json" && item.sourceConfig && typeof item.sourceConfig === "object") {
+      const configFile = `${id}.json`;
+      await fs.writeFile(
+        path.join(stageDir, configFile),
+        `${JSON.stringify(item.sourceConfig, null, 2)}\n`,
+        "utf8"
+      );
+      entry.configFile = configFile;
+      entry.sourceKind = "json";
+    }
+
+    nextEntries.push(entry);
   }
 
   // Permanent White List entries are kept after the regular pool.
@@ -2212,11 +2231,24 @@ async function buildStagedLinks(
       "utf8"
     );
 
-    nextEntries.push({
+    const entry = {
       id,
       remarks: item.remarks,
       link: item.link,
-    });
+    };
+
+    if (item.sourceKind === "json" && item.sourceConfig && typeof item.sourceConfig === "object") {
+      const configFile = `${id}.json`;
+      await fs.writeFile(
+        path.join(stageDir, configFile),
+        `${JSON.stringify(item.sourceConfig, null, 2)}\n`,
+        "utf8"
+      );
+      entry.configFile = configFile;
+      entry.sourceKind = "json";
+    }
+
+    nextEntries.push(entry);
   }
 
   const uniqueNextEntries = [];
@@ -2386,11 +2418,19 @@ async function main() {
       id: `keyline-regular-${String(index + 1).padStart(2, "0")}`,
       remarks: item.remarks || "",
       link: String(item.link || "").trim(),
+      ...(item.sourceKind === "json" ? {
+        configFile: `keyline-regular-${String(index + 1).padStart(2, "0")}.json`,
+        sourceKind: "json",
+      } : {}),
     })),
     ...automaticWhiteList.map((item, index) => ({
       id: `keyline-whitelist-${String(index + 1).padStart(2, "0")}`,
       remarks: item.remarks || "",
       link: String(item.link || "").trim(),
+      ...(item.sourceKind === "json" ? {
+        configFile: `keyline-whitelist-${String(index + 1).padStart(2, "0")}.json`,
+        sourceKind: "json",
+      } : {}),
     })),
   ].filter(item => item.link);
 
@@ -2455,6 +2495,11 @@ async function main() {
         country: item.country || "Unknown",
         whiteList: Boolean(item.whiteList),
         retained: Boolean(item.retained),
+        sourceKind: item.sourceKind || "links",
+        configFile:
+          item.sourceKind === "json"
+            ? `${String(item.id)}.json`
+            : "",
       }
     ])
   );

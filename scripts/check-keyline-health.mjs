@@ -2114,9 +2114,12 @@ async function main() {
     );
 
     for (const entry of stagedFiles) {
-        if (!entry.isFile() || !entry.name.endsWith(".link")) continue;
+        if (
+            !entry.isFile() ||
+            (!entry.name.endsWith(".link") && !entry.name.endsWith(".json"))
+        ) continue;
 
-        const id = entry.name.slice(0, -5);
+        const id = entry.name.replace(/\.(?:link|json)$/i, "");
 
         if (
             isManagedKeylineId(id) &&
