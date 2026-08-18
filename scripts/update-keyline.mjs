@@ -17,132 +17,158 @@ const FETCH_RETRIES = 4;
 const FETCH_RETRY_DELAY_MS = 2_000;
 
 const KEYLINE_DEVICE_PROFILES = [
+const KEYLINE_DEVICE_PROFILES = [
   {
-    "appVersion": "2.16.2",
-    "buildId": "2605221224503",
-    "locale": "RU",
-    "deviceOs": "Windows",
-    "osVersion": "10_10.0.19045",
-    "deviceModel": "LAPTOP-A14F8C2D_x86_64",
-    "hwid": "151521b1-d5f0-4c34-8791-692b5cd25463"
+    appVersion: "3.3.6",
+    buildId: "2607200909000",
+    locale: "RU",
+    deviceOs: "Windows",
+    osVersion: "10_10.0.19045",
+    deviceModel: "DESKTOP-A14F8C2D_x86_64",
+    hwid: "6e0d7f6a-5d9a-4c4f-a6a3-1b9f4f0d81c2",
   },
   {
-    "appVersion": "2.16.2",
-    "buildId": "2605221224503",
-    "locale": "RU",
-    "deviceOs": "Windows",
-    "osVersion": "10_10.0.19045",
-    "deviceModel": "LAPTOP-C72B91E4_x86_64",
-    "hwid": "631d8135-09ed-4b10-8585-568b116f451b"
+    appVersion: "3.1.0",
+    buildId: "2606101200000",
+    locale: "EN",
+    deviceOs: "Windows",
+    osVersion: "11_10.0.22631",
+    deviceModel: "DESKTOP-C72B91E4_x86_64",
+    hwid: "b2f1d8a4-3a97-4f1c-91e2-7c54e9a6d113",
   },
   {
-    "appVersion": "2.16.2",
-    "buildId": "2605221224503",
-    "locale": "RU",
-    "deviceOs": "Windows",
-    "osVersion": "10_10.0.19045",
-    "deviceModel": "LAPTOP-E53A7F19_x86_64",
-    "hwid": "021646b8-d366-4087-bc8c-f21c8e2b67b4"
+    appVersion: "2.18.3",
+    buildId: "2605201200000",
+    locale: "RU",
+    deviceOs: "Windows",
+    osVersion: "11_10.0.26100",
+    deviceModel: "DESKTOP-E53A7F19_x86_64",
+    hwid: "0c9b3c8d-2b46-46cf-8c93-0a64a76e5f29",
   },
   {
-    "appVersion": "2.16.2",
-    "buildId": "2605221224503",
-    "locale": "RU",
-    "deviceOs": "Windows",
-    "osVersion": "10_10.0.19045",
-    "deviceModel": "LAPTOP-F81D2A63_x86_64",
-    "hwid": "5458ad0e-c2f1-4e64-8a8a-d8c9602b196a"
+    appVersion: "3.3.6",
+    buildId: "2607200909000",
+    locale: "EN",
+    deviceOs: "Windows",
+    osVersion: "11_10.0.26100",
+    deviceModel: "DESKTOP-F81D2A63_arm64",
+    hwid: "9fd4c0a1-6e73-49d1-a8b2-2e94f7c65138",
   },
   {
-    "appVersion": "2.16.2",
-    "buildId": "2605221224503",
-    "locale": "RU",
-    "deviceOs": "Windows",
-    "osVersion": "10_10.0.19045",
-    "deviceModel": "LAPTOP-19CE74B5_x86_64",
-    "hwid": "16fdb924-5fd2-4533-b564-f28d656de953"
+    appVersion: "3.3.5",
+    buildId: "2607171500000",
+    locale: "RU",
+    deviceOs: "macOS",
+    osVersion: "13_22G74",
+    deviceModel: "MacBookPro16,1_x86_64",
+    hwid: "3a74c18e-9c55-4d22-b8f1-6e9073a2d451",
   },
   {
-    "appVersion": "2.16.2",
-    "buildId": "2605221224503",
-    "locale": "RU",
-    "deviceOs": "Windows",
-    "osVersion": "10_10.0.19045",
-    "deviceModel": "LAPTOP-4B92E7D1_x86_64",
-    "hwid": "3ccd38ec-8283-4ca1-a0b0-80e97440d95f"
+    appVersion: "2.18.1",
+    buildId: "2605101200000",
+    locale: "EN",
+    deviceOs: "macOS",
+    osVersion: "12_21G93",
+    deviceModel: "iMac20,1_x86_64",
+    hwid: "51e6b0d4-c2fb-4d77-93ae-8f4c1b207965",
   },
   {
-    "appVersion": "2.16.2",
-    "buildId": "2605221224503",
-    "locale": "RU",
-    "deviceOs": "Windows",
-    "osVersion": "10_10.0.19045",
-    "deviceModel": "LAPTOP-73AF16C9_x86_64",
-    "hwid": "0704708c-e3d3-4173-993c-a25774e8257b"
+    appVersion: "3.3.6",
+    buildId: "2607200909000",
+    locale: "EN",
+    deviceOs: "macOS",
+    osVersion: "14_23F79",
+    deviceModel: "MacBookPro18,3_arm64",
+    hwid: "c8a5f1b7-47de-49e2-b2d1-5f8c9046a317",
   },
   {
-    "appVersion": "2.16.2",
-    "buildId": "2605221224503",
-    "locale": "RU",
-    "deviceOs": "Windows",
-    "osVersion": "10_10.0.19045",
-    "deviceModel": "LAPTOP-B5D84E21_x86_64",
-    "hwid": "f3f7421b-9825-4694-952e-76a0f8e301c6"
+    appVersion: "3.0.2",
+    buildId: "2601101000000",
+    locale: "RU",
+    deviceOs: "macOS",
+    osVersion: "15_24A335",
+    deviceModel: "Mac14,5_arm64",
+    hwid: "7b2e49c1-85a6-46d8-91f3-4c70a2e86519",
   },
   {
-    "appVersion": "2.16.2",
-    "buildId": "2605221224503",
-    "locale": "RU",
-    "deviceOs": "Windows",
-    "osVersion": "10_10.0.19045",
-    "deviceModel": "LAPTOP-D61F93A8_x86_64",
-    "hwid": "fcc45362-0562-4dd0-a7cb-f617a813ad7a"
+    appVersion: "3.26.3",
+    buildId: "2607201000000",
+    locale: "RU",
+    deviceOs: "Android",
+    osVersion: "14_API34",
+    deviceModel: "Pixel 8 Pro_arm64",
+    hwid: "e14a6c92-3f58-4b07-a9d1-82c5e7461b30",
   },
   {
-    "appVersion": "2.16.2",
-    "buildId": "2605221224503",
-    "locale": "RU",
-    "deviceOs": "Windows",
-    "osVersion": "10_10.0.19045",
-    "deviceModel": "LAPTOP-28E7C4F6_x86_64",
-    "hwid": "569c9a22-7fe2-4005-a793-f6af45ce3bc3"
+    appVersion: "3.26.3",
+    buildId: "2607201000000",
+    locale: "EN",
+    deviceOs: "Android",
+    osVersion: "15_API35",
+    deviceModel: "SM-S928B_arm64",
+    hwid: "45c8e1a7-72f4-4d93-b6a0-9e31c25784d6",
   },
   {
-    "appVersion": "2.16.2",
-    "buildId": "2605221224503",
-    "locale": "RU",
-    "deviceOs": "Windows",
-    "osVersion": "10_10.0.19045",
-    "deviceModel": "LAPTOP-9A31F6C8_x86_64",
-    "hwid": "9f8f7c8e-4c60-4b15-9c4f-de6080e5e139"
+    appVersion: "3.20.3",
+    buildId: "2605071748000",
+    locale: "RU",
+    deviceOs: "Android",
+    osVersion: "13_API33",
+    deviceModel: "23127PN0CG_arm64",
+    hwid: "a6d2f9c4-18b7-4e53-8c91-57e0b2643a82",
   },
   {
-    "appVersion": "2.16.2",
-    "buildId": "2605221224503",
-    "locale": "RU",
-    "deviceOs": "Windows",
-    "osVersion": "10_10.0.19045",
-    "deviceModel": "LAPTOP-CE84A217_x86_64",
-    "hwid": "8deb93f3-6b63-4ef0-8f21-5ce9ff820f7a"
+    appVersion: "5.2.0",
+    buildId: "2607220012004",
+    locale: "RU",
+    deviceOs: "iOS",
+    osVersion: "18.6",
+    deviceModel: "iPhone17,1",
+    hwid: "2f7c91e5-4a63-45d8-b0c2-81e6a5739d14",
   },
   {
-    "appVersion": "2.16.2",
-    "buildId": "2605221224503",
-    "locale": "RU",
-    "deviceOs": "Windows",
-    "osVersion": "10_10.0.19045",
-    "deviceModel": "LAPTOP-16D9B3E5_x86_64",
-    "hwid": "4a2ee4b1-1962-4e51-b9ba-7e8b58dd1d1a"
+    appVersion: "5.2.0",
+    buildId: "2607220048005",
+    locale: "EN",
+    deviceOs: "iOS",
+    osVersion: "18.5",
+    deviceModel: "iPhone16,2",
+    hwid: "d9a42e71-6c35-48f0-91b7-53e8c204a6fd",
   },
   {
-    "appVersion": "2.16.2",
-    "buildId": "2605221224503",
-    "locale": "RU",
-    "deviceOs": "Windows",
-    "osVersion": "10_10.0.19045",
-    "deviceModel": "LAPTOP-5F27C8A1_x86_64",
-    "hwid": "14a5e72c-2190-4f32-a3f3-2c42acfa42a3"
+    appVersion: "5.1.0",
+    buildId: "2607000580040",
+    locale: "RU",
+    deviceOs: "iOS",
+    osVersion: "17.7.8",
+    deviceModel: "iPhone14,5",
+    hwid: "8c1e5a73-29d4-4f06-b8a1-67e3c95240fd",
   },
+  {
+  "appVersion": "3.3.4",
+  "buildId": "2608151105432",
+  "locale": "RU",
+  "deviceOs": "Android",
+  "osVersion": "14.0.0",
+  "deviceModel": "SM-S928B",
+  "hwid": "3d5f9e11-6a2c-4b88-a7d1-e6301bf5409a"
+  },
+];
+
+const MAX_KEYLINE_DEVICE_PROFILES = KEYLINE_DEVICE_PROFILES.length;  
+  
+  
+  
+  
+ 
+ 
+
+
+
+ 
+ 
+
+ 
   {
     "appVersion": "2.16.2",
     "buildId": "2605221224503",
