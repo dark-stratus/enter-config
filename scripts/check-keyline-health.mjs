@@ -1463,7 +1463,8 @@ function extractFlag(
 
 async function buildGamingAssignments(
     selectedCountries,
-    healthResults
+    healthResults,
+    candidateItems
 ) {
     const previous =
         await readGamingAssignments();
@@ -1476,6 +1477,16 @@ async function buildGamingAssignments(
                     result
                 ]
             )
+        );
+
+    const candidateByFingerprint =
+        new Map(
+            (Array.isArray(candidateItems) ? candidateItems : [])
+                .map(item => [
+                    fingerprintLink(item?.link || ""),
+                    item
+                ])
+                .filter(([fingerprint, item]) => fingerprint && item)
         );
 
     const candidatesByCountry =
@@ -1528,6 +1539,23 @@ async function buildGamingAssignments(
                         Number(a.gaming?.score || 0)
                 )[0];
 
+        const selectedItem =
+            candidateByFingerprint.get(
+                selected.linkFingerprint
+            );
+
+        const selectedLink =
+            String(
+                selectedItem?.link || ""
+            ).trim();
+
+        if (!selectedLink) {
+            console.warn(
+                `Gaming candidate ${selected.id} has no source link for ${countryEntry.country}; skipping.`
+            );
+            continue;
+        }
+
         output.push({
             id:
                 `gaming-${sanitizeId(countryEntry.country)}`,
@@ -1540,9 +1568,7 @@ async function buildGamingAssignments(
             linkFingerprint:
                 selected.linkFingerprint,
             link:
-                String(
-                    selected.item?.link || ""
-                ).trim(),
+                selectedLink,
             quality:
                 selected.quality,
             gaming:
@@ -1998,7 +2024,8 @@ async function main() {
     const gamingAssignments =
         await buildGamingAssignments(
             selectedCountries,
-            healthResults
+            healthResults,
+            candidates
         );
 
     await updateHealthHistory(
