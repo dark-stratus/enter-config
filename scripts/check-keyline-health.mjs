@@ -155,7 +155,7 @@ const COUNTRY_POOL_SIZE =
         2,
         Math.min(
             8,
-            Number(process.env.HEALTHCHECK_COUNTRY_POOL_SIZE) || 4
+            Number(process.env.HEALTHCHECK_COUNTRY_POOL_SIZE) || 6
         )
     );
 

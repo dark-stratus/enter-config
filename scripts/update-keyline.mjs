@@ -17,6 +17,7 @@ const SUCCESS_INTERVAL_MS = 1 * 60 * 60 * 1000;
 
 const BUILTIN_WHITE_LIST_SOURCES = [
   "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/Vless-Reality-White-Lists-Rus-Mobile.txt",
+  "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/Vless-Reality-White-Lists-Rus-Mobile-2.txt",
   "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/WHITE-SNI-RU-all.txt",
   "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/WHITE-CIDR-RU-checked.txt",
   "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/WHITE-CIDR-RU-all.txt",
@@ -680,6 +681,17 @@ function parseSubscriptionPayload(text, contentType, source) {
     ) {
       throw error;
     }
+  }
+
+  // Plain-text TXT subscriptions (including the igareck White List files)
+  // are already the final transport URI list. Extract directly from the raw
+  // response first; do not rewrite or canonicalize the URI.
+  const rawLinks = extractProfileLinks(raw);
+  if (rawLinks.length > 0) {
+    return {
+      kind: "links",
+      data: rawLinks,
+    };
   }
 
   const candidates = [raw];
@@ -2371,6 +2383,9 @@ async function buildStagedLinks(
       id,
       remarks: item.remarks,
       link: item.link,
+      whiteList: true,
+      ...(item.country ? { country: item.country } : {}),
+      ...(item.flag ? { flag: item.flag } : {}),
     };
 
     if (item.sourceKind === "json" && item.sourceConfig && typeof item.sourceConfig === "object") {
