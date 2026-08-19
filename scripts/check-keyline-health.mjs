@@ -2215,19 +2215,32 @@ async function main() {
                 )
         );
 
+    // Preserve selected White List entries in their own map before the
+    // output array is rebuilt. The previous implementation cleared
+    // `nextIndex` and then attempted to read the White List items back from
+    // that now-empty array, which silently dropped every selected LTE pool.
+    const selectedWhiteListById =
+        new Map(
+            nextIndex
+                .filter(
+                    item =>
+                        MANAGED_WHITE_LIST_RE.test(
+                            String(item.id || "")
+                        )
+                )
+                .map(
+                    item => [
+                        item.id,
+                        item
+                    ]
+                )
+        );
+
     const nonManaged =
         nextIndex.filter(
             item =>
                 !isManagedKeylineId(
                     item?.id
-                )
-        );
-
-    const selectedWhiteLists =
-        nextIndex.filter(
-            item =>
-                MANAGED_WHITE_LIST_RE.test(
-                    String(item.id || "")
                 )
         );
 
@@ -2238,7 +2251,7 @@ async function main() {
             .map(id => regularById.get(id))
             .filter(Boolean),
         ...selectedWhiteListOrder
-            .map(id => nextIndex.find(item => String(item.id || "") === id))
+            .map(id => selectedWhiteListById.get(id))
             .filter(Boolean)
     );
 
