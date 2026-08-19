@@ -9,6 +9,7 @@ import { spawn } from "node:child_process";
 import { parseLink, buildOutbound } from "./link-runtime.mjs";
 
 const COUNTRY_BY_FLAG = {
+    "🇪🇺": "Europe",
     "🇨🇾": "Cyprus",
     "🇫🇮": "Finland",
     "🇫🇷": "France",
@@ -134,6 +135,30 @@ const QUALITY_PROBE_INTERVAL_MS =
         5000,
         Number(process.env.HEALTHCHECK_QUALITY_PROBE_INTERVAL_MS) || 5000
     );
+
+const WHITE_LIST_SPEED_PROBE_COUNT = Math.max(
+    1,
+    Number(process.env.HEALTHCHECK_WHITE_LIST_SPEED_PROBE_COUNT) || 3
+);
+const WHITE_LIST_SPEED_MIN_PASSES = Math.max(
+    1,
+    Math.min(
+        WHITE_LIST_SPEED_PROBE_COUNT,
+        Number(process.env.HEALTHCHECK_WHITE_LIST_SPEED_MIN_PASSES) || 1
+    )
+);
+const WHITE_LIST_SPEED_MIN_KBPS = Math.max(
+    64,
+    Number(process.env.HEALTHCHECK_WHITE_LIST_SPEED_MIN_KBPS) || 300
+);
+const WHITE_LIST_FALLBACK_MIN_KBPS = Math.max(
+    64,
+    Number(process.env.HEALTHCHECK_WHITE_LIST_FALLBACK_MIN_KBPS) || 200
+);
+const WHITE_LIST_SPEED_MIN_BYTES = Math.max(
+    16384,
+    Number(process.env.HEALTHCHECK_WHITE_LIST_SPEED_MIN_BYTES) || 32768
+);
 
 const HEALTH_CONCURRENCY =
     Math.max(
@@ -1041,6 +1066,108 @@ async function runSingleQualityDownload(
     });
 }
 
+async function runWhiteListSpeedDownload(socksPort) {
+    const probes = [];
+
+    // White List speed probes are intentionally sequential for each server.
+    // The outer health-check concurrency already runs up to 8 servers in parallel.
+    // Waiting 5 seconds between probes reduces cross-probe contention and makes
+    // the per-server ranking more representative.
+    for (
+        let probeIndex = 1;
+        probeIndex <= WHITE_LIST_SPEED_PROBE_COUNT;
+        probeIndex += 1
+    ) {
+        const probe =
+            await runSingleQualityDownload(
+                socksPort,
+                probeIndex
+            );
+
+        probes.push({
+            ...probe,
+            ok:
+                Number(probe?.httpCode) >= 200 &&
+                Number(probe?.httpCode) < 400 &&
+                Number(probe?.bytes) >= WHITE_LIST_SPEED_MIN_BYTES &&
+                Number(probe?.kbps) > 0,
+        });
+
+        if (
+            probeIndex <
+            WHITE_LIST_SPEED_PROBE_COUNT
+        ) {
+            await sleep(
+                QUALITY_PROBE_INTERVAL_MS
+            );
+        }
+    }
+
+    const passed =
+        probes.filter(
+            probe => probe.ok
+        );
+
+    const kbps =
+        passed
+            .map(
+                probe =>
+                    Number(probe.kbps)
+            )
+            .filter(
+                Number.isFinite
+            );
+
+    const sortedKbps =
+        [...kbps].sort(
+            (a, b) => a - b
+        );
+
+    // Use the median of successful probes for THIS server only.
+    // We do not use a pool-wide median as a filter.
+    let medianKbps = 0;
+
+    if (sortedKbps.length) {
+        const middle =
+            Math.floor(
+                sortedKbps.length / 2
+            );
+
+        medianKbps =
+            sortedKbps.length % 2 === 0
+                ? (
+                    sortedKbps[middle - 1] +
+                    sortedKbps[middle]
+                ) / 2
+                : sortedKbps[middle];
+    }
+
+    return {
+        // Any successful real download is enough to establish traffic
+        // reachability. A failed individual probe does not kill the server.
+        ok: passed.length >= WHITE_LIST_SPEED_MIN_PASSES,
+        passedCount: passed.length,
+        probeCount: probes.length,
+        kbps:
+            Math.round(
+                medianKbps * 10
+            ) / 10,
+        minKbps:
+            kbps.length
+                ? Math.min(...kbps)
+                : 0,
+        maxKbps:
+            kbps.length
+                ? Math.max(...kbps)
+                : 0,
+        probes,
+        error:
+            passed.length >= WHITE_LIST_SPEED_MIN_PASSES
+                ? ""
+                : `${passed.length}/${probes.length} White List speed probes passed`,
+    };
+}
+
 async function runQualityDownload(
     socksPort
 ) {
@@ -1496,7 +1623,7 @@ function buildCountryHealthPool(
         groups.set(result.country, bucket);
     }
 
-    return [...groups.entries()]
+    const entries = [...groups.entries()]
         .map(([country, members]) => {
             const sorted = [...members].sort((a, b) => {
                 const aSpeed = Number(a.quality?.kbps) || 0;
@@ -1508,21 +1635,67 @@ function buildCountryHealthPool(
                 return aLatency - bLatency;
             });
 
+            const bestSpeed = Number(sorted[0]?.quality?.kbps) || 0;
+
+            if (
+                whiteListOnly &&
+                bestSpeed < WHITE_LIST_FALLBACK_MIN_KBPS
+            ) {
+                return null;
+            }
+
             const top = sorted.slice(0, COUNTRY_POOL_SIZE);
-            const speeds = top.map(item => Number(item.quality?.kbps)).filter(Number.isFinite);
-            const medianSpeed = median(speeds);
-            const bestSpeed = speeds.length ? Math.max(...speeds) : 0;
+            const speeds = top
+                .map(item => Number(item.quality?.kbps))
+                .filter(Number.isFinite);
+
+            const secondSpeed = speeds[1] || 0;
+            const thirdSpeed = speeds[2] || 0;
+            const goodCount = speeds.filter(
+                speed => speed >= WHITE_LIST_SPEED_MIN_KBPS
+            ).length;
+
+            const countryScore = whiteListOnly
+                ? (
+                    bestSpeed * 0.50 +
+                    secondSpeed * 0.25 +
+                    thirdSpeed * 0.15 +
+                    goodCount * 50
+                )
+                : (
+                    bestSpeed * 0.50 +
+                    secondSpeed * 0.25 +
+                    thirdSpeed * 0.15 +
+                    speeds.length * 10
+                );
 
             return {
                 country,
                 members: top,
                 whiteList: Boolean(whiteListOnly),
-                countryScore:
-                    Math.round((medianSpeed * 0.65 + bestSpeed * 0.35) * 10) / 10,
+                countryScore: Math.round(countryScore * 10) / 10,
+                bestSpeed: Math.round(bestSpeed * 10) / 10,
+                goodServerCount: goodCount,
             };
         })
-        .sort((a, b) => b.countryScore - a.countryScore)
-        .slice(0, MAX_VISIBLE_COUNTRIES);
+        .filter(Boolean)
+        .sort((a, b) => b.countryScore - a.countryScore);
+
+    if (!whiteListOnly) {
+        return entries.slice(0, MAX_VISIBLE_COUNTRIES);
+    }
+
+    // Strong countries (best >= 300 KB/s) always rank ahead of the rare
+    // 200-300 KB/s fallback countries. Fallbacks only fill the remaining
+    // country slots up to the global 20-country cap.
+    const strong = entries.filter(
+        country => country.bestSpeed >= WHITE_LIST_SPEED_MIN_KBPS
+    );
+    const fallback = entries.filter(
+        country => country.bestSpeed < WHITE_LIST_SPEED_MIN_KBPS
+    );
+
+    return [...strong, ...fallback].slice(0, MAX_VISIBLE_COUNTRIES);
 }
 
 function sanitizeId(
@@ -1900,6 +2073,50 @@ async function main() {
                 };
             }
 
+            const isWhiteListCandidate =
+                MANAGED_WHITE_LIST_RE.test(String(item.id || "")) ||
+                Boolean(checkedLinkMeta.get(item.id)?.sourceMeta?.whiteList);
+
+            if (isWhiteListCandidate) {
+                // White List uses an independent health policy:
+                // TCP + Xray startup + real speed probes.
+                //
+                // Do not use Google/gstatic/Cloudflare connectivity gates here:
+                // many otherwise usable White List routes intentionally do not
+                // pass those synthetic probes.
+                //
+                // Do not use Telegram as a mandatory gate either: Telegram can
+                // be temporarily degraded and must never invalidate the whole
+                // White List pool.
+                const quality =
+                    await runWhiteListSpeedDownload(
+                        xray.socksPort
+                    );
+
+                if (!quality.ok) {
+                    return {
+                        item,
+                        ok: false,
+                        reason:
+                            `TCP + Xray passed, but White List speed probes failed: ` +
+                            `${quality.passedCount}/${quality.probeCount}; ` +
+                            `${quality.error || "speed probes failed"}`,
+                        quality,
+                    };
+                }
+
+                return {
+                    item,
+                    ok: true,
+                    protocol,
+                    stages:
+                        `TCP + Xray + speed ${quality.passedCount}/${quality.probeCount} ` +
+                        `(median ${quality.kbps} KB/s)`,
+                    quality,
+                    gaming: null,
+                };
+            }
+
             const targets = [...new Set(
                 HEALTH_TARGET_URLS
                     .map(value => String(value || "").trim())
@@ -1919,12 +2136,8 @@ async function main() {
                 )
             );
 
-            const passedTargets = remote.filter(
-                result => result?.ok
-            );
-            const failedTargets = remote.filter(
-                result => !result?.ok
-            );
+            const passedTargets = remote.filter(result => result?.ok);
+            const failedTargets = remote.filter(result => !result?.ok);
 
             if (passedTargets.length < HEALTH_MIN_TARGET_PASSES) {
                 const details = failedTargets
@@ -1944,10 +2157,7 @@ async function main() {
                 };
             }
 
-            const quality =
-                await runQualityDownload(
-                    xray.socksPort
-                );
+            const quality = await runQualityDownload(xray.socksPort);
 
             if (!quality.ok) {
                 return {
@@ -1963,17 +2173,8 @@ async function main() {
                 };
             }
 
-            const gamingLatency =
-                await measureGamingLatency(
-                    item.link
-                );
-
-            const gaming =
-                getGamingMetrics(
-                    remote,
-                    quality,
-                    gamingLatency
-                );
+            const gamingLatency = await measureGamingLatency(item.link);
+            const gaming = getGamingMetrics(remote, quality, gamingLatency);
 
             return {
                 item,
@@ -1986,8 +2187,7 @@ async function main() {
                 quality,
                 gaming: {
                     ...gaming,
-                    latencyProbeError:
-                        gamingLatency.error || "",
+                    latencyProbeError: gamingLatency.error || "",
                 },
                 remote,
             };
@@ -2025,7 +2225,7 @@ async function main() {
                 MANAGED_WHITE_LIST_RE.test(String(item.id || ""))
             );
 
-            const resolvedCountry =
+            let resolvedCountry =
                 isWhiteList && result.ok
                     ? await resolveWhiteListCountry(
                         String(item.link || ""),
@@ -2037,6 +2237,10 @@ async function main() {
                             .replace(/^\S+\s*/, "")
                             .replace(/\s+\d+$/, "")
                     );
+
+            if (isWhiteList && result.ok && !resolvedCountry) {
+                resolvedCountry = "Europe";
+            }
 
             healthResults.push({
                 id: item.id,
@@ -2051,7 +2255,8 @@ async function main() {
                 reason: result.reason || "",
                 quality: result.quality || null,
                 gaming: result.gaming || null,
-                remote: result.remote || []
+                remote: result.remote || [],
+                telegram: result.telegram || null
             });
 
             if (result.ok) {

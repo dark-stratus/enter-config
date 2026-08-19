@@ -1874,6 +1874,20 @@ function normalizeEntry(entry, index, source, stats = null) {
   };
 }
 
+function setLinkRemark(link, remark) {
+  const value = String(link || "").trim();
+  const label = String(remark || "").trim();
+  if (!value || !label) return value;
+
+  try {
+    const url = new URL(value);
+    url.hash = label;
+    return url.toString();
+  } catch {
+    return value;
+  }
+}
+
 function canonicalCountryEntries(entries) {
   const counters = new Map();
 
@@ -2385,17 +2399,21 @@ async function buildStagedLinks(
 
     const item =
       autoWhiteList[index];
+    const displayRemarks =
+      String(item.remarks || "").trim();
+    const displayLink =
+      setLinkRemark(item.link, displayRemarks);
 
     await fs.writeFile(
       path.join(stageDir, `${id}.link`),
-      `${item.link}\n`,
+      `${displayLink}\n`,
       "utf8"
     );
 
     const entry = {
       id,
-      remarks: item.remarks,
-      link: item.link,
+      remarks: displayRemarks,
+      link: displayLink,
       whiteList: true,
       ...(item.country ? { country: item.country } : {}),
       ...(item.flag ? { flag: item.flag } : {}),
