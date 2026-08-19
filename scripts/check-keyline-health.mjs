@@ -39,6 +39,24 @@ const COUNTRY_BY_FLAG = {
     "🇷🇺": "Russia",
 };
 
+const COUNTRY_ALIASES = {
+    "russian federation": "Russia",
+    "russia": "Russia",
+    "россия": "Russia",
+    "российская федерация": "Russia",
+};
+
+function normalizeCountryName(value = "") {
+    const text = String(value || "")
+        .trim()
+        .replace(/\\s*\\|.*$/u, "")
+        .replace(/\\s+GAMING\\s*$/iu, "")
+        .trim();
+
+    const alias = COUNTRY_ALIASES[text.toLowerCase()];
+    return alias || text;
+}
+
 const WHITE_LIST_GEO_CACHE = new Map();
 
 const ROOT =
@@ -303,8 +321,8 @@ async function resolveWhiteListCountry(link, remarks = "") {
                     ? data.country.trim()
                     : "";
 
-            if (country) WHITE_LIST_GEO_CACHE.set(host, country);
-            return country;
+            if (country) WHITE_LIST_GEO_CACHE.set(host, normalizeCountryName(country));
+            return normalizeCountryName(country);
         } finally {
             clearTimeout(timeout);
         }
@@ -314,11 +332,21 @@ async function resolveWhiteListCountry(link, remarks = "") {
 }
 
 function countryFlag(country = "") {
-    const normalized = String(country || "").trim().toLowerCase();
+    const normalized = normalizeCountryName(country).toLowerCase();
     const found = Object.entries(COUNTRY_BY_FLAG).find(
         ([, value]) => String(value).toLowerCase() === normalized
     );
     return found?.[0] || "";
+}
+
+function setLinkRemark(link, remark) {
+    const raw = String(link || "").trim();
+    const display = String(remark || "").trim();
+    if (!raw || !display) return raw;
+
+    const hashIndex = raw.indexOf("#");
+    const base = hashIndex >= 0 ? raw.slice(0, hashIndex) : raw;
+    return `${base}#${encodeURIComponent(display)}`;
 }
 
 function sleep(ms) {
@@ -2238,6 +2266,10 @@ async function main() {
                             .replace(/\s+\d+$/, "")
                     );
 
+            if (isWhiteList) {
+                resolvedCountry = normalizeCountryName(resolvedCountry);
+            }
+
             if (isWhiteList && result.ok && !resolvedCountry) {
                 resolvedCountry = "Europe";
             }
@@ -2474,6 +2506,36 @@ async function main() {
     await fs.rm(stageDir, { recursive: true, force: true });
     await fs.rm(backupDir, { recursive: true, force: true });
     await fs.cp(LINKS_DIR, stageDir, { recursive: true });
+
+    // HAPP reads the individual .link files, not only index.json. Keep the
+    // generated LTE country remark in both places so flags are visible in
+    // the client instead of leaving the original source remark untouched.
+    for (const item of normalizedIndex) {
+        if (
+            !item ||
+            !item.whiteList ||
+            !MANAGED_WHITE_LIST_RE.test(String(item.id || "")) ||
+            !String(item.remarks || "").trim()
+        ) {
+            continue;
+        }
+
+        const displayLink = setLinkRemark(item.link, item.remarks);
+        if (!displayLink) continue;
+
+        item.link = displayLink;
+
+        const linkPath = path.join(stageDir, `${item.id}.link`);
+        try {
+            await fs.writeFile(
+                linkPath,
+                `${displayLink}\\n`,
+                "utf8"
+            );
+        } catch (error) {
+            if (error.code !== "ENOENT") throw error;
+        }
+    }
 
     const allowedManagedIds = new Set(
         normalizedIndex
