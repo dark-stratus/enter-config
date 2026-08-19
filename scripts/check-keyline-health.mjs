@@ -8,6 +8,38 @@ import crypto from "node:crypto";
 import { spawn } from "node:child_process";
 import { parseLink, buildOutbound } from "./link-runtime.mjs";
 
+const COUNTRY_BY_FLAG = {
+    "🇨🇾": "Cyprus",
+    "🇫🇮": "Finland",
+    "🇫🇷": "France",
+    "🇩🇪": "Germany",
+    "🇳🇱": "Netherlands",
+    "🇸🇪": "Sweden",
+    "🇬🇧": "United Kingdom",
+    "🇺🇸": "United States",
+    "🇨🇦": "Canada",
+    "🇦🇹": "Austria",
+    "🇮🇹": "Italy",
+    "🇪🇸": "Spain",
+    "🇵🇱": "Poland",
+    "🇨🇿": "Czech Republic",
+    "🇳🇴": "Norway",
+    "🇩🇰": "Denmark",
+    "🇧🇪": "Belgium",
+    "🇨🇭": "Switzerland",
+    "🇪🇪": "Estonia",
+    "🇱🇹": "Lithuania",
+    "🇱🇻": "Latvia",
+    "🇷🇴": "Romania",
+    "🇧🇬": "Bulgaria",
+    "🇹🇷": "Turkey",
+    "🇬🇪": "Georgia",
+    "🇰🇿": "Kazakhstan",
+    "🇷🇺": "Russia",
+};
+
+const WHITE_LIST_GEO_CACHE = new Map();
+
 const ROOT =
     path.resolve(
         process.env.GITHUB_WORKSPACE ||
@@ -187,6 +219,82 @@ const HEALTH_MIN_TARGET_PASSES = Math.max(
         Number(process.env.HEALTHCHECK_MIN_TARGET_PASSES) || 2
     )
 );
+
+function extractWhiteListCountryFromRemarks(remarks = "") {
+    const value = String(remarks || "");
+    const flag = value.match(/[\u{1F1E6}-\u{1F1FF}]{2}/u)?.[0] || "";
+    if (flag && COUNTRY_BY_FLAG[flag]) return COUNTRY_BY_FLAG[flag];
+
+    const patterns = [
+        ["Cyprus", /\bCyprus\b/i], ["Finland", /\bFinland\b/i],
+        ["France", /\bFrance\b/i], ["Germany", /\bGermany\b/i],
+        ["Netherlands", /\bNetherlands\b/i], ["Sweden", /\bSweden\b/i],
+        ["United Kingdom", /\bUnited Kingdom\b/i], ["United States", /\bUnited States\b/i],
+        ["Canada", /\bCanada\b/i], ["Austria", /\bAustria\b/i],
+        ["Italy", /\bItaly\b/i], ["Spain", /\bSpain\b/i],
+        ["Poland", /\bPoland\b/i], ["Czech Republic", /\bCzech Republic\b/i],
+        ["Norway", /\bNorway\b/i], ["Denmark", /\bDenmark\b/i],
+        ["Belgium", /\bBelgium\b/i], ["Switzerland", /\bSwitzerland\b/i],
+        ["Estonia", /\bEstonia\b/i], ["Lithuania", /\bLithuania\b/i],
+        ["Latvia", /\bLatvia\b/i], ["Romania", /\bRomania\b/i],
+        ["Bulgaria", /\bBulgaria\b/i], ["Turkey", /\bTurkey\b/i],
+        ["Georgia", /\bGeorgia\b/i], ["Kazakhstan", /\bKazakhstan\b/i],
+        ["Russia", /\bRussia\b/i],
+    ];
+
+    for (const [country, pattern] of patterns) {
+        if (pattern.test(value)) return country;
+    }
+
+    return "";
+}
+
+async function resolveWhiteListCountry(link, remarks = "") {
+    const fromRemarks = extractWhiteListCountryFromRemarks(remarks);
+    if (fromRemarks) return fromRemarks;
+
+    try {
+        const url = new URL(String(link || ""));
+        const host = url.hostname;
+        if (!host) return "";
+
+        if (WHITE_LIST_GEO_CACHE.has(host)) {
+            return WHITE_LIST_GEO_CACHE.get(host);
+        }
+
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 5000);
+
+        try {
+            const response = await fetch(
+                `https://ipwho.is/${encodeURIComponent(host)}?fields=success,country`,
+                { signal: controller.signal, headers: { accept: "application/json" } }
+            );
+
+            if (!response.ok) return "";
+            const data = await response.json();
+            const country =
+                data?.success && typeof data?.country === "string"
+                    ? data.country.trim()
+                    : "";
+
+            if (country) WHITE_LIST_GEO_CACHE.set(host, country);
+            return country;
+        } finally {
+            clearTimeout(timeout);
+        }
+    } catch {
+        return "";
+    }
+}
+
+function countryFlag(country = "") {
+    const normalized = String(country || "").trim().toLowerCase();
+    const found = Object.entries(COUNTRY_BY_FLAG).find(
+        ([, value]) => String(value).toLowerCase() === normalized
+    );
+    return found?.[0] || "";
+}
 
 function sleep(ms) {
     return new Promise(
@@ -1373,89 +1481,48 @@ async function writeGamingAssignments(
 }
 
 function buildCountryHealthPool(
-    healthResults
+    healthResults,
+    whiteListOnly = false
 ) {
     const groups = new Map();
 
     for (const result of healthResults) {
-        if (
-            !result.ok ||
-            !result.country ||
-            MANAGED_WHITE_LIST_RE.test(
-                String(result.id || "")
-            )
-        ) {
-            continue;
-        }
+        if (!result.ok) continue;
+        if (Boolean(result.whiteList) !== Boolean(whiteListOnly)) continue;
+        if (!result.country) continue;
 
-        const bucket =
-            groups.get(result.country) || [];
-
+        const bucket = groups.get(result.country) || [];
         bucket.push(result);
         groups.set(result.country, bucket);
     }
 
     return [...groups.entries()]
         .map(([country, members]) => {
-            const sorted =
-                [...members].sort((a, b) => {
-                    const aSpeed =
-                        Number(a.quality?.kbps) || 0;
-                    const bSpeed =
-                        Number(b.quality?.kbps) || 0;
+            const sorted = [...members].sort((a, b) => {
+                const aSpeed = Number(a.quality?.kbps) || 0;
+                const bSpeed = Number(b.quality?.kbps) || 0;
+                if (aSpeed !== bSpeed) return bSpeed - aSpeed;
 
-                    if (aSpeed !== bSpeed) {
-                        return bSpeed - aSpeed;
-                    }
+                const aLatency = Number(a.gaming?.medianLatencyMs) || Infinity;
+                const bLatency = Number(b.gaming?.medianLatencyMs) || Infinity;
+                return aLatency - bLatency;
+            });
 
-                    const aLatency =
-                        Number(a.gaming?.medianLatencyMs) || Infinity;
-                    const bLatency =
-                        Number(b.gaming?.medianLatencyMs) || Infinity;
-
-                    return aLatency - bLatency;
-                });
-
-            const top =
-                sorted.slice(
-                    0,
-                    COUNTRY_POOL_SIZE
-                );
-
-            const speeds =
-                top
-                    .map(item => Number(item.quality?.kbps))
-                    .filter(Number.isFinite);
-
-            const medianSpeed =
-                median(speeds);
-
-            const bestSpeed =
-                speeds.length
-                    ? Math.max(...speeds)
-                    : 0;
+            const top = sorted.slice(0, COUNTRY_POOL_SIZE);
+            const speeds = top.map(item => Number(item.quality?.kbps)).filter(Number.isFinite);
+            const medianSpeed = median(speeds);
+            const bestSpeed = speeds.length ? Math.max(...speeds) : 0;
 
             return {
                 country,
                 members: top,
+                whiteList: Boolean(whiteListOnly),
                 countryScore:
-                    Math.round(
-                        (
-                            medianSpeed * 0.65 +
-                            bestSpeed * 0.35
-                        ) * 10
-                    ) / 10
+                    Math.round((medianSpeed * 0.65 + bestSpeed * 0.35) * 10) / 10,
             };
         })
-        .sort(
-            (a, b) =>
-                b.countryScore -
-                a.countryScore
-        )
-        .slice(
-            0,
-            MAX_VISIBLE_COUNTRIES
-        );
+        .sort((a, b) => b.countryScore - a.countryScore)
+        .slice(0, MAX_VISIBLE_COUNTRIES);
 }
 
 function sanitizeId(
@@ -1953,10 +2020,29 @@ async function main() {
                 );
 
             const meta = checkedLinkMeta.get(item.id) || {};
+            const isWhiteList = Boolean(
+                meta.sourceMeta?.whiteList ||
+                MANAGED_WHITE_LIST_RE.test(String(item.id || ""))
+            );
+
+            const resolvedCountry =
+                isWhiteList && result.ok
+                    ? await resolveWhiteListCountry(
+                        String(item.link || ""),
+                        String(item.remarks || "")
+                    )
+                    : (
+                        meta.sourceMeta?.country ||
+                        String(item.remarks || "")
+                            .replace(/^\S+\s*/, "")
+                            .replace(/\s+\d+$/, "")
+                    );
+
             healthResults.push({
                 id: item.id,
                 remarks: item.remarks || "",
-                country: meta.sourceMeta?.country || String(item.remarks || "").replace(/^\S+\s*/, "").replace(/\s+\d+$/, ""),
+                country: resolvedCountry,
+                whiteList: isWhiteList,
                 source: meta.sourceMeta?.source || "retained/manual",
                 linkFingerprint: meta.linkFingerprint || "",
                 ok: result.ok,
@@ -2020,61 +2106,69 @@ async function main() {
     }
 
     const selectedCountries =
-        buildCountryHealthPool(
-            healthResults
-        );
+        buildCountryHealthPool(healthResults, false);
 
-    const selectedFingerprints =
+    const selectedWhiteListCountries =
+        buildCountryHealthPool(healthResults, true);
+
+    const selectedRegularFingerprints =
         new Set(
             selectedCountries.flatMap(
-                country =>
-                    country.members.map(
-                        member =>
-                            member.linkFingerprint
-                    )
+                country => country.members.map(member => member.linkFingerprint)
+            )
+        );
+
+    const selectedWhiteListFingerprints =
+        new Set(
+            selectedWhiteListCountries.flatMap(
+                country => country.members.map(member => member.linkFingerprint)
             )
         );
 
     const selectedRegularIds =
         new Set(
             healthResults
-                .filter(
-                    result =>
-                        result.ok &&
-                        selectedFingerprints.has(
-                            result.linkFingerprint
-                        )
+                .filter(result =>
+                    result.ok &&
+                    !result.whiteList &&
+                    selectedRegularFingerprints.has(result.linkFingerprint)
                 )
-                .map(
-                    result =>
-                        result.id
+                .map(result => result.id)
+        );
+
+    const selectedWhiteListIds =
+        new Set(
+            healthResults
+                .filter(result =>
+                    result.ok &&
+                    result.whiteList &&
+                    selectedWhiteListFingerprints.has(result.linkFingerprint)
                 )
+                .map(result => result.id)
         );
 
     for (const item of managedItems) {
         const id =
             String(item.id || "");
 
-        if (
-            MANAGED_WHITE_LIST_RE.test(id)
-        ) {
-            const passedWhiteList =
-                healthResults.some(
-                    result =>
-                        result.id === id &&
-                        result.ok
+        if (MANAGED_WHITE_LIST_RE.test(id)) {
+            if (selectedWhiteListIds.has(id)) {
+                const result = healthResults.find(
+                    candidate => candidate.id === id && candidate.ok
                 );
-
-            if (passedWhiteList) {
-                nextIndex.push(item);
+                nextIndex.push({
+                    ...item,
+                    remarks: result?.country
+                        ? `${countryFlag(result.country)} 🏳️ LTE ${result.country}`
+                        : item.remarks,
+                    country: result?.country || item.country || "",
+                    whiteList: true,
+                });
             }
-
             continue;
         }
 
-        if (
-            selectedRegularIds.has(id)
-        ) {
+        if (selectedRegularIds.has(id)) {
             nextIndex.push(item);
         }
     }
@@ -2096,11 +2190,12 @@ async function main() {
 
     const selectedRegularOrder =
         selectedCountries.flatMap(
-            country =>
-                country.members.map(
-                    member =>
-                        member.id
-                )
+            country => country.members.map(member => member.id)
+        );
+
+    const selectedWhiteListOrder =
+        selectedWhiteListCountries.flatMap(
+            country => country.members.map(member => member.id)
         );
 
     const regularById =
@@ -2142,7 +2237,9 @@ async function main() {
         ...selectedRegularOrder
             .map(id => regularById.get(id))
             .filter(Boolean),
-        ...selectedWhiteLists
+        ...selectedWhiteListOrder
+            .map(id => nextIndex.find(item => String(item.id || "") === id))
+            .filter(Boolean)
     );
 
     const normalizedIndex =
@@ -2290,19 +2387,23 @@ async function main() {
         selectedCountries:
             selectedCountries.map(
                 country => ({
-                    country:
-                        country.country,
-                    members:
-                        country.members.map(
-                            member => ({
-                                id:
-                                    member.id,
-                                kbps:
-                                    Number(member.quality?.kbps) || 0
-                            })
-                        ),
-                    score:
-                        country.countryScore
+                    country: country.country,
+                    members: country.members.map(member => ({
+                        id: member.id,
+                        kbps: Number(member.quality?.kbps) || 0
+                    })),
+                    score: country.countryScore
+                })
+            ),
+        selectedWhiteListCountries:
+            selectedWhiteListCountries.map(
+                country => ({
+                    country: country.country,
+                    members: country.members.map(member => ({
+                        id: member.id,
+                        kbps: Number(member.quality?.kbps) || 0
+                    })),
+                    score: country.countryScore
                 })
             ),
         gaming:

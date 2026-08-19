@@ -15,6 +15,13 @@ const REGULAR_LIMIT = Number.POSITIVE_INFINITY;
 const AUTO_WHITE_LIST_LIMIT = 20;
 const SUCCESS_INTERVAL_MS = 1 * 60 * 60 * 1000;
 
+const BUILTIN_WHITE_LIST_SOURCES = [
+  "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/Vless-Reality-White-Lists-Rus-Mobile.txt",
+  "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/WHITE-SNI-RU-all.txt",
+  "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/WHITE-CIDR-RU-checked.txt",
+  "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/WHITE-CIDR-RU-all.txt",
+];
+
 const FETCH_TIMEOUT_MS = 60_000;
 const FETCH_RETRIES = 4;
 const FETCH_RETRY_DELAY_MS = 2_000;
@@ -1190,9 +1197,10 @@ async function fetchKeylineSources() {
     return true;
   });
 
-  const dedicatedWhiteListUrls = parseUrlList(
-    process.env.KEYLINE_WHITE_LIST_URLS
-  ).filter((url, index, list) => list.indexOf(url) === index);
+  const dedicatedWhiteListUrls = [
+    ...parseUrlList(process.env.KEYLINE_WHITE_LIST_URLS),
+    ...BUILTIN_WHITE_LIST_SOURCES,
+  ].filter((url, index, list) => list.indexOf(url) === index);
 
   const sources = [];
   const failures = [];
@@ -1219,7 +1227,11 @@ async function fetchKeylineSources() {
     const request = fetchQueue[index];
     const urlFingerprint = fingerprintUrl(request.url);
     const startedAt = Date.now();
-    const clientIdentity = await getHappClientIdentity(request.url);
+    const clientIdentity =
+      request.scope === "whitelist" &&
+      /(?:githubusercontent\.com|github\.com)/i.test(request.url)
+        ? KEYLINE_DEVICE_PROFILES[0]
+        : await getHappClientIdentity(request.url);
 
     console.log(
       `${request.label}: device=${clientIdentity.deviceModel}, ` +
@@ -1685,13 +1697,15 @@ function normalizeProfileLink(link, index, source, forceWhiteList = false, stats
 
   const normalized =
     normalizeCountryRemark(remarks, {});
-  if (!normalized) {
+
+  if (!normalized && !forceWhiteList) {
     if (stats) {
       stats.droppedUnknownCountry += 1;
       recordDropSample(stats, { index, reason: "unknown-country", remarks });
     }
     return null;
   }
+
   if (stats) stats.parsed += 1;
 
   return {
@@ -1699,9 +1713,9 @@ function normalizeProfileLink(link, index, source, forceWhiteList = false, stats
     source,
     sourceKind: "links",
     originalRemarks: remarks,
-    flag: normalized.flag,
-    country: normalized.country,
-    whiteList: forceWhiteList || normalized.whiteList,
+    flag: normalized?.flag || "",
+    country: forceWhiteList ? "" : (normalized?.country || ""),
+    whiteList: forceWhiteList || Boolean(normalized?.whiteList),
     link: canonicalLink,
   };
 }
@@ -1935,9 +1949,36 @@ function dedupe(entries) {
   const result = [];
 
   for (const item of entries) {
-    if (seen.has(item.link)) continue;
+    const link = String(item?.link || "").trim();
+    if (!link) continue;
 
-    seen.add(item.link);
+    let key = link;
+
+    try {
+      const url = new URL(link);
+      const params = [...url.searchParams.entries()]
+        .sort(([aKey, aValue], [bKey, bValue]) =>
+          aKey.localeCompare(bKey) ||
+          aValue.localeCompare(bValue)
+        );
+
+      // Deduplicate only the same connection tuple. Fragment/remarks are
+      // metadata, while SNI/Host/fingerprint and other transport parameters
+      // remain part of the identity. This intentionally does NOT collapse
+      // multiple White List routes that share a Max/Yandex/etc. SNI but use
+      // different real endpoints or transport settings.
+      key = JSON.stringify({
+        protocol: url.protocol.toLowerCase(),
+        host: url.hostname.toLowerCase(),
+        port: Number(url.port || 0),
+        username: url.username,
+        password: url.password,
+        params,
+      });
+    } catch {}
+
+    if (seen.has(key)) continue;
+    seen.add(key);
     result.push(item);
   }
 
@@ -2458,25 +2499,16 @@ async function main() {
     merged.regular
   );
 
-  const autoCandidates = deduped.filter(
-    item => item.isAutoWhiteListCandidate
-  );
-
-  const autoWhiteList = canonicalAutoWhiteList(autoCandidates);
-  const remainingWhiteListSlots = Math.max(
-    AUTO_WHITE_LIST_LIMIT - autoWhiteList.length,
-    0
-  );
-
-  const whiteListLocations = normalizeWhiteListEntries(
-    merged.whiteList,
-    autoWhiteList.length > 0 ? 3 : 2
-  );
-
-  const automaticWhiteList = [
-    ...autoWhiteList,
-    ...whiteListLocations.slice(0, remainingWhiteListSlots),
-  ];
+  // Keep all White List candidates until after health-check. We do not
+  // assign countries or rewrite names here: only a passed candidate gets
+  // grouped later into a country LTE balancer.
+  const automaticWhiteList = merged.whiteList
+    .filter(item => item && item.link)
+    .map(item => ({
+      ...item,
+      whiteList: true,
+      remarks: String(item.originalRemarks || item.remarks || "").trim(),
+    }));
 
   if (regular.length === 0 && automaticWhiteList.length === 0) {
     throw new Error(
