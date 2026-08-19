@@ -123,6 +123,8 @@ function buildVless(server, tag) {
                             id: server.uuid,
                             encryption: "none",
                             flow: server.flow || "",
+                            level: 8,
+                            security: "auto",
                         },
                     ],
                 },
@@ -219,6 +221,7 @@ function buildVlessStream(server) {
 
         stream.network = "xhttp";
         stream.xhttpSettings = {
+            ...extra,
             mode: extra.mode || server.mode || "packet-up",
             host: extra.host || server.host || "",
             path: extra.path || server.path || "",

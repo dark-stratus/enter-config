@@ -1710,7 +1710,20 @@ function normalizeProfileLink(link, index, source, forceWhiteList = false, stats
   const normalized =
     normalizeCountryRemark(remarks, {});
 
-  if (!normalized && !forceWhiteList) {
+  // White List entries must never be discarded merely because the source
+  // remark does not contain a recognizable country. HAPP keeps such entries;
+  // we publish them later under the neutral Europe bucket.
+  const effective =
+    normalized ||
+    (forceWhiteList
+      ? {
+          flag: "🇪🇺",
+          country: "Europe",
+          whiteList: true,
+        }
+      : null);
+
+  if (!effective) {
     if (stats) {
       stats.droppedUnknownCountry += 1;
       recordDropSample(stats, { index, reason: "unknown-country", remarks });
@@ -1725,9 +1738,9 @@ function normalizeProfileLink(link, index, source, forceWhiteList = false, stats
     source,
     sourceKind: "links",
     originalRemarks: remarks,
-    flag: normalized?.flag || "",
-    country: forceWhiteList ? "" : (normalized?.country || ""),
-    whiteList: forceWhiteList || Boolean(normalized?.whiteList),
+    flag: effective.flag || "",
+    country: effective.country || "",
+    whiteList: forceWhiteList || Boolean(effective.whiteList),
     link: canonicalLink,
   };
 }
