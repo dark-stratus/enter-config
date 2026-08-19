@@ -378,12 +378,13 @@ function countryFlag(country = "") {
 
 function setLinkRemark(link, remark) {
     const raw = String(link || "").trim();
-    const display = String(remark || "").trim();
-    if (!raw || !display) return raw;
+    if (!raw) return raw;
 
+    // White List display names belong exclusively to index.json.
+    // Strip any upstream fragment from the published .link URI so HAPP
+    // cannot mistake an upstream remark for the location name/flag.
     const hashIndex = raw.indexOf("#");
-    const base = hashIndex >= 0 ? raw.slice(0, hashIndex) : raw;
-    return `${base}#${encodeURIComponent(display)}`;
+    return hashIndex >= 0 ? raw.slice(0, hashIndex) : raw;
 }
 
 function sleep(ms) {
@@ -2556,9 +2557,9 @@ async function main() {
     await fs.rm(backupDir, { recursive: true, force: true });
     await fs.cp(LINKS_DIR, stageDir, { recursive: true });
 
-    // HAPP reads the individual .link files, not only index.json. Keep the
-    // generated LTE country remark in both places so flags are visible in
-    // the client instead of leaving the original source remark untouched.
+    // HAPP receives the location label from index.json. Keep the individual
+    // .link URI purely technical: strip the upstream fragment/remark so it
+    // cannot override or confuse the display name stored in index.json.
     for (const item of normalizedIndex) {
         if (
             !item ||
