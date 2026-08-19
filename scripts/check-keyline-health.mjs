@@ -47,14 +47,29 @@ const COUNTRY_ALIASES = {
 };
 
 function normalizeCountryName(value = "") {
-    const text = String(value || "")
-        .trim()
-        .replace(/\\s*\\|.*$/u, "")
-        .replace(/\\s+GAMING\\s*$/iu, "")
+    const raw = String(value || "")
         .trim();
 
-    const alias = COUNTRY_ALIASES[text.toLowerCase()];
-    return alias || text;
+    if (!raw) return "";
+
+    const cleaned = raw
+        .replace(/\|.*$/u, "")
+        .replace(/\bGAMING\b.*$/iu, "")
+        .replace(/\s+/gu, " ")
+        .trim();
+
+    const aliasKey = cleaned.toLowerCase();
+
+    const aliases = {
+        ...COUNTRY_ALIASES,
+        "the netherlands": "Netherlands",
+        "netherlands": "Netherlands",
+        "россия": "Russia",
+        "российская федерация": "Russia",
+        "russian federation": "Russia",
+    };
+
+    return aliases[aliasKey] || cleaned;
 }
 
 const WHITE_LIST_GEO_CACHE = new Map();
@@ -264,25 +279,41 @@ const HEALTH_MIN_TARGET_PASSES = Math.max(
 );
 
 function extractWhiteListCountryFromRemarks(remarks = "") {
-    const value = String(remarks || "");
-    const flag = value.match(/[\u{1F1E6}-\u{1F1FF}]{2}/u)?.[0] || "";
-    if (flag && COUNTRY_BY_FLAG[flag]) return COUNTRY_BY_FLAG[flag];
+    const value = String(remarks || "").trim();
+
+    const flagMatch = value.match(/[\u{1F1E6}-\u{1F1FF}]{2}/u)?.[0] || "";
+    if (flagMatch && COUNTRY_BY_FLAG[flagMatch]) {
+        return COUNTRY_BY_FLAG[flagMatch];
+    }
 
     const patterns = [
-        ["Cyprus", /\bCyprus\b/i], ["Finland", /\bFinland\b/i],
-        ["France", /\bFrance\b/i], ["Germany", /\bGermany\b/i],
-        ["Netherlands", /\bNetherlands\b/i], ["Sweden", /\bSweden\b/i],
-        ["United Kingdom", /\bUnited Kingdom\b/i], ["United States", /\bUnited States\b/i],
-        ["Canada", /\bCanada\b/i], ["Austria", /\bAustria\b/i],
-        ["Italy", /\bItaly\b/i], ["Spain", /\bSpain\b/i],
-        ["Poland", /\bPoland\b/i], ["Czech Republic", /\bCzech Republic\b/i],
-        ["Norway", /\bNorway\b/i], ["Denmark", /\bDenmark\b/i],
-        ["Belgium", /\bBelgium\b/i], ["Switzerland", /\bSwitzerland\b/i],
-        ["Estonia", /\bEstonia\b/i], ["Lithuania", /\bLithuania\b/i],
-        ["Latvia", /\bLatvia\b/i], ["Romania", /\bRomania\b/i],
-        ["Bulgaria", /\bBulgaria\b/i], ["Turkey", /\bTurkey\b/i],
-        ["Georgia", /\bGeorgia\b/i], ["Kazakhstan", /\bKazakhstan\b/i],
-        ["Russia", /\bRussia\b/i],
+        ["Cyprus", /\bCyprus\b/i],
+        ["Finland", /\bFinland\b/i],
+        ["France", /\bFrance\b/i],
+        ["Germany", /\bGermany\b/i],
+        ["Netherlands", /\b(?:The\s+)?Netherlands\b/i],
+        ["Sweden", /\bSweden\b/i],
+        ["United Kingdom", /\bUnited Kingdom\b/i],
+        ["United States", /\bUnited States\b/i],
+        ["Canada", /\bCanada\b/i],
+        ["Austria", /\bAustria\b/i],
+        ["Italy", /\bItaly\b/i],
+        ["Spain", /\bSpain\b/i],
+        ["Poland", /\bPoland\b/i],
+        ["Czech Republic", /\bCzech Republic\b/i],
+        ["Norway", /\bNorway\b/i],
+        ["Denmark", /\bDenmark\b/i],
+        ["Belgium", /\bBelgium\b/i],
+        ["Switzerland", /\bSwitzerland\b/i],
+        ["Estonia", /\bEstonia\b/i],
+        ["Lithuania", /\bLithuania\b/i],
+        ["Latvia", /\bLatvia\b/i],
+        ["Romania", /\bRomania\b/i],
+        ["Bulgaria", /\bBulgaria\b/i],
+        ["Turkey", /\bTurkey\b/i],
+        ["Georgia", /\bGeorgia\b/i],
+        ["Kazakhstan", /\bKazakhstan\b/i],
+        ["Russia", /\b(?:Russia|Russian\s+Federation)\b/i],
     ];
 
     for (const [country, pattern] of patterns) {
@@ -332,11 +363,17 @@ async function resolveWhiteListCountry(link, remarks = "") {
 }
 
 function countryFlag(country = "") {
-    const normalized = normalizeCountryName(country).toLowerCase();
-    const found = Object.entries(COUNTRY_BY_FLAG).find(
-        ([, value]) => String(value).toLowerCase() === normalized
+    const normalized = normalizeCountryName(country);
+
+    if (!normalized) return "";
+
+    const direct = Object.entries(COUNTRY_BY_FLAG).find(
+        ([, value]) =>
+            normalizeCountryName(value).toLowerCase() ===
+            normalized.toLowerCase()
     );
-    return found?.[0] || "";
+
+    return direct?.[0] || "";
 }
 
 function setLinkRemark(link, remark) {
@@ -2253,11 +2290,23 @@ async function main() {
                 MANAGED_WHITE_LIST_RE.test(String(item.id || ""))
             );
 
+            const remarkCountry =
+                isWhiteList
+                    ? normalizeCountryName(
+                        extractWhiteListCountryFromRemarks(
+                            String(item.remarks || "")
+                        )
+                    )
+                    : "";
+
             let resolvedCountry =
                 isWhiteList && result.ok
-                    ? await resolveWhiteListCountry(
-                        String(item.link || ""),
-                        String(item.remarks || "")
+                    ? (
+                        remarkCountry ||
+                        await resolveWhiteListCountry(
+                            String(item.link || ""),
+                            String(item.remarks || "")
+                        )
                     )
                     : (
                         meta.sourceMeta?.country ||
@@ -2396,7 +2445,7 @@ async function main() {
                 nextIndex.push({
                     ...item,
                     remarks: result?.country
-                        ? `${countryFlag(result.country)} 🏳️ LTE ${result.country}`
+                        ? `${countryFlag(result.country) || "🇪🇺"} 🏳️ LTE ${result.country}`
                         : item.remarks,
                     country: result?.country || item.country || "",
                     whiteList: true,
