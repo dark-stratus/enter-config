@@ -160,8 +160,8 @@
       "settings": {
         "vnext": [
           {
-            "address": "selec24.apruxdomain.website",
-            "port": 444,
+            "address": "185.186.77.241",
+            "port": 443,
             "users": [
               {
                 "id": "e75ad2eb-6c1f-45ce-8023-f5f10875df66",
@@ -173,20 +173,27 @@
         ]
       },
       "streamSettings": {
-        "network": "ws",
-        "wsSettings": {
-          "path": "/api/v1/channel/f8cada4e2b",
-          "host": "selec24.apruxdomain.website",
-          "headers": {}
+        "network": "xhttp",
+        "xhttpSettings": {
+          "mode": "packet-up",
+          "host": "al10.eu-cdn539.com",
+          "path": "/bdf4eb42aaf694f3600c3dce21c595e2",
+          "extra": {
+            "xmux": {
+              "cMaxReuseTimes": "64-128",
+              "maxConcurrency": "16-32",
+              "hKeepAlivePeriod": 25,
+              "hMaxRequestTimes": "800-1200",
+              "hMaxReusableSecs": "1800-3600"
+            }
+          }
         },
-        "security": "tls",
-        "tlsSettings": {
-          "serverName": "selec24.apruxdomain.website",
-          "enableSessionResumption": false,
-          "fingerprint": "firefox",
-          "alpn": [
-            "http/1.1"
-          ]
+        "security": "reality",
+        "realitySettings": {
+          "serverName": "al10.eu-cdn539.com",
+          "publicKey": "ntknhXglRjDd-WWKizlU6L5yQSY2vKbH8TtilcLyUns",
+          "shortId": "429e5d26fdaeccf1",
+          "fingerprint": "firefox"
         }
       }
     },
@@ -199,5 +206,5 @@
       "protocol": "blackhole"
     }
   ],
-  "remarks": "🌐 Белый интернет"
+  "remarks": "🇦🇱 Албания"
 }
