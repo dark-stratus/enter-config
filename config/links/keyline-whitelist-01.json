@@ -160,27 +160,33 @@
       "settings": {
         "vnext": [
           {
-            "address": "185.246.131.133",
-            "port": 443,
+            "address": "selec24.apruxdomain.website",
+            "port": 444,
             "users": [
               {
                 "id": "e75ad2eb-6c1f-45ce-8023-f5f10875df66",
                 "encryption": "none",
-                "flow": "xtls-rprx-vision"
+                "flow": ""
               }
             ]
           }
         ]
       },
       "streamSettings": {
-        "network": "tcp",
-        "tcpSettings": {},
-        "security": "reality",
-        "realitySettings": {
-          "serverName": "bg6.eu-cdn294.com",
-          "publicKey": "vb8jyGUiNBixZUCc_putqk-USe5yL7EvFZJkn8Ou8kI",
-          "shortId": "f93d1258c00ccf55",
-          "fingerprint": "firefox"
+        "network": "ws",
+        "wsSettings": {
+          "path": "/api/v1/channel/f8cada4e2b",
+          "host": "selec24.apruxdomain.website",
+          "headers": {}
+        },
+        "security": "tls",
+        "tlsSettings": {
+          "serverName": "selec24.apruxdomain.website",
+          "enableSessionResumption": false,
+          "fingerprint": "firefox",
+          "alpn": [
+            "http/1.1"
+          ]
         }
       }
     },
@@ -193,5 +199,5 @@
       "protocol": "blackhole"
     }
   ],
-  "remarks": "🇧🇬 Болгария"
+  "remarks": "🌐 Белый интернет"
 }
