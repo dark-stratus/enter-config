@@ -145,7 +145,7 @@ const QUALITY_MIN_BYTES =
 const QUALITY_MIN_KBPS =
     Math.max(
         16,
-        Number(process.env.HEALTHCHECK_QUALITY_MIN_KBPS) || 640
+        Number(process.env.HEALTHCHECK_QUALITY_MIN_KBPS) || 300
     );
 
 const QUALITY_PROBE_COUNT =
