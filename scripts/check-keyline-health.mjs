@@ -1710,39 +1710,20 @@ function buildCountryHealthPool(
                 return aLatency - bLatency;
             });
 
-            const bestSpeed = Number(sorted[0]?.quality?.kbps) || 0;
-
-            if (
-                whiteListOnly &&
-                bestSpeed < WHITE_LIST_FALLBACK_MIN_KBPS
-            ) {
-                return null;
-            }
-
             const top = sorted.slice(0, COUNTRY_POOL_SIZE);
             const speeds = top
                 .map(item => Number(item.quality?.kbps))
                 .filter(Number.isFinite);
 
+            const bestSpeed = speeds[0] || 0;
             const secondSpeed = speeds[1] || 0;
             const thirdSpeed = speeds[2] || 0;
-            const goodCount = speeds.filter(
-                speed => speed >= WHITE_LIST_SPEED_MIN_KBPS
-            ).length;
 
-            const countryScore = whiteListOnly
-                ? (
-                    bestSpeed * 0.50 +
-                    secondSpeed * 0.25 +
-                    thirdSpeed * 0.15 +
-                    goodCount * 50
-                )
-                : (
-                    bestSpeed * 0.50 +
-                    secondSpeed * 0.25 +
-                    thirdSpeed * 0.15 +
-                    speeds.length * 10
-                );
+            const countryScore =
+                bestSpeed * 0.50 +
+                secondSpeed * 0.25 +
+                thirdSpeed * 0.15 +
+                speeds.length * 10;
 
             return {
                 country,
@@ -1750,29 +1731,13 @@ function buildCountryHealthPool(
                 whiteList: Boolean(whiteListOnly),
                 countryScore: Math.round(countryScore * 10) / 10,
                 bestSpeed: Math.round(bestSpeed * 10) / 10,
-                goodServerCount: goodCount,
+                goodServerCount: speeds.length,
             };
         })
-        .filter(Boolean)
         .sort((a, b) => b.countryScore - a.countryScore);
 
-    if (!whiteListOnly) {
-        return entries.slice(0, MAX_VISIBLE_COUNTRIES);
-    }
-
-    // Strong countries (best >= 300 KB/s) always rank ahead of the rare
-    // 200-300 KB/s fallback countries. Fallbacks only fill the remaining
-    // country slots up to the global 20-country cap.
-    const strong = entries.filter(
-        country => country.bestSpeed >= WHITE_LIST_SPEED_MIN_KBPS
-    );
-    const fallback = entries.filter(
-        country => country.bestSpeed < WHITE_LIST_SPEED_MIN_KBPS
-    );
-
-    return [...strong, ...fallback].slice(0, MAX_VISIBLE_COUNTRIES);
+    return entries.slice(0, MAX_VISIBLE_COUNTRIES);
 }
-
 function sanitizeId(
     value
 ) {
