@@ -229,8 +229,8 @@ const GAMING_MIN_QUALITY_PASSES =
     Math.max(
         1,
         Math.min(
-            QUALITY_PROBE_COUNT,
-            Number(process.env.HEALTHCHECK_GAMING_MIN_QUALITY_PASSES) || QUALITY_PROBE_COUNT
+            INDEPENDENT_SPEED_PROVIDERS.length,
+            Number(process.env.HEALTHCHECK_GAMING_MIN_QUALITY_PASSES) || 1
         )
     );
 
