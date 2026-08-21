@@ -289,26 +289,40 @@ jobs:
 
           .xray/xray version
 
-      - name: Check Keyline server health (TCP + Xray + HTTPS + real download)
+      - name: Install independent speed-test client
+        if: ${{ steps.keyline_generation.outputs.refreshed == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m pip install --disable-pip-version-check --no-input "websocket-client[socks]==1.9.0"
+
+      - name: Check Keyline server health (TCP + Xray + independent multi-provider speed)
         if: ${{ steps.keyline_generation.outputs.refreshed == 'true' }}
         id: health
         env:
           XRAY_BIN: ${{ github.workspace }}/.xray/xray
+          HEALTHCHECK_PYTHON: python3
+          HEALTHCHECK_MLAB_PROBE_SCRIPT: ${{ github.workspace }}/scripts/ndt7-probe.py
+          HEALTHCHECK_SPEED_MIN_PROVIDER_PASSES: 2
+          HEALTHCHECK_SPEED_MIN_MEDIAN_KBPS: 128
+          HEALTHCHECK_SPEED_TIMEOUT_MS: 18000
+          HEALTHCHECK_CLOUDFLARE_URL: https://speed.cloudflare.com/__down?bytes=4194304
+          HEALTHCHECK_HETZNER_URL: https://fsn1-speed.hetzner.com/10MB.bin
           HEALTH_CANDIDATES_FILE: ${{ github.workspace }}/config/keyline-health-candidates.json
           HEALTHCHECK_CONCURRENCY: 8
-          HEALTHCHECK_QUALITY_URL: https://speed.cloudflare.com/__down?bytes=1048576
-          HEALTHCHECK_QUALITY_TIMEOUT_MS: 20000
-          HEALTHCHECK_QUALITY_MIN_BYTES: 1048576
-          HEALTHCHECK_QUALITY_MIN_KBPS: 300
-          HEALTHCHECK_QUALITY_PROBE_COUNT: 3
-          HEALTHCHECK_QUALITY_MIN_PASSES: 2
-          HEALTHCHECK_QUALITY_PROBE_INTERVAL_MS: 5000
+          HEALTHCHECK_QUALITY_URL: https://speed.cloudflare.com/__down?bytes=4194304
+          HEALTHCHECK_QUALITY_TIMEOUT_MS: 18000
+          HEALTHCHECK_QUALITY_MIN_BYTES: 4194304
+          HEALTHCHECK_QUALITY_MIN_KBPS: 128
+          HEALTHCHECK_QUALITY_PROBE_COUNT: 1
+          HEALTHCHECK_QUALITY_MIN_PASSES: 1
+          HEALTHCHECK_QUALITY_PROBE_INTERVAL_MS: 1000
           HEALTHCHECK_MAX_COUNTRIES: 20
           HEALTHCHECK_COUNTRY_POOL_SIZE: 6
           HEALTHCHECK_GAMING_MIN_KBPS: 512
           HEALTHCHECK_GAMING_MAX_LATENCY_MS: 90
           HEALTHCHECK_GAMING_MAX_LATENCY_SPREAD_MS: 25
-          HEALTHCHECK_GAMING_MIN_QUALITY_PASSES: 3
+          HEALTHCHECK_GAMING_MIN_QUALITY_PASSES: 2
           HEALTHCHECK_TARGET_URLS: >-
             https://www.gstatic.com/generate_204,
             https://www.google.com/generate_204,
