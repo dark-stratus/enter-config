@@ -193,6 +193,64 @@ const WHITE_LIST_SPEED_MIN_BYTES = Math.max(
     Number(process.env.HEALTHCHECK_WHITE_LIST_SPEED_MIN_BYTES) || 32768
 );
 
+
+const INDEPENDENT_SPEED_PROVIDER_MIN_PASSES =
+    Math.max(
+        2,
+        Math.min(
+            3,
+            Number(process.env.HEALTHCHECK_SPEED_MIN_PROVIDER_PASSES) || 2
+        )
+    );
+
+const INDEPENDENT_SPEED_MIN_MEDIAN_KBPS =
+    Math.max(
+        64,
+        Number(process.env.HEALTHCHECK_SPEED_MIN_MEDIAN_KBPS) || 128
+    );
+
+const INDEPENDENT_SPEED_TIMEOUT_MS =
+    Math.max(
+        5000,
+        Number(process.env.HEALTHCHECK_SPEED_TIMEOUT_MS) || 18000
+    );
+
+const INDEPENDENT_SPEED_PROVIDERS = [
+    {
+        id: "cloudflare",
+        label: "Cloudflare",
+        type: "curl",
+        url:
+            process.env.HEALTHCHECK_CLOUDFLARE_URL ||
+            "https://speed.cloudflare.com/__down?bytes=4194304"
+    },
+    {
+        id: "hetzner",
+        label: "Hetzner",
+        type: "curl",
+        url:
+            process.env.HEALTHCHECK_HETZNER_URL ||
+            "https://fsn1-speed.hetzner.com/10MB.bin"
+    },
+    {
+        id: "mlab",
+        label: "M-Lab NDT7",
+        type: "ndt7"
+    }
+];
+
+const MLAB_PROBE_SCRIPT =
+    process.env.HEALTHCHECK_MLAB_PROBE_SCRIPT ||
+    path.join(
+        ROOT,
+        "scripts",
+        "ndt7-probe.py"
+    );
+
+const PYTHON_BIN =
+    process.env.HEALTHCHECK_PYTHON ||
+    "python3";
+
 const HEALTH_CONCURRENCY =
     Math.max(
         1,
@@ -1234,6 +1292,403 @@ async function runWhiteListSpeedDownload(socksPort) {
     };
 }
 
+
+async function runIndependentCurlSpeedProvider(
+    socksPort,
+    provider
+) {
+    const startedAt = Date.now();
+    const probeUrl = (() => {
+        try {
+            const url = new URL(provider.url);
+            url.searchParams.set(
+                "hc_probe",
+                `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+            );
+            return url.toString();
+        } catch {
+            return provider.url;
+        }
+    })();
+
+    return await new Promise(resolve => {
+        const args = [
+            "--silent",
+            "--show-error",
+            "--fail",
+            "--connect-timeout",
+            "5",
+            "--max-time",
+            String(
+                Math.ceil(
+                    INDEPENDENT_SPEED_TIMEOUT_MS / 1000
+                )
+            ),
+            "--proxy",
+            `socks5h://127.0.0.1:${socksPort}`,
+            "--location",
+            probeUrl,
+            "--output",
+            "/dev/null",
+            "--write-out",
+            "%{http_code}\\n%{size_download}\\n%{time_total}\\n"
+        ];
+
+        const child = spawn(
+            "curl",
+            args,
+            {
+                stdio: [
+                    "ignore",
+                    "pipe",
+                    "pipe"
+                ]
+            }
+        );
+
+        let stdout = "";
+        let stderr = "";
+
+        child.stdout.on(
+            "data",
+            chunk => {
+                stdout += String(chunk);
+            }
+        );
+
+        child.stderr.on(
+            "data",
+            chunk => {
+                stderr += String(chunk);
+            }
+        );
+
+        const timeout = setTimeout(
+            () => {
+                child.kill("SIGKILL");
+            },
+            INDEPENDENT_SPEED_TIMEOUT_MS
+        );
+
+        child.once(
+            "exit",
+            code => {
+                clearTimeout(timeout);
+
+                const lines = stdout
+                    .trim()
+                    .split(/\r?\n/)
+                    .map(value => value.trim());
+
+                const httpCode =
+                    Number(lines[0] || 0) || 0;
+                const bytes =
+                    Number(lines[1] || 0) || 0;
+                const curlSeconds =
+                    Number(lines[2] || 0);
+
+                const elapsedSeconds =
+                    Number.isFinite(curlSeconds) && curlSeconds > 0
+                        ? curlSeconds
+                        : Math.max(
+                            (Date.now() - startedAt) / 1000,
+                            0.001
+                        );
+
+                const kbps =
+                    bytes > 0
+                        ? (bytes / 1024) / elapsedSeconds
+                        : 0;
+
+                const partialTransferAllowed =
+                    code === 28 &&
+                    httpCode >= 200 &&
+                    httpCode < 400 &&
+                    bytes >= 262144;
+
+                const ok =
+                    (code === 0 || partialTransferAllowed) &&
+                    httpCode >= 200 &&
+                    httpCode < 400 &&
+                    bytes > 0 &&
+                    kbps >= INDEPENDENT_SPEED_MIN_MEDIAN_KBPS;
+
+                resolve({
+                    provider: provider.id,
+                    label: provider.label,
+                    type: provider.type,
+                    ok,
+                    url: provider.url,
+                    httpCode,
+                    bytes,
+                    elapsedMs: Math.round(elapsedSeconds * 1000),
+                    kbps:
+                        Math.round(kbps * 10) / 10,
+                    error:
+                        ok
+                            ? ""
+                            : (
+                                stderr.trim() ||
+                                `provider failed: HTTP ${httpCode || "?"}, ` +
+                                `${bytes} bytes, ` +
+                                `${Math.round(kbps * 10) / 10} KB/s`
+                            ).slice(0, 500)
+                });
+            }
+        );
+    });
+}
+
+async function runMlabSpeedProvider(
+    socksPort
+) {
+    const startedAt = Date.now();
+
+    return await new Promise(resolve => {
+        const args = [
+            MLAB_PROBE_SCRIPT,
+            "--socks-port",
+            String(socksPort),
+            "--timeout",
+            String(
+                Math.ceil(
+                    INDEPENDENT_SPEED_TIMEOUT_MS / 1000
+                )
+            )
+        ];
+
+        const child = spawn(
+            PYTHON_BIN,
+            args,
+            {
+                stdio: [
+                    "ignore",
+                    "pipe",
+                    "pipe"
+                ]
+            }
+        );
+
+        let stdout = "";
+        let stderr = "";
+
+        child.stdout.on(
+            "data",
+            chunk => {
+                stdout += String(chunk);
+            }
+        );
+
+        child.stderr.on(
+            "data",
+            chunk => {
+                stderr += String(chunk);
+            }
+        );
+
+        const timeout = setTimeout(
+            () => {
+                child.kill("SIGKILL");
+            },
+            INDEPENDENT_SPEED_TIMEOUT_MS + 2000
+        );
+
+        child.once(
+            "exit",
+            code => {
+                clearTimeout(timeout);
+
+                let payload = null;
+                try {
+                    payload = JSON.parse(
+                        stdout.trim()
+                    );
+                } catch {}
+
+                const kbps =
+                    Number(
+                        payload?.kbps
+                    ) || 0;
+
+                const ok =
+                    code === 0 &&
+                    payload?.ok === true &&
+                    kbps >= INDEPENDENT_SPEED_MIN_MEDIAN_KBPS;
+
+                resolve({
+                    provider: "mlab",
+                    label: "M-Lab NDT7",
+                    type: "ndt7",
+                    ok,
+                    url:
+                        payload?.serviceUrl ||
+                        "https://locate.measurementlab.net/v2/nearest/ndt/ndt7",
+                    httpCode:
+                        payload?.websocketCode ||
+                        0,
+                    bytes:
+                        Number(payload?.bytes) || 0,
+                    elapsedMs:
+                        Number(payload?.elapsedMs) ||
+                        Math.max(Date.now() - startedAt, 0),
+                    kbps:
+                        Math.round(kbps * 10) / 10,
+                    error:
+                        ok
+                            ? ""
+                            : String(
+                                payload?.error ||
+                                stderr.trim() ||
+                                "M-Lab NDT7 probe failed"
+                            ).slice(0, 500),
+                    server:
+                        payload?.server || ""
+                });
+            }
+        );
+    });
+}
+
+async function runIndependentSpeedCheck(
+    socksPort
+) {
+    // Providers are measured sequentially on purpose. Running them in parallel
+    // would make all three share the same VPN connection and distort the
+    // measured throughput.
+    const providers = [];
+
+    for (const provider of INDEPENDENT_SPEED_PROVIDERS) {
+        let result;
+
+        if (provider.type === "ndt7") {
+            result =
+                await runMlabSpeedProvider(
+                    socksPort
+                );
+        } else {
+            result =
+                await runIndependentCurlSpeedProvider(
+                    socksPort,
+                    provider
+                );
+        }
+
+        providers.push(result);
+
+        // One failed measurement should not invalidate the candidate if the
+        // other independent measurement systems agree that the route works.
+        if (
+            providers.filter(item => item.ok).length >=
+            INDEPENDENT_SPEED_PROVIDER_MIN_PASSES
+        ) {
+            // Continue to collect all providers for diagnostics.
+            continue;
+        }
+    }
+
+    const successful =
+        providers.filter(
+            provider =>
+                provider?.ok &&
+                Number.isFinite(
+                    Number(provider.kbps)
+                )
+        );
+
+    const speeds =
+        successful.map(
+            provider =>
+                Number(provider.kbps)
+        );
+
+    const medianKbps =
+        speeds.length
+            ? median(speeds)
+            : 0;
+
+    const ok =
+        successful.length >=
+            INDEPENDENT_SPEED_PROVIDER_MIN_PASSES &&
+        medianKbps >=
+            INDEPENDENT_SPEED_MIN_MEDIAN_KBPS;
+
+    const maxKbps =
+        speeds.length
+            ? Math.max(...speeds)
+            : 0;
+
+    const minKbps =
+        speeds.length
+            ? Math.min(...speeds)
+            : 0;
+
+    return {
+        ok,
+        providerCount:
+            providers.length,
+        requiredProviders:
+            INDEPENDENT_SPEED_PROVIDER_MIN_PASSES,
+        passedCount:
+            successful.length,
+        failedCount:
+            providers.length - successful.length,
+        medianKbps:
+            Math.round(medianKbps * 10) / 10,
+        minKbps:
+            Math.round(minKbps * 10) / 10,
+        maxKbps:
+            Math.round(maxKbps * 10) / 10,
+        kbps:
+            Math.round(medianKbps * 10) / 10,
+        bytes:
+            successful.length
+                ? Math.round(
+                    successful.reduce(
+                        (sum, provider) =>
+                            sum +
+                            (Number(provider.bytes) || 0),
+                        0
+                    ) /
+                    successful.length
+                )
+                : 0,
+        probes:
+            providers,
+        providers:
+            providers.map(
+                provider => ({
+                    provider:
+                        provider.provider,
+                    label:
+                        provider.label,
+                    ok:
+                        Boolean(provider.ok),
+                    kbps:
+                        Number(provider.kbps) || 0,
+                    bytes:
+                        Number(provider.bytes) || 0,
+                    elapsedMs:
+                        Number(provider.elapsedMs) || 0,
+                    httpCode:
+                        Number(provider.httpCode) || 0,
+                    server:
+                        provider.server || "",
+                    error:
+                        provider.error || ""
+                })
+            ),
+        error:
+            ok
+                ? ""
+                : (
+                    `independent speed check failed: ` +
+                    `${successful.length}/${providers.length} providers passed; ` +
+                    `median ${Math.round(medianKbps * 10) / 10} KB/s ` +
+                    `(minimum ${INDEPENDENT_SPEED_MIN_MEDIAN_KBPS} KB/s)`
+                )
+    };
+}
+
 async function runQualityDownload(
     socksPort
 ) {
@@ -1571,14 +2026,12 @@ function getGamingMetrics(
     const qualityPassed =
         Number(quality?.passedCount) || 0;
 
-    const allHealthTargetsPassed =
-        remote.length === HEALTH_TARGET_URLS.length &&
-        remote.every(result => result?.ok);
+    const enoughIndependentSpeedProviders =
+        qualityPassed >= GAMING_MIN_QUALITY_PASSES &&
+        Number(quality?.kbps) >= GAMING_MIN_KBPS;
 
     const eligible =
-        allHealthTargetsPassed &&
-        qualityPassed >= GAMING_MIN_QUALITY_PASSES &&
-        Number(quality?.kbps) >= GAMING_MIN_KBPS &&
+        enoughIndependentSpeedProviders &&
         gamingLatency?.ok === true &&
         latencies.length === 3 &&
         maxLatencyMs <= GAMING_MAX_LATENCY_MS &&
@@ -1603,9 +2056,16 @@ function getGamingMetrics(
         );
 
     const stabilityScore =
-        allHealthTargetsPassed &&
+        enoughIndependentSpeedProviders &&
         latencies.length === 3
-            ? 25
+            ? Math.min(
+                25,
+                (qualityPassed /
+                    Math.max(
+                        INDEPENDENT_SPEED_PROVIDERS.length,
+                        1
+                    )) * 25
+            )
             : 0;
 
     return {
@@ -2155,7 +2615,7 @@ async function main() {
                 // be temporarily degraded and must never invalidate the whole
                 // White List pool.
                 const quality =
-                    await runWhiteListSpeedDownload(
+                    await runIndependentSpeedCheck(
                         xray.socksPort
                     );
 
@@ -2205,7 +2665,12 @@ async function main() {
             const passedTargets = remote.filter(result => result?.ok);
             const failedTargets = remote.filter(result => !result?.ok);
 
-            if (passedTargets.length < HEALTH_MIN_TARGET_PASSES) {
+            const quality =
+                await runIndependentSpeedCheck(
+                    xray.socksPort
+                );
+
+            if (!quality.ok) {
                 const details = failedTargets
                     .map(result =>
                         `${result.targetUrl}: ${result.error || "proxy request failed"}`
@@ -2216,26 +2681,13 @@ async function main() {
                     item,
                     ok: false,
                     reason:
-                        `TCP reachable, Xray SOCKS started, ` +
-                        `${passedTargets.length}/${targets.length} HTTPS proxy probes passed; ` +
-                        `required ${HEALTH_MIN_TARGET_PASSES}/${targets.length}; ${details}`,
-                    remote,
-                };
-            }
-
-            const quality = await runQualityDownload(xray.socksPort);
-
-            if (!quality.ok) {
-                return {
-                    item,
-                    ok: false,
-                    reason:
-                        `TCP + Xray + ${targets.length}/${targets.length} HTTPS passed, ` +
-                        `but real traffic quality failed: ` +
-                        `${quality.bytes} bytes, ${quality.kbps} KB/s, ` +
-                        `HTTP ${quality.httpCode || "?"}; ` +
-                        `${quality.error || "download threshold not met"}`,
+                        `TCP + Xray started; independent speed check failed ` +
+                        `(${quality.passedCount}/${quality.providerCount} providers, ` +
+                        `median ${quality.medianKbps} KB/s). ` +
+                        `Synthetic HTTPS diagnostics: ${passedTargets.length}/${targets.length} passed` +
+                        `${details ? `; ${details}` : ""}`,
                     quality,
+                    remote,
                 };
             }
 
@@ -2658,14 +3110,12 @@ async function main() {
         concurrency: HEALTH_CONCURRENCY,
         targets: HEALTH_TARGET_URLS,
         minTargetPasses: HEALTH_MIN_TARGET_PASSES,
-        qualityProbe: {
-            url: QUALITY_DOWNLOAD_URL,
-            timeoutMs: QUALITY_DOWNLOAD_TIMEOUT_MS,
-            minBytes: QUALITY_MIN_BYTES,
-            minKbps: QUALITY_MIN_KBPS,
-            probeCount: QUALITY_PROBE_COUNT,
-            requiredPasses: QUALITY_MIN_PASSES,
-            intervalMs: QUALITY_PROBE_INTERVAL_MS,
+        independentSpeedCheck: {
+            providers: INDEPENDENT_SPEED_PROVIDERS,
+            timeoutMs: INDEPENDENT_SPEED_TIMEOUT_MS,
+            minimumProviderPasses: INDEPENDENT_SPEED_PROVIDER_MIN_PASSES,
+            minimumMedianKbps: INDEPENDENT_SPEED_MIN_MEDIAN_KBPS,
+            mlabProbeScript: MLAB_PROBE_SCRIPT,
         },
         gamingCriteria: {
             minKbps:
@@ -2778,9 +3228,10 @@ async function main() {
             `- Before health-check: ${report.totalBeforeHealthCheck ?? "?"}`,
             `- Health-check: **${passed} passed / ${failed} failed**`,
             `- HTTPS health targets: ${HEALTH_TARGET_URLS.length} configured; ${HEALTH_MIN_TARGET_PASSES} must pass`,
-            `- Quality probe: ${QUALITY_DOWNLOAD_URL}`,
-            `- Quality threshold: >= ${QUALITY_MIN_BYTES} bytes and >= ${QUALITY_MIN_KBPS} KB/s`,
-            `- Quality probes: ${QUALITY_PROBE_COUNT} total; ${QUALITY_MIN_PASSES} must pass; ${QUALITY_PROBE_INTERVAL_MS / 1000}s between probes`,
+            `- Independent speed providers: ${INDEPENDENT_SPEED_PROVIDERS.map(provider => provider.label).join(", ")}`,
+            `- Independent speed rule: ${INDEPENDENT_SPEED_PROVIDER_MIN_PASSES}/${INDEPENDENT_SPEED_PROVIDERS.length} providers + median >= ${INDEPENDENT_SPEED_MIN_MEDIAN_KBPS} KB/s`,
+            `- Synthetic HTTPS targets are diagnostics only; they no longer decide server eligibility`,
+            `- Independent speed tests run sequentially per candidate to avoid sharing one VPN route between providers`,
             `- Temporary quarantine: 90 minutes after a failed health check`,
             `- Final managed servers: **${report.finalManagedServers}**`,
         ];
