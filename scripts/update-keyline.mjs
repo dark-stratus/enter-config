@@ -13,7 +13,6 @@ const UPDATE_STATUS_FILE = path.join(ROOT, "config", "keyline-update-status.json
 
 const REGULAR_LIMIT = Number.POSITIVE_INFINITY;
 const AUTO_WHITE_LIST_LIMIT = 20;
-const SUCCESS_INTERVAL_MS = 1 * 60 * 60 * 1000;
 
 const BUILTIN_WHITE_LIST_SOURCES = [
   "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/Vless-Reality-White-Lists-Rus-Mobile.txt",
@@ -969,51 +968,11 @@ async function getHappClientIdentity(url) {
 }
 
 async function shouldSkip() {
+  // GitHub Actions already schedules this workflow every hour.
+  // Do not apply a second in-process time gate: every scheduled run
+  // must perform a full Keyline refresh and health-check cycle.
   if (process.env.FORCE_KEYLINE_REFRESH === "1") {
-    console.log("Forced Keyline refresh requested; ignoring update interval.");
-    return false;
-  }
-
-  // A previous successful run may have left a recent timestamp in state.
-  // Never skip the fetch if the health candidate manifest is missing, because
-  // the workflow cannot safely continue to health-check the old managed pool.
-  const healthCandidatesFile = path.join(
-    ROOT,
-    "config",
-    "keyline-health-candidates.json"
-  );
-
-  try {
-    const stat = await fs.stat(healthCandidatesFile);
-    if (!stat.isFile() || stat.size === 0) {
-      console.log(
-        "Health candidate manifest is missing/empty; forcing a Keyline refresh."
-      );
-      return false;
-    }
-  } catch {
-    console.log(
-      "Health candidate manifest does not exist; forcing a Keyline refresh."
-    );
-    return false;
-  }
-
-  const state = await readState();
-  const elapsed = Date.now() - state.lastSuccessfulUpdateAt;
-
-  if (
-    state.lastSuccessfulUpdateAt > 0 &&
-    elapsed < SUCCESS_INTERVAL_MS
-  ) {
-    const nextAt = new Date(
-      state.lastSuccessfulUpdateAt + SUCCESS_INTERVAL_MS
-    );
-
-    console.log(
-      `Keyline update skipped until ${nextAt.toISOString()}.`
-    );
-
-    return true;
+    console.log("Forced Keyline refresh requested; running full refresh.");
   }
 
   return false;
