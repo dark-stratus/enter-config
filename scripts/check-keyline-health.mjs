@@ -455,15 +455,6 @@ function sleep(ms) {
     );
 }
 
-function safeDecode(value) {
-    try {
-        return decodeURIComponent(
-            String(value ?? "")
-        );
-    } catch {
-        return String(value ?? "");
-    }
-}
 
 function fingerprintLink(link) {
     return crypto.createHash("sha256").update(String(link)).digest("hex").slice(0, 12);
@@ -1031,22 +1022,6 @@ async function probeTargetOnceWithRetries(
     };
 }
 
-async function runCurl(
-    socksPort
-) {
-    const probes =
-        HEALTH_TARGET_URLS.map(
-            targetUrl =>
-                probeTargetOnceWithRetries(
-                    socksPort,
-                    targetUrl
-                )
-        );
-
-    return await Promise.all(
-        probes
-    );
-}
 
 function buildQualityProbeUrl(probeIndex) {
     try {
@@ -1190,107 +1165,6 @@ async function runSingleQualityDownload(
     });
 }
 
-async function runWhiteListSpeedDownload(socksPort) {
-    const probes = [];
-
-    // White List speed probes are intentionally sequential for each server.
-    // The outer health-check concurrency already runs up to 8 servers in parallel.
-    // Waiting 5 seconds between probes reduces cross-probe contention and makes
-    // the per-server ranking more representative.
-    for (
-        let probeIndex = 1;
-        probeIndex <= WHITE_LIST_SPEED_PROBE_COUNT;
-        probeIndex += 1
-    ) {
-        const probe =
-            await runSingleQualityDownload(
-                socksPort,
-                probeIndex
-            );
-
-        probes.push({
-            ...probe,
-            ok:
-                Number(probe?.httpCode) >= 200 &&
-                Number(probe?.httpCode) < 400 &&
-                Number(probe?.bytes) >= WHITE_LIST_SPEED_MIN_BYTES &&
-                Number(probe?.kbps) > 0,
-        });
-
-        if (
-            probeIndex <
-            WHITE_LIST_SPEED_PROBE_COUNT
-        ) {
-            await sleep(
-                QUALITY_PROBE_INTERVAL_MS
-            );
-        }
-    }
-
-    const passed =
-        probes.filter(
-            probe => probe.ok
-        );
-
-    const kbps =
-        passed
-            .map(
-                probe =>
-                    Number(probe.kbps)
-            )
-            .filter(
-                Number.isFinite
-            );
-
-    const sortedKbps =
-        [...kbps].sort(
-            (a, b) => a - b
-        );
-
-    // Use the median of successful probes for THIS server only.
-    // We do not use a pool-wide median as a filter.
-    let medianKbps = 0;
-
-    if (sortedKbps.length) {
-        const middle =
-            Math.floor(
-                sortedKbps.length / 2
-            );
-
-        medianKbps =
-            sortedKbps.length % 2 === 0
-                ? (
-                    sortedKbps[middle - 1] +
-                    sortedKbps[middle]
-                ) / 2
-                : sortedKbps[middle];
-    }
-
-    return {
-        // Any successful real download is enough to establish traffic
-        // reachability. A failed individual probe does not kill the server.
-        ok: passed.length >= WHITE_LIST_SPEED_MIN_PASSES,
-        passedCount: passed.length,
-        probeCount: probes.length,
-        kbps:
-            Math.round(
-                medianKbps * 10
-            ) / 10,
-        minKbps:
-            kbps.length
-                ? Math.min(...kbps)
-                : 0,
-        maxKbps:
-            kbps.length
-                ? Math.max(...kbps)
-                : 0,
-        probes,
-        error:
-            passed.length >= WHITE_LIST_SPEED_MIN_PASSES
-                ? ""
-                : `${passed.length}/${probes.length} White List speed probes passed`,
-    };
-}
 
 
 async function runIndependentCurlSpeedProvider(
@@ -1689,120 +1563,6 @@ async function runIndependentSpeedCheck(
     };
 }
 
-async function runQualityDownload(
-    socksPort
-) {
-    const probes = [];
-
-    for (
-        let probeIndex = 1;
-        probeIndex <= QUALITY_PROBE_COUNT;
-        probeIndex += 1
-    ) {
-        const result =
-            await runSingleQualityDownload(
-                socksPort,
-                probeIndex
-            );
-
-        probes.push(result);
-
-        if (
-            probeIndex < QUALITY_PROBE_COUNT
-        ) {
-            await sleep(
-                QUALITY_PROBE_INTERVAL_MS
-            );
-        }
-    }
-
-    const passed =
-        probes.filter(
-            probe => probe?.ok
-        );
-
-    const ok =
-        passed.length >= QUALITY_MIN_PASSES;
-
-    const kbpsValues =
-        probes
-            .map(probe => Number(probe?.kbps))
-            .filter(Number.isFinite);
-
-    const passingKbps =
-        passed
-            .map(probe => Number(probe?.kbps))
-            .filter(Number.isFinite);
-
-    const averageBytes =
-        probes.length
-            ? Math.round(
-                probes.reduce(
-                    (sum, probe) => sum + (Number(probe?.bytes) || 0),
-                    0
-                ) / probes.length
-            )
-            : 0;
-
-    const httpCodes = [
-        ...new Set(
-            probes
-                .map(probe => Number(probe?.httpCode))
-                .filter(Number.isFinite)
-        ),
-    ];
-
-    const probeDetails = probes
-        .map(probe =>
-            `#${probe.probeIndex}: ` +
-            `${Number(probe.bytes) || 0} bytes, ` +
-            `${Number(probe.kbps) || 0} KB/s, ` +
-            `HTTP ${Number.isFinite(Number(probe.httpCode)) ? probe.httpCode : "?"}`
-        )
-        .join(" | ");
-
-    return {
-        ok,
-        url: QUALITY_DOWNLOAD_URL,
-        probeCount: probes.length,
-        requiredPasses: QUALITY_MIN_PASSES,
-        intervalMs: QUALITY_PROBE_INTERVAL_MS,
-        passedCount: passed.length,
-        failedCount: probes.length - passed.length,
-        bytes: averageBytes,
-        httpCode: httpCodes.join("/"),
-        kbps: passingKbps.length
-            ? Math.round(
-                (
-                    passingKbps.reduce(
-                        (sum, value) => sum + value,
-                        0
-                    ) / passingKbps.length
-                ) * 10
-            ) / 10
-            : (
-                kbpsValues.length
-                    ? Math.round(
-                        (
-                            kbpsValues.reduce(
-                                (sum, value) => sum + value,
-                                0
-                            ) / kbpsValues.length
-                        ) * 10
-                    ) / 10
-                    : 0
-            ),
-        probes,
-        error: ok
-            ? ""
-            : (
-                `quality threshold failed: ` +
-                `${passed.length}/${probes.length} probes passed; ` +
-                `required ${QUALITY_MIN_PASSES}/${QUALITY_PROBE_COUNT}; ` +
-                `${probeDetails}`
-            ).slice(0, 1000)
-    };
-}
 
 
 function median(values) {

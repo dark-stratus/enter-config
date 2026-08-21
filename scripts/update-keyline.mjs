@@ -472,9 +472,6 @@ function isAutoSelectionRemark(remarks = "") {
   return /^🚀\s*авто\s*выбор/i.test(String(remarks).trim());
 }
 
-function normalizeAutoRemark(remarks = "") {
-  return isAutoSelectionRemark(remarks);
-}
 
 function normalizeCountryRemark(
   remarks = "",
@@ -886,17 +883,7 @@ async function readState() {
   }
 }
 
-function isUuid(value) {
-  return (
-    typeof value === "string" &&
-    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
-  );
-}
 
-function createHappDeviceModel() {
-  const suffix = crypto.randomBytes(4).toString("hex").toUpperCase();
-  return `LAPTOP-${suffix}_x86_64`;
-}
 
 async function getHappClientIdentity(url) {
   const state = await readState();
@@ -1012,9 +999,6 @@ function parseConfiguredUrls(value) {
     .filter(Boolean);
 }
 
-function uniqueUrls(urls) {
-  return [...new Set(urls)];
-}
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -1101,11 +1085,6 @@ function fingerprintUrl(url) {
   return crypto.createHash("sha256").update(String(url)).digest("hex").slice(0, 12);
 }
 
-function sourceSlotLabel(scope, index) {
-  return scope === "whitelist"
-    ? `Keyline White List source ${index + 1}`
-    : `Keyline source ${index + 1}`;
-}
 
 async function fetchKeylineSources() {
   const clientIdentity = KEYLINE_DEVICE_PROFILES[0];
@@ -1847,42 +1826,7 @@ function setLinkRemark(link, remark) {
   }
 }
 
-function canonicalCountryEntries(entries) {
-  const counters = new Map();
 
-  return entries.map(item => {
-    if (item.isAutoWhiteListCandidate) return item;
-
-    const key = item.country;
-    const next = (counters.get(key) || 0) + 1;
-    counters.set(key, next);
-
-    return {
-      ...item,
-      remarks: `${item.flag} ${item.country} ${next}`.trim(),
-      countryIndex: next,
-    };
-  });
-}
-
-function canonicalAutoWhiteList(entries) {
-  if (!entries.length) return [];
-
-  const flag =
-    typeof entries[0].flag === "string" &&
-    /[\u{1F1E6}-\u{1F1FF}]{2}/u.test(
-      entries[0].flag
-    )
-      ? entries[0].flag
-      : "";
-
-  return [{
-    ...entries[0],
-    remarks:
-      `${flag} 🏳️ White List 2`.trim(),
-    whiteListIndex: 2,
-  }];
-}
 
 function endpointFingerprint(link) {
   try {
@@ -2160,16 +2104,6 @@ function normalizeAndNumber(entries) {
   });
 }
 
-function normalizeWhiteListEntries(entries, startNumber = 2) {
-  const sorted = sortEntries(entries);
-
-  return sorted.map((item, index) => ({
-    ...item,
-    remarks:
-      `${item.flag || "🇷🇺"} 🏳️ White List ${startNumber + index}`.trim(),
-    whiteListIndex: startNumber + index,
-  }));
-}
 
 async function loadIndex() {
   const text = await fs.readFile(INDEX_FILE, "utf8");
