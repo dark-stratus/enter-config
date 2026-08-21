@@ -2359,50 +2359,6 @@ async function main() {
                 };
             }
 
-            const isWhiteListCandidate =
-                MANAGED_WHITE_LIST_RE.test(String(item.id || "")) ||
-                Boolean(checkedLinkMeta.get(item.id)?.sourceMeta?.whiteList);
-
-            if (isWhiteListCandidate) {
-                // White List uses an independent health policy:
-                // TCP + Xray startup + real speed probes.
-                //
-                // Do not use Google/gstatic/Cloudflare connectivity gates here:
-                // many otherwise usable White List routes intentionally do not
-                // pass those synthetic probes.
-                //
-                // Do not use Telegram as a mandatory gate either: Telegram can
-                // be temporarily degraded and must never invalidate the whole
-                // White List pool.
-                const quality =
-                    await runIndependentSpeedCheck(
-                        xray.socksPort
-                    );
-
-                if (!quality.ok) {
-                    return {
-                        item,
-                        ok: false,
-                        reason:
-                            `TCP + Xray passed, but White List speed probes failed: ` +
-                            `${quality.passedCount}/${quality.probeCount}; ` +
-                            `${quality.error || "speed probes failed"}`,
-                        quality,
-                    };
-                }
-
-                return {
-                    item,
-                    ok: true,
-                    protocol,
-                    stages:
-                        `TCP + Xray + speed ${quality.passedCount}/${quality.probeCount} ` +
-                        `(median ${quality.kbps} KB/s)`,
-                    quality,
-                    gaming: null,
-                };
-            }
-
             const targets = [...new Set(
                 HEALTH_TARGET_URLS
                     .map(value => String(value || "").trim())
@@ -2460,7 +2416,7 @@ async function main() {
                 protocol,
                 stages:
                     `TCP + Xray + ${targets.length}/${targets.length} HTTPS + ` +
-                    `quality ${quality.passedCount}/${quality.probeCount} probes passed ` +
+                    `quality ${quality.passedCount}/${quality.providerCount} probes passed ` +
                     `(avg passing ${quality.kbps} KB/s)`,
                 quality,
                 gaming: {
