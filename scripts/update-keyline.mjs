@@ -1987,69 +1987,6 @@ function buildRetainedEntries(currentIndex, healthHistory = {}) {
 }
 
 
-function buildCleanRetainedEntries(currentIndex, healthHistory = {}) {
-  const retained = [];
-  const seenLinks = new Set();
-
-  for (const item of currentIndex) {
-    if (!item || typeof item.id !== "string") continue;
-
-    const id = item.id.trim();
-    const lowerId = id.toLowerCase();
-    const link = String(item.link || "").trim();
-    if (!link) continue;
-
-    const isEurope = /^europe-\d+$/i.test(id);
-    const isWhiteListOne = lowerId === "whitelist-1";
-    const isManaged = isManagedId(id);
-
-    if (!isManaged) continue;
-
-    const health = healthHistory[endpointFingerprint(link)] || null;
-    const keep = health?.lastStatus === "pass";
-
-    if (!keep || seenLinks.has(link)) continue;
-
-    seenLinks.add(link);
-
-    const remarks = String(item.remarks || "").trim();
-    const flag = extractFlag(remarks);
-    let country = "Unknown";
-
-    if (flag) {
-      country =
-        FLAG_TO_COUNTRY[flag] ||
-        countryFromFlagValue(flag) ||
-        "Unknown";
-    }
-
-    if (country === "Unknown") {
-      const match = remarks.match(
-        /(?:^|\s)(Albania|Austria|Belgium|Brazil|Switzerland|China|Czech Republic|Germany|Denmark|Estonia|Spain|Finland|France|United Kingdom|Greece|Hong Kong|Indonesia|Ireland|India|Israel|Italy|Japan|Kazakhstan|Lithuania|Latvia|Mexico|Netherlands|Norway|New Zealand|Poland|Portugal|Romania|Russia|Sweden|Singapore|Slovenia|Slovakia|Thailand|Turkey|Ukraine|United States|Vietnam)(?:\s+\d+)?(?:\s|$)/i
-      );
-
-      if (match?.[1]) {
-        country = match[1];
-      } else if (isEurope) {
-        country = "Europe";
-      }
-    }
-
-    retained.push({
-      ...item,
-      link,
-      remarks,
-      flag: flag || (isEurope ? "🇪🇺" : "🇷🇺"),
-      country,
-      whiteList: isWhiteListOne,
-      retained: true,
-      cleanRetained: true,
-    });
-  }
-
-  return retained;
-}
-
 function mergeWithRetainedEntries(
   freshRegular,
   freshWhiteList,
@@ -2057,9 +1994,7 @@ function mergeWithRetainedEntries(
   healthHistory = {}
 ) {
   const retained =
-    process.env.FORCE_KEYLINE_CLEAN_REFRESH === "1"
-      ? buildCleanRetainedEntries(currentIndex, healthHistory)
-      : buildRetainedEntries(currentIndex, healthHistory);
+    buildRetainedEntries(currentIndex, healthHistory);
   const seen = new Set(
     [...freshRegular, ...freshWhiteList]
       .map(item => String(item?.link || "").trim())
