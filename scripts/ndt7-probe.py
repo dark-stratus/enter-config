@@ -10,7 +10,6 @@ candidate VPN endpoint.
 
 import argparse
 import json
-import ssl
 import sys
 import time
 import urllib.request
@@ -42,12 +41,21 @@ def locate_service_url(timeout: float) -> str:
             "Accept": "application/json",
         },
     )
-    with urllib.request.urlopen(request, timeout=timeout) as response:
-        if response.status != 200:
-            raise RuntimeError(
-                f"M-Lab Locate returned HTTP {response.status}"
-            )
-        payload = json.loads(response.read().decode("utf-8"))
+    last_error = None
+    for attempt in range(4):
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                if response.status != 200:
+                    raise RuntimeError(
+                        f"M-Lab Locate returned HTTP {response.status}"
+                    )
+                payload = json.loads(response.read().decode("utf-8"))
+                break
+        except Exception as exc:
+            last_error = exc
+            if attempt >= 3:
+                raise
+            time.sleep(1.0 * (2 ** attempt))
 
     results = payload.get("results") or payload.get("result") or []
     if not results:
@@ -63,19 +71,23 @@ def locate_service_url(timeout: float) -> str:
     raise RuntimeError("M-Lab Locate response has no WSS download URL")
 
 
-def run_probe(socks_port: int, timeout: float) -> dict:
+def run_probe(socks_port: int, timeout: float, service_url: str | None = None) -> dict:
     started = time.monotonic()
-    service_url = locate_service_url(min(timeout, 10.0))
+    if not service_url:
+        service_url = locate_service_url(min(timeout, 10.0))
 
     ws = websocket.create_connection(
         service_url,
         timeout=min(timeout, 10.0),
         subprotocols=[SUBPROTOCOL],
+        header=[
+            "User-Agent: enter-config-healthcheck/1.0",
+        ],
         http_proxy_host="127.0.0.1",
         http_proxy_port=socks_port,
         proxy_type="socks5h",
         enable_multithread=True,
-        origin=None,
+        suppress_origin=True,
     )
 
     connected = time.monotonic()
@@ -84,8 +96,8 @@ def run_probe(socks_port: int, timeout: float) -> dict:
     latest_elapsed_us = 0
 
     deadline = min(
-        connected + max(3.0, min(timeout - 1.0, 7.0)),
-        connected + 7.0,
+        connected + max(3.0, min(timeout - 1.0, 10.0)),
+        connected + 10.0,
     )
 
     ws.settimeout(1.0)
@@ -166,14 +178,25 @@ def run_probe(socks_port: int, timeout: float) -> dict:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--socks-port", type=int, required=True)
+    parser.add_argument("--socks-port", type=int, required=False, default=0)
     parser.add_argument("--timeout", type=float, default=18.0)
+    parser.add_argument("--service-url", default="", help="Pre-resolved M-Lab ndt7 download URL")
+    parser.add_argument("--locate-only", action="store_true")
     args = parser.parse_args()
+
+    if args.locate_only:
+        try:
+            print(locate_service_url(min(args.timeout, 10.0)))
+            return 0
+        except Exception as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
 
     try:
         result = run_probe(
             args.socks_port,
             args.timeout,
+            args.service_url or None,
         )
     except Exception as exc:
         result = {

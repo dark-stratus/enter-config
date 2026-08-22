@@ -183,6 +183,10 @@ const PYTHON_BIN =
     process.env.HEALTHCHECK_PYTHON ||
     "python3";
 
+const MLAB_SERVICE_URL =
+    process.env.HEALTHCHECK_MLAB_SERVICE_URL ||
+    "";
+
 const HEALTH_CONCURRENCY =
     Math.max(
         1,
@@ -988,6 +992,12 @@ async function runIndependentCurlSpeedProvider(
             ),
             "--proxy",
             `socks5h://127.0.0.1:${socksPort}`,
+            "--http1.1",
+            "--retry",
+            "2",
+            "--retry-delay",
+            "1",
+            "--retry-all-errors",
             "--location",
             probeUrl,
             "--output",
@@ -1118,6 +1128,13 @@ async function runMlabSpeedProvider(
                 )
             )
         ];
+
+        if (MLAB_SERVICE_URL) {
+            args.push(
+                "--service-url",
+                MLAB_SERVICE_URL
+            );
+        }
 
         const child = spawn(
             PYTHON_BIN,
@@ -2586,6 +2603,7 @@ async function main() {
             minimumProviderPasses: INDEPENDENT_SPEED_PROVIDER_MIN_PASSES,
             minimumMedianKbps: INDEPENDENT_SPEED_MIN_MEDIAN_KBPS,
             mlabProbeScript: MLAB_PROBE_SCRIPT,
+            mlabServiceUrl: MLAB_SERVICE_URL ? "resolved" : "per-probe locate",
         },
         gamingCriteria: {
             minKbps:
