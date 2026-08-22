@@ -2413,7 +2413,13 @@ function buildCountryHealthPool(
                 return aLatency - bLatency;
             });
 
-            const top = sorted.slice(0, COUNTRY_POOL_SIZE);
+            // Regular countries keep the existing quality pool size.
+            // White List/LTE is intentionally uncapped for now so every
+            // server that passes health-check is published and can be tested
+            // directly; a future per-country cap can be introduced later.
+            const top = whiteListOnly
+                ? sorted
+                : sorted.slice(0, COUNTRY_POOL_SIZE);
             const speeds = top
                 .map(item => Number(item.quality?.kbps))
                 .filter(Number.isFinite);
