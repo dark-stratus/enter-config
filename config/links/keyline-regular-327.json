@@ -160,26 +160,39 @@
       "settings": {
         "vnext": [
           {
-            "address": "5.180.20.182",
+            "address": "37.143.129.43",
             "port": 443,
             "users": [
               {
                 "id": "e75ad2eb-6c1f-45ce-8023-f5f10875df66",
                 "encryption": "none",
-                "flow": "xtls-rprx-vision"
+                "flow": ""
               }
             ]
           }
         ]
       },
       "streamSettings": {
-        "network": "tcp",
-        "tcpSettings": {},
+        "network": "xhttp",
+        "xhttpSettings": {
+          "mode": "packet-up",
+          "host": "fi10.eu-cdn391.com",
+          "path": "/5ea6987b830bb12e1be0e25fabd7f74d",
+          "extra": {
+            "xmux": {
+              "cMaxReuseTimes": "64-128",
+              "maxConcurrency": "16-32",
+              "hKeepAlivePeriod": 25,
+              "hMaxRequestTimes": "800-1200",
+              "hMaxReusableSecs": "1800-3600"
+            }
+          }
+        },
         "security": "reality",
         "realitySettings": {
-          "serverName": "kz3.eu-cdn294.com",
-          "publicKey": "CQpROTNvNMncwhHKBg9Ssf0W_7pMp2V_3XuD7EDzQgg",
-          "shortId": "65b224aaa396c8ab",
+          "serverName": "fi10.eu-cdn391.com",
+          "publicKey": "fEMkXWWEEbbgij8WMnIsXIkz1kGZ9u5a6sR6SHU1J0E",
+          "shortId": "7928f53e99a302d0",
           "fingerprint": "firefox"
         }
       }
@@ -193,5 +206,5 @@
       "protocol": "blackhole"
     }
   ],
-  "remarks": "🇰🇿 Казахстан"
+  "remarks": "🇷🇴 Румыния"
 }
