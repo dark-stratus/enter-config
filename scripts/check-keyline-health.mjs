@@ -268,6 +268,18 @@ const GAMING_MAX_LATENCY_SPREAD_MS =
 
 const GAMING_BASE_SPEED_PROVIDER_COUNT = 3;
 
+const SPEED_PROVIDER_CONCURRENCY =
+    Math.max(
+        1,
+        Math.min(
+            INDEPENDENT_SPEED_PROVIDERS.length,
+            Number(process.env.HEALTHCHECK_SPEED_PROVIDER_CONCURRENCY) || 4
+        )
+    );
+
+const FAST_TOP_N = Math.max(1, Number(process.env.HEALTHCHECK_FAST_TOP_N) || 3);
+const GAMING_TOP_N = Math.max(1, Number(process.env.HEALTHCHECK_GAMING_TOP_N) || 3);
+
 const GAMING_MIN_QUALITY_PASSES =
     Math.max(
         1,
@@ -1891,170 +1903,111 @@ async function runYandexSpeedProvider(
 async function runIndependentSpeedCheck(
     socksPort
 ) {
-    // Providers are measured sequentially on purpose. Running them in parallel
-    // would make all three share the same VPN connection and distort the
-    // measured throughput.
-    const providers = [];
+    // Measure all four providers in one wall-clock window to cut the expensive
+    // serial wait roughly in half/quarter while retaining all provider samples.
+    const providers = new Array(INDEPENDENT_SPEED_PROVIDERS.length);
+    let nextIndex = 0;
 
-    for (const provider of INDEPENDENT_SPEED_PROVIDERS) {
-        let result;
+    async function worker() {
+        while (true) {
+            const index = nextIndex++;
+            if (index >= INDEPENDENT_SPEED_PROVIDERS.length) return;
 
-        if (provider.type === "ndt7") {
-            result =
-                await runMlabSpeedProvider(
-                    socksPort
-                );
-        } else if (provider.type === "yandex") {
-            result =
-                await runYandexSpeedProvider(
-                    socksPort
-                );
-        } else {
-            result =
-                await runIndependentCurlSpeedProvider(
-                    socksPort,
-                    provider
-                );
-        }
-
-        providers.push(result);
-
-        // Measurement providers are independent witnesses. A provider can be
-        // unavailable or incompatible with a particular route, so one failed
-        // provider must not invalidate an otherwise measurable working route.
-        if (
-            providers.filter(item => item.ok).length >=
-            INDEPENDENT_SPEED_PROVIDER_MIN_PASSES
-        ) {
-            // Continue to collect all providers for diagnostics.
-            continue;
+            const provider = INDEPENDENT_SPEED_PROVIDERS[index];
+            try {
+                let result;
+                if (provider.type === "ndt7") {
+                    result = await runMlabSpeedProvider(socksPort);
+                } else if (provider.type === "yandex") {
+                    result = await runYandexSpeedProvider(socksPort);
+                } else {
+                    result = await runIndependentCurlSpeedProvider(socksPort, provider);
+                }
+                providers[index] = result;
+            } catch (error) {
+                providers[index] = {
+                    provider: provider.id,
+                    label: provider.label,
+                    type: provider.type,
+                    ok: false,
+                    kbps: 0,
+                    bytes: 0,
+                    elapsedMs: 0,
+                    error: error?.message || "provider error",
+                    attempts: [],
+                };
+            }
         }
     }
 
-    const successful =
-        providers.filter(
-            provider =>
-                provider?.ok &&
-                Number.isFinite(
-                    Number(provider.kbps)
-                )
-        );
+    await Promise.all(
+        Array.from(
+            { length: Math.min(SPEED_PROVIDER_CONCURRENCY, INDEPENDENT_SPEED_PROVIDERS.length) },
+            () => worker()
+        )
+    );
 
-    const speeds =
-        successful.map(
-            provider =>
-                Number(provider.kbps)
-        );
+    const orderedProviders = providers.filter(Boolean);
 
-    const medianKbps =
-        speeds.length
-            ? median(speeds)
-            : 0;
+    const successful = orderedProviders.filter(
+        provider => provider?.ok && Number.isFinite(Number(provider.kbps))
+    );
 
-    const requiredProviderFailures =
-        [...REQUIRED_SPEED_PROVIDER_IDS]
-            .filter(
-                providerId =>
-                    !successful.some(
-                        provider =>
-                            String(provider.provider).toLowerCase() ===
-                            providerId
-                    )
-            );
+    const speeds = successful.map(provider => Number(provider.kbps));
+    const medianKbps = speeds.length ? median(speeds) : 0;
+
+    const requiredProviderFailures = [...REQUIRED_SPEED_PROVIDER_IDS].filter(
+        providerId => !successful.some(
+            provider => String(provider.provider).toLowerCase() === providerId
+        )
+    );
 
     const ok =
-        successful.length >=
-            INDEPENDENT_SPEED_PROVIDER_MIN_PASSES &&
+        successful.length >= INDEPENDENT_SPEED_PROVIDER_MIN_PASSES &&
         requiredProviderFailures.length === 0 &&
-        medianKbps >=
-            INDEPENDENT_SPEED_MIN_MEDIAN_KBPS;
+        medianKbps >= INDEPENDENT_SPEED_MIN_MEDIAN_KBPS;
 
-    const maxKbps =
-        speeds.length
-            ? Math.max(...speeds)
-            : 0;
-
-    const minKbps =
-        speeds.length
-            ? Math.min(...speeds)
-            : 0;
+    const maxKbps = speeds.length ? Math.max(...speeds) : 0;
+    const minKbps = speeds.length ? Math.min(...speeds) : 0;
 
     return {
         ok,
-        providerCount:
-            providers.length,
-        requiredProviders:
-            INDEPENDENT_SPEED_PROVIDER_MIN_PASSES,
-        passedCount:
-            successful.length,
-        failedCount:
-            providers.length - successful.length,
-        medianKbps:
-            Math.round(medianKbps * 10) / 10,
-        minKbps:
-            Math.round(minKbps * 10) / 10,
-        maxKbps:
-            Math.round(maxKbps * 10) / 10,
-        kbps:
-            Math.round(medianKbps * 10) / 10,
-        bytes:
-            successful.length
-                ? Math.round(
-                    successful.reduce(
-                        (sum, provider) =>
-                            sum +
-                            (Number(provider.bytes) || 0),
-                        0
-                    ) /
-                    successful.length
-                )
-                : 0,
-        probes:
-            providers,
-        providers:
-            providers.map(
-                provider => ({
-                    provider:
-                        provider.provider,
-                    label:
-                        provider.label,
-                    ok:
-                        Boolean(provider.ok),
-                    kbps:
-                        Number(provider.kbps) || 0,
-                    bytes:
-                        Number(provider.bytes) || 0,
-                    elapsedMs:
-                        Number(provider.elapsedMs) || 0,
-                    httpCode:
-                        Number(provider.httpCode) || 0,
-                    server:
-                        provider.server || "",
-                    error:
-                        provider.error || "",
-                    attempts:
-                        Array.isArray(provider.attempts)
-                            ? provider.attempts
-                            : []
-                })
-            ),
-        error:
-            ok
-                ? ""
-                : (
-                    `independent speed check failed: ` +
-                    `${successful.length}/${providers.length} providers passed; ` +
-                    `median ${Math.round(medianKbps * 10) / 10} KB/s ` +
-                    `(minimum ${INDEPENDENT_SPEED_MIN_MEDIAN_KBPS} KB/s)` +
-                    (
-                        requiredProviderFailures.length
-                            ? `; required providers failed: ${requiredProviderFailures.join(", ")}`
-                            : ""
-                    )
-                )
+        providerCount: orderedProviders.length,
+        requiredProviders: INDEPENDENT_SPEED_PROVIDER_MIN_PASSES,
+        passedCount: successful.length,
+        failedCount: orderedProviders.length - successful.length,
+        medianKbps: Math.round(medianKbps * 10) / 10,
+        minKbps: Math.round(minKbps * 10) / 10,
+        maxKbps: Math.round(maxKbps * 10) / 10,
+        kbps: Math.round(medianKbps * 10) / 10,
+        bytes: successful.length
+            ? Math.round(successful.reduce((sum, provider) => sum + (Number(provider.bytes) || 0), 0) / successful.length)
+            : 0,
+        probes: orderedProviders,
+        providers: orderedProviders.map(provider => ({
+            provider: provider.provider,
+            label: provider.label,
+            ok: Boolean(provider.ok),
+            kbps: Number(provider.kbps) || 0,
+            bytes: Number(provider.bytes) || 0,
+            elapsedMs: Number(provider.elapsedMs) || 0,
+            httpCode: Number(provider.httpCode) || 0,
+            server: provider.server || "",
+            error: provider.error || "",
+            attempts: Array.isArray(provider.attempts) ? provider.attempts : []
+        })),
+        error: ok
+            ? ""
+            : (
+                `independent speed check failed: ${successful.length}/${orderedProviders.length} providers passed; ` +
+                `median ${Math.round(medianKbps * 10) / 10} KB/s ` +
+                `(minimum ${INDEPENDENT_SPEED_MIN_MEDIAN_KBPS} KB/s)` +
+                (requiredProviderFailures.length
+                    ? `; required providers failed: ${requiredProviderFailures.join(", ")}`
+                    : "")
+            )
     };
 }
-
 
 
 function median(values) {
@@ -2464,124 +2417,137 @@ function extractFlag(
     )?.[0] || "";
 }
 
+
+function resultSpeed(result) {
+    return Number(result?.quality?.medianKbps ?? result?.quality?.kbps) || 0;
+}
+
+function resultLatency(result) {
+    return Number(result?.gaming?.medianLatencyMs) || Infinity;
+}
+
+function selectFeaturedFastServers(results, limit = FAST_TOP_N) {
+    const candidates = results
+        .filter(result => result.ok && !result.whiteList && result.country)
+        .sort((a, b) => {
+            const speed = resultSpeed(b) - resultSpeed(a);
+            return speed !== 0 ? speed : resultLatency(a) - resultLatency(b);
+        });
+
+    const seenCountries = new Set();
+    const selected = [];
+    for (const result of candidates) {
+        const country = String(result.country || '').trim();
+        if (!country || seenCountries.has(country)) continue;
+        seenCountries.add(country);
+        selected.push(result);
+        if (selected.length >= limit) break;
+    }
+    return selected;
+}
+
+function selectFeaturedGamingServers(results, excludedCountries = new Set(), limit = GAMING_TOP_N) {
+    const candidates = results
+        .filter(result => result.ok && !result.whiteList && result.country && result.gaming?.eligible)
+        .sort((a, b) => {
+            const score = Number(b.gaming?.score || 0) - Number(a.gaming?.score || 0);
+            if (score !== 0) return score;
+            const speed = resultSpeed(b) - resultSpeed(a);
+            return speed !== 0 ? speed : resultLatency(a) - resultLatency(b);
+        });
+
+    const seenCountries = new Set(excludedCountries);
+    const selected = [];
+    for (const result of candidates) {
+        const country = String(result.country || '').trim();
+        if (!country || seenCountries.has(country)) continue;
+        seenCountries.add(country);
+        selected.push(result);
+        if (selected.length >= limit) break;
+    }
+    return selected;
+}
+
+function applyFeaturedRegularBadges(indexEntries, healthResults) {
+    const fast = selectFeaturedFastServers(healthResults, FAST_TOP_N);
+    const fastFingerprints = new Set(fast.map(item => item.linkFingerprint));
+    const fastCountries = new Set(fast.map(item => item.country));
+    const gaming = selectFeaturedGamingServers(healthResults, fastCountries, GAMING_TOP_N);
+    const gamingFingerprints = new Set(gaming.map(item => item.linkFingerprint));
+    const byFingerprint = new Map(healthResults.map(result => [result.linkFingerprint, result]));
+
+    const fastMeta = fast.map((item, index) => ({
+        rank: index + 1,
+        country: item.country,
+        linkFingerprint: item.linkFingerprint,
+        medianKbps: resultSpeed(item),
+    }));
+    const gamingMeta = gaming.map((item, index) => ({
+        rank: index + 1,
+        country: item.country,
+        linkFingerprint: item.linkFingerprint,
+        score: Number(item.gaming?.score) || 0,
+        medianKbps: resultSpeed(item),
+        medianLatencyMs: Number(item.gaming?.medianLatencyMs) || 0,
+    }));
+
+    for (const entry of indexEntries) {
+        if (!entry || !entry.link) continue;
+        const result = byFingerprint.get(fingerprintLink(entry.link));
+        if (!result) continue;
+
+        if (fastFingerprints.has(result.linkFingerprint)) {
+            entry.featured = 'fast';
+            entry.featuredRank = fast.find(item => item.linkFingerprint === result.linkFingerprint)?.rank || 0;
+            const flag = extractFlag(result.remarks) || '🌐';
+            entry.remarks = `🔥 ${flag} ${result.country}`.trim();
+        } else if (gamingFingerprints.has(result.linkFingerprint)) {
+            entry.featured = 'gaming';
+            entry.featuredRank = gaming.find(item => item.linkFingerprint === result.linkFingerprint)?.rank || 0;
+        } else if (entry.featured === 'fast' || entry.featured === 'gaming') {
+            delete entry.featured;
+            delete entry.featuredRank;
+        }
+    }
+
+    return { fast, gaming, fastMeta, gamingMeta };
+}
+
 async function buildGamingAssignments(
     selectedCountries,
     healthResults,
-    candidateItems
+    candidateItems,
+    excludedCountries = new Set()
 ) {
-    const previous =
-        await readGamingAssignments();
-
-    const byFingerprint =
-        new Map(
-            healthResults.map(
-                result => [
-                    result.linkFingerprint,
-                    result
-                ]
-            )
-        );
-
-    const candidateByFingerprint =
-        new Map(
-            (Array.isArray(candidateItems) ? candidateItems : [])
-                .map(item => [
-                    fingerprintLink(item?.link || ""),
-                    item
-                ])
-                .filter(([fingerprint, item]) => fingerprint && item)
-        );
-
-    const candidatesByCountry =
-        new Map();
-
-    for (const result of healthResults) {
-        if (
-            !result.ok ||
-            !result.gaming?.eligible
-        ) {
-            continue;
-        }
-
-        const bucket =
-            candidatesByCountry.get(result.country) || [];
-
-        bucket.push(result);
-        candidatesByCountry.set(result.country, bucket);
-    }
-
-    const output = [];
-
-    for (const countryEntry of selectedCountries) {
-        const candidates =
-            candidatesByCountry.get(
-                countryEntry.country
-            ) || [];
-
-        if (!candidates.length) continue;
-
-        const old =
-            previous.find(
-                item =>
-                    item?.country ===
-                    countryEntry.country
-            );
-
-        const oldResult =
-            old?.linkFingerprint
-                ? byFingerprint.get(old.linkFingerprint)
-                : null;
-
-        const selected =
-            oldResult?.ok &&
-            oldResult?.gaming?.eligible
-                ? oldResult
-                : [...candidates].sort(
-                    (a, b) =>
-                        Number(b.gaming?.score || 0) -
-                        Number(a.gaming?.score || 0)
-                )[0];
-
-        const selectedItem =
-            candidateByFingerprint.get(
-                selected.linkFingerprint
-            );
-
-        const selectedLink =
-            String(
-                selectedItem?.link || ""
-            ).trim();
-
-        if (!selectedLink) {
-            console.warn(
-                `Gaming candidate ${selected.id} has no source link for ${countryEntry.country}; skipping.`
-            );
-            continue;
-        }
-
-        output.push({
-            id:
-                `gaming-${sanitizeId(countryEntry.country)}`,
-            country:
-                countryEntry.country,
-            flag:
-                extractFlag(selected.remarks),
-            remarks:
-                `${extractFlag(selected.remarks)} ${countryEntry.country} GAMING`.trim(),
-            linkFingerprint:
-                selected.linkFingerprint,
-            link:
-                selectedLink,
-            quality:
-                selected.quality,
-            gaming:
-                selected.gaming
-        });
-    }
-
-    return output.filter(
-        item => item.link
+    const candidateByFingerprint = new Map(
+        (Array.isArray(candidateItems) ? candidateItems : [])
+            .map(item => [fingerprintLink(item?.link || ''), item])
+            .filter(([fingerprint, item]) => fingerprint && item)
     );
+
+    const selected = selectFeaturedGamingServers(
+        healthResults,
+        new Set(excludedCountries),
+        GAMING_TOP_N
+    );
+
+    return selected.map((item, index) => {
+        const selectedItem = candidateByFingerprint.get(item.linkFingerprint);
+        const selectedLink = String(selectedItem?.link || '').trim();
+        if (!selectedLink) return null;
+
+        const flag = extractFlag(item.remarks);
+        return {
+            id: `gaming-${index + 1}`,
+            country: item.country,
+            flag,
+            remarks: `🎮 ${flag} ${item.country}`.replace(/\s+/g, ' ').trim(),
+            linkFingerprint: item.linkFingerprint,
+            link: selectedLink,
+            quality: item.quality,
+            gaming: item.gaming,
+        };
+    }).filter(Boolean);
 }
 
 async function main() {
@@ -3047,6 +3013,10 @@ async function main() {
     const selectedCountries =
         buildCountryHealthPool(healthResults, false);
 
+    const featured = applyFeaturedRegularBadges(managedItems, healthResults);
+    const featuredFastCountries = new Set(featured.fast.map(item => item.country));
+    const featuredFastIds = new Set(featured.fast.map(item => item.id));
+
     const selectedWhiteListCountries =
         buildCountryHealthPool(healthResults, true);
 
@@ -3116,7 +3086,8 @@ async function main() {
         await buildGamingAssignments(
             selectedCountries,
             healthResults,
-            candidates
+            candidates,
+            featuredFastCountries
         );
 
     await updateHealthHistory(
@@ -3127,10 +3098,24 @@ async function main() {
         gamingAssignments
     );
 
-    const selectedRegularOrder =
-        selectedCountries.flatMap(
-            country => country.members.map(member => member.id)
-        );
+    await fs.writeFile(
+        path.join(ROOT, 'config', 'keyline-recommendations.json'),
+        `${JSON.stringify({
+            generatedAt: new Date().toISOString(),
+            fast: featured.fastMeta,
+            gaming: featured.gamingMeta,
+        }, null, 2)}\n`,
+        'utf8'
+    );
+
+    const selectedRegularOrder = [
+        ...featured.fast.map(item => item.id),
+        ...selectedCountries.flatMap(
+            country => country.members
+                .filter(member => !featuredFastIds.has(member.id))
+                .map(member => member.id)
+        )
+    ].filter((id, index, list) => list.indexOf(id) === index);
 
     const selectedWhiteListOrder =
         selectedWhiteListCountries.flatMap(

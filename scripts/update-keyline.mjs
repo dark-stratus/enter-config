@@ -12,7 +12,7 @@ const STATE_FILE = path.join(ROOT, ".keyline-state.json");
 const UPDATE_STATUS_FILE = path.join(ROOT, "config", "keyline-update-status.json");
 
 const REGULAR_LIMIT = Number.POSITIVE_INFINITY;
-const AUTO_WHITE_LIST_LIMIT = 20;
+const AUTO_WHITE_LIST_LIMIT = Number.POSITIVE_INFINITY;
 
 const BUILTIN_WHITE_LIST_SOURCES = [
   "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/Vless-Reality-White-Lists-Rus-Mobile.txt",
@@ -20,6 +20,7 @@ const BUILTIN_WHITE_LIST_SOURCES = [
   "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/WHITE-SNI-RU-all.txt",
   "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/WHITE-CIDR-RU-checked.txt",
   "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/WHITE-CIDR-RU-all.txt",
+  "https://raw.githubusercontent.com/zieng2/wl/main/vless_universal.txt",
 ];
 
 const FETCH_TIMEOUT_MS = 60_000;
