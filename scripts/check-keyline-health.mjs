@@ -157,6 +157,26 @@ const MLAB_LOCATE_URL =
     process.env.HEALTHCHECK_MLAB_LOCATE_URL ||
     "https://locate.measurementlab.net/v2/nearest/ndt/ndt7";
 
+const YANDEX_PROBES_URL =
+    process.env.HEALTHCHECK_YANDEX_PROBES_URL ||
+    "https://yandex.ru/internet/api/v0/get-probes";
+
+const YANDEX_PROBE_TIMEOUT_MS =
+    Math.max(
+        5000,
+        Number(process.env.HEALTHCHECK_YANDEX_TIMEOUT_MS) || 9000
+    );
+
+const REQUIRED_SPEED_PROVIDER_IDS = new Set(
+    String(
+        process.env.HEALTHCHECK_REQUIRED_SPEED_PROVIDER_IDS ||
+        ""
+    )
+        .split(/[,\r\n;]+/)
+        .map(value => value.trim().toLowerCase())
+        .filter(Boolean)
+);
+
 const INDEPENDENT_SPEED_PROVIDERS = [
     {
         id: "cloudflare",
@@ -184,6 +204,11 @@ const INDEPENDENT_SPEED_PROVIDERS = [
         id: "mlab",
         label: "M-Lab NDT7",
         type: "ndt7"
+    },
+    {
+        id: "yandex",
+        label: "Yandex Internetometer",
+        type: "yandex"
     }
 ];
 
@@ -241,11 +266,13 @@ const GAMING_MAX_LATENCY_SPREAD_MS =
         Number(process.env.HEALTHCHECK_GAMING_MAX_LATENCY_SPREAD_MS) || 25
     );
 
+const GAMING_BASE_SPEED_PROVIDER_COUNT = 3;
+
 const GAMING_MIN_QUALITY_PASSES =
     Math.max(
         1,
         Math.min(
-            INDEPENDENT_SPEED_PROVIDERS.length,
+            GAMING_BASE_SPEED_PROVIDER_COUNT,
             Number(process.env.HEALTHCHECK_GAMING_MIN_QUALITY_PASSES) || 1
         )
     );
@@ -1441,6 +1468,426 @@ async function runMlabSpeedProvider(
     };
 }
 
+
+async function resolveYandexDownloadProbesViaSocks(
+    socksPort
+) {
+    const maxAttempts = 2;
+    let lastError = "Yandex Internetometer get-probes failed";
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+        const startedAt = Date.now();
+
+        const result = await new Promise(resolve => {
+            const args = [
+                "--silent",
+                "--show-error",
+                "--location",
+                "--connect-timeout",
+                "4",
+                "--max-time",
+                String(Math.ceil(YANDEX_PROBE_TIMEOUT_MS / 1000)),
+                "--proxy",
+                `socks5h://127.0.0.1:${socksPort}`,
+                "--http1.1",
+                "--user-agent",
+                "enter-config-healthcheck/1.0 (Yandex Internetometer probe)",
+                "--referer",
+                "https://yandex.ru/internet/",
+                "--header",
+                "Accept: application/json",
+                "--header",
+                "Cache-Control: no-cache",
+                "--header",
+                "Accept-Encoding: identity",
+                "--write-out",
+                "\\n__YANDEX_HTTP_CODE__:%{http_code}\\n",
+                `${YANDEX_PROBES_URL}?t=${Date.now()}`,
+            ];
+
+            const child = spawn("curl", args, {
+                stdio: ["ignore", "pipe", "pipe"],
+            });
+
+            let stdout = "";
+            let stderr = "";
+
+            child.stdout.on("data", chunk => {
+                stdout += String(chunk);
+            });
+
+            child.stderr.on("data", chunk => {
+                stderr += String(chunk);
+            });
+
+            const timeout = setTimeout(() => {
+                try {
+                    child.kill("SIGTERM");
+                } catch {}
+            }, YANDEX_PROBE_TIMEOUT_MS + 1000);
+
+            child.once("error", error => {
+                clearTimeout(timeout);
+                resolve({
+                    code: -1,
+                    stdout,
+                    stderr: error?.message || "curl spawn failed",
+                    elapsedMs: Math.max(Date.now() - startedAt, 0),
+                });
+            });
+
+            child.once("exit", code => {
+                clearTimeout(timeout);
+                resolve({
+                    code: Number(code),
+                    stdout,
+                    stderr,
+                    elapsedMs: Math.max(Date.now() - startedAt, 0),
+                });
+            });
+        });
+
+        const marker = "__YANDEX_HTTP_CODE__:";
+        const markerIndex = result.stdout.lastIndexOf(marker);
+        const httpCode =
+            markerIndex >= 0
+                ? Number(
+                    result.stdout
+                        .slice(markerIndex + marker.length)
+                        .trim()
+                ) || 0
+                : 0;
+
+        const body =
+            markerIndex >= 0
+                ? result.stdout.slice(0, markerIndex).trim()
+                : result.stdout.trim();
+
+        if (result.code === 0 && httpCode >= 200 && httpCode < 300) {
+            try {
+                const payload = JSON.parse(body);
+                const probes = Array.isArray(
+                    payload?.download?.probes
+                )
+                    ? payload.download.probes
+                    : [];
+
+                const preferred = probes.filter(probe =>
+                    /50mb/i.test(String(probe?.url || ""))
+                );
+
+                const ordered = [
+                    ...preferred,
+                    ...probes.filter(
+                        probe =>
+                            !preferred.includes(probe)
+                    ),
+                ];
+
+                const targets = [];
+                const seenHosts = new Set();
+
+                for (const probe of ordered) {
+                    const url = String(probe?.url || "").trim();
+
+                    if (!/^https:\/\//i.test(url)) continue;
+
+                    let parsed;
+                    try {
+                        parsed = new URL(url);
+                    } catch {
+                        continue;
+                    }
+
+                    const host = parsed.hostname.toLowerCase();
+
+                    if (!host || seenHosts.has(host)) continue;
+
+                    seenHosts.add(host);
+                    targets.push({
+                        url,
+                        host,
+                        size: Number(probe?.size) || 0,
+                    });
+
+                    if (targets.length >= 3) break;
+                }
+
+                if (targets.length > 0) {
+                    return {
+                        ok: true,
+                        httpCode,
+                        targets,
+                        elapsedMs: Math.max(Date.now() - startedAt, 0),
+                    };
+                }
+
+                lastError =
+                    "Yandex get-probes returned no usable download probes";
+            } catch (error) {
+                lastError =
+                    `Yandex get-probes JSON parse failed: ${
+                        error?.message || error
+                    }`;
+            }
+        } else if (httpCode === 429) {
+            lastError = "Yandex get-probes HTTP 429 (rate limited)";
+        } else {
+            lastError = (
+                result.stderr.trim() ||
+                `Yandex get-probes HTTP ${httpCode || "?"}, curl ${result.code}`
+            ).slice(0, 500);
+        }
+
+        if (attempt < maxAttempts) {
+            await sleep(httpCode === 429 ? 1000 : 350);
+        }
+    }
+
+    return {
+        ok: false,
+        httpCode: 0,
+        targets: [],
+        error: lastError,
+    };
+}
+
+async function runYandexDownloadOnce(
+    socksPort,
+    targetUrl
+) {
+    const startedAt = Date.now();
+
+    return new Promise(resolve => {
+        const args = [
+            "--silent",
+            "--show-error",
+            "--location",
+            "--connect-timeout",
+            "4",
+            "--max-time",
+            String(Math.ceil(YANDEX_PROBE_TIMEOUT_MS / 1000)),
+            "--proxy",
+            `socks5h://127.0.0.1:${socksPort}`,
+            "--http1.1",
+            "--user-agent",
+            "enter-config-healthcheck/1.0 (Yandex Internetometer probe)",
+            "--referer",
+            "https://yandex.ru/internet/",
+            "--header",
+            "Cache-Control: no-cache",
+            "--header",
+            "Accept-Encoding: identity",
+            "--output",
+            "/dev/null",
+            "--write-out",
+            "%{http_code}\\n%{size_download}\\n%{time_total}\\n",
+            `${targetUrl}${targetUrl.includes("?") ? "&" : "?"}rid=${crypto
+                .randomBytes(8)
+                .toString("hex")}`,
+        ];
+
+        const child = spawn("curl", args, {
+            stdio: ["ignore", "pipe", "pipe"],
+        });
+
+        let stdout = "";
+        let stderr = "";
+
+        child.stdout.on("data", chunk => {
+            stdout += String(chunk);
+        });
+
+        child.stderr.on("data", chunk => {
+            stderr += String(chunk);
+        });
+
+        child.once("error", error => {
+            resolve({
+                code: -1,
+                stdout,
+                stderr: error?.message || "curl spawn failed",
+                elapsedMs: Math.max(Date.now() - startedAt, 0),
+            });
+        });
+
+        child.once("exit", code => {
+            resolve({
+                code: Number(code),
+                stdout,
+                stderr,
+                elapsedMs: Math.max(Date.now() - startedAt, 0),
+            });
+        });
+    });
+}
+
+async function runYandexSpeedProvider(
+    socksPort
+) {
+    const startedAt = Date.now();
+
+    const located =
+        await resolveYandexDownloadProbesViaSocks(
+            socksPort
+        );
+
+    if (!located.ok) {
+        return {
+            provider: "yandex",
+            label: "Yandex Internetometer",
+            type: "yandex",
+            ok: false,
+            url: YANDEX_PROBES_URL,
+            httpCode: located.httpCode || 0,
+            bytes: 0,
+            elapsedMs: Math.max(Date.now() - startedAt, 0),
+            kbps: 0,
+            server: "",
+            targets: [],
+            attempts: [],
+            error: located.error,
+        };
+    }
+
+    // Yandex's documented methodology measures several CDN nodes
+    // concurrently and aggregates the received bytes over the test window.
+    // Keep the same structure but use a short health-check window.
+    const results = await Promise.all(
+        located.targets.map(target =>
+            runYandexDownloadOnce(
+                socksPort,
+                target.url
+            )
+        )
+    );
+
+    const attempts = [];
+    let totalBytes = 0;
+    let commonElapsedMs = 0;
+
+    located.targets.forEach((target, index) => {
+        const result = results[index];
+
+        const lines =
+            result.stdout
+                .trim()
+                .split(/\r?\n/)
+                .map(value => value.trim());
+
+        const httpCode =
+            Number(lines[0] || 0) || 0;
+
+        const bytes =
+            Number(lines[1] || 0) || 0;
+
+        const curlSeconds =
+            Number(lines[2] || 0);
+
+        const elapsedMs =
+            Math.max(
+                curlSeconds > 0
+                    ? curlSeconds * 1000
+                    : result.elapsedMs,
+                1
+            );
+
+        const kbps =
+            bytes > 0
+                ? (bytes / 1024) /
+                    (elapsedMs / 1000)
+                : 0;
+
+        const isHttpSuccess =
+            httpCode >= 200 && httpCode < 400;
+
+        const meaningful =
+            bytes >= 256 * 1024;
+
+        const completedOrTimedOut =
+            result.code === 0 || result.code === 28;
+
+        const ok =
+            completedOrTimedOut &&
+            isHttpSuccess &&
+            meaningful &&
+            kbps >= INDEPENDENT_SPEED_MIN_MEDIAN_KBPS;
+
+        totalBytes += bytes;
+        commonElapsedMs = Math.max(
+            commonElapsedMs,
+            elapsedMs
+        );
+
+        attempts.push({
+            provider: "yandex",
+            label: "Yandex Internetometer",
+            type: "yandex",
+            ok,
+            url: target.url,
+            server: target.host,
+            httpCode,
+            bytes,
+            elapsedMs: Math.round(elapsedMs),
+            kbps: Math.round(kbps * 10) / 10,
+            curlCode: result.code,
+            error: ok
+                ? ""
+                : (
+                    result.stderr.trim() ||
+                    `Yandex probe failed: curl=${result.code}, ` +
+                    `HTTP=${httpCode || "?"}, ` +
+                    `${bytes} bytes, ` +
+                    `${Math.round(kbps * 10) / 10} KB/s`
+                ).slice(0, 500),
+        });
+    });
+
+    const successful = attempts.filter(
+        attempt => attempt.ok
+    );
+
+    // Treat the Yandex CDN set as one provider. Aggregate bytes from all
+    // selected CDN nodes over the same wall-clock measurement window.
+    const aggregateKbps =
+        totalBytes > 0 && commonElapsedMs > 0
+            ? (totalBytes / 1024) /
+                (commonElapsedMs / 1000)
+            : 0;
+
+    const ok =
+        successful.length > 0 &&
+        aggregateKbps >=
+            INDEPENDENT_SPEED_MIN_MEDIAN_KBPS;
+
+    return {
+        provider: "yandex",
+        label: "Yandex Internetometer",
+        type: "yandex",
+        ok,
+        url: YANDEX_PROBES_URL,
+        httpCode: successful.length
+            ? 200
+            : (attempts[0]?.httpCode || 0),
+        bytes: totalBytes,
+        elapsedMs: Math.round(commonElapsedMs),
+        kbps:
+            Math.round(aggregateKbps * 10) / 10,
+        server: successful
+            .map(item => item.server)
+            .join(", "),
+        targets: located.targets.map(item => item.url),
+        attempts,
+        error: ok
+            ? ""
+            : (
+                "Yandex Internetometer speed check failed; " +
+                `${successful.length}/${attempts.length} CDN probes ` +
+                `passed, aggregate ${Math.round(aggregateKbps * 10) / 10} KB/s`
+            ).slice(0, 500),
+    };
+}
+
 async function runIndependentSpeedCheck(
     socksPort
 ) {
@@ -1455,6 +1902,11 @@ async function runIndependentSpeedCheck(
         if (provider.type === "ndt7") {
             result =
                 await runMlabSpeedProvider(
+                    socksPort
+                );
+        } else if (provider.type === "yandex") {
+            result =
+                await runYandexSpeedProvider(
                     socksPort
                 );
         } else {
@@ -1499,9 +1951,21 @@ async function runIndependentSpeedCheck(
             ? median(speeds)
             : 0;
 
+    const requiredProviderFailures =
+        [...REQUIRED_SPEED_PROVIDER_IDS]
+            .filter(
+                providerId =>
+                    !successful.some(
+                        provider =>
+                            String(provider.provider).toLowerCase() ===
+                            providerId
+                    )
+            );
+
     const ok =
         successful.length >=
             INDEPENDENT_SPEED_PROVIDER_MIN_PASSES &&
+        requiredProviderFailures.length === 0 &&
         medianKbps >=
             INDEPENDENT_SPEED_MIN_MEDIAN_KBPS;
 
@@ -1581,7 +2045,12 @@ async function runIndependentSpeedCheck(
                     `independent speed check failed: ` +
                     `${successful.length}/${providers.length} providers passed; ` +
                     `median ${Math.round(medianKbps * 10) / 10} KB/s ` +
-                    `(minimum ${INDEPENDENT_SPEED_MIN_MEDIAN_KBPS} KB/s)`
+                    `(minimum ${INDEPENDENT_SPEED_MIN_MEDIAN_KBPS} KB/s)` +
+                    (
+                        requiredProviderFailures.length
+                            ? `; required providers failed: ${requiredProviderFailures.join(", ")}`
+                            : ""
+                    )
                 )
     };
 }
@@ -1845,7 +2314,7 @@ function getGamingMetrics(
                 25,
                 (qualityPassed /
                     Math.max(
-                        INDEPENDENT_SPEED_PROVIDERS.length,
+                        GAMING_BASE_SPEED_PROVIDER_COUNT,
                         1
                     )) * 25
             )
