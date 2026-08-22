@@ -2837,13 +2837,17 @@ async function main() {
 
             const passedTargets = remote.filter(result => result?.ok);
             const failedTargets = remote.filter(result => !result?.ok);
+            const isWhiteListCandidate =
+                Boolean(candidateMap[linkFingerprint]?.whiteList) ||
+                MANAGED_WHITE_LIST_RE.test(String(item.id || ""));
 
-            // Do not spend 30+ seconds on three external bandwidth providers
-            // when the route has already failed every basic HTTPS reachability
-            // probe. This is the explicit "server works first, speed second"
-            // gate: TCP + Xray + at least one real HTTPS target must pass before
-            // we pay for the heavier speed measurements.
-            if (passedTargets.length === 0) {
+            // Regular nodes use HTTPS reachability as an inexpensive liveness
+            // gate before we spend time on the four heavy speed providers.
+            // White-list/LTE nodes are intentionally different: their traffic
+            // path is special, so a failure of all three ordinary public HTTPS
+            // probes must not prevent the actual speed test from determining
+            // whether the node can carry real traffic.
+            if (passedTargets.length === 0 && !isWhiteListCandidate) {
                 return {
                     item,
                     ok: false,
