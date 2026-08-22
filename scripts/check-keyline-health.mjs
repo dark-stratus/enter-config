@@ -224,10 +224,7 @@ const PYTHON_BIN =
 const HEALTH_CONCURRENCY =
     Math.max(
         1,
-        Math.min(
-            8,
-            Number(process.env.HEALTHCHECK_CONCURRENCY) || 8
-        )
+        Math.min(20, Number(process.env.HEALTHCHECK_CONCURRENCY) || 16)
     );
 
 const MAX_VISIBLE_COUNTRIES =
@@ -1345,9 +1342,16 @@ async function runMlabSpeedProvider(
 
     const attempts = [];
 
-    for (const target of located.targets) {
-        const targetStartedAt = Date.now();
-        const result = await new Promise(resolve => {
+    // M-Lab Locate can return several download services. The previous implementation
+    // tried up to four targets sequentially, which could add multiple full speed-test
+    // timeouts to every candidate. Two concurrent targets retain redundancy without
+    // creating a long per-server tail.
+    const targets = located.targets.slice(0, 2);
+    const targetResults = [];
+    const probeResults = await Promise.all(
+        targets.map(async target => {
+            const targetStartedAt = Date.now();
+            const result = await new Promise(resolve => {
             const args = [
                 MLAB_PROBE_SCRIPT,
                 "--socks-port",
@@ -1429,23 +1433,27 @@ async function runMlabSpeedProvider(
                 ).slice(0, 500),
         };
 
-        attempts.push(attempt);
+        return attempt;
+        })
+    );
 
-        if (ok) {
-            return {
-                ...attempt,
-                attempts: attempts.map(item => ({
-                    url: item.url,
-                    server: item.server || "",
-                    ok: Boolean(item.ok),
-                    httpCode: Number(item.httpCode) || 0,
-                    bytes: Number(item.bytes) || 0,
-                    elapsedMs: Number(item.elapsedMs) || 0,
-                    kbps: Number(item.kbps) || 0,
-                    error: item.error || "",
-                })),
-            };
-        }
+    attempts.push(...probeResults);
+
+    const successfulAttempt = attempts.find(item => item?.ok);
+    if (successfulAttempt) {
+        return {
+            ...successfulAttempt,
+            attempts: attempts.map(item => ({
+                url: item.url,
+                server: item.server || "",
+                ok: Boolean(item.ok),
+                httpCode: Number(item.httpCode) || 0,
+                bytes: Number(item.bytes) || 0,
+                elapsedMs: Number(item.elapsedMs) || 0,
+                kbps: Number(item.kbps) || 0,
+                error: item.error || "",
+            })),
+        };
     }
 
     const last = attempts.at(-1) || {
@@ -2141,28 +2149,30 @@ async function measureGamingLatency(link) {
         };
     }
 
-    const samples = [];
-    const errors = [];
+    // The three samples are independent TCP handshakes. Run them concurrently
+    // so gaming eligibility keeps the same three-sample methodology without
+    // adding ~2x sequential timeout/handshake wall time per server.
+    const probeResults = await Promise.all(
+        Array.from({ length: 3 }, () =>
+            directTcpLatencyProbe(
+                server.address,
+                server.port,
+                TCP_TIMEOUT_MS
+            )
+        )
+    );
 
-    for (let index = 0; index < 3; index += 1) {
-        const result = await directTcpLatencyProbe(
-            server.address,
-            server.port,
-            TCP_TIMEOUT_MS
-        );
+    const samples = probeResults
+        .filter(result => result?.ok)
+        .map(result => Number(result.latencyMs));
 
-        if (!result.ok) {
-            errors.push(
-                `probe ${index + 1}: ${result.error || "failed"}`
-            );
-        } else {
-            samples.push(Number(result.latencyMs));
-        }
-
-        if (index < 2) {
-            await sleep(250);
-        }
-    }
+    const errors = probeResults
+        .map((result, index) =>
+            result?.ok
+                ? ""
+                : `probe ${index + 1}: ${result?.error || "failed"}`
+        )
+        .filter(Boolean);
 
     const finite = samples.filter(Number.isFinite);
 
@@ -2694,6 +2704,7 @@ async function main() {
     let cursor =
         0;
 
+    const healthStartedAt = Date.now();
     const checkedLinkMeta = new Map();
 
     async function checkItem(
@@ -2955,6 +2966,12 @@ async function main() {
                 remote: result.remote || [],
                 telegram: result.telegram || null
             });
+
+            const completed = passed + failed;
+            if (completed % 50 === 0 || completed === checked) {
+                const elapsed = Math.round((Date.now() - healthStartedAt) / 1000);
+                console.log(`HEALTH PROGRESS ${completed}/${checked}: ${passed} passed, ${failed} failed, ${elapsed}s elapsed`);
+            }
 
             if (result.ok) {
                 console.log(
