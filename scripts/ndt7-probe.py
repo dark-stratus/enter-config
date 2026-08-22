@@ -1,22 +1,19 @@
 #!/usr/bin/env python3
 """
-Minimal M-Lab NDT7 download probe through a local SOCKS5 proxy.
+M-Lab NDT7 download probe through a local Xray SOCKS5 proxy.
 
-The locate API is queried directly from the GitHub runner. The selected
-measurement WebSocket is then reached through the candidate's local Xray
-SOCKS5 proxy. This keeps the measurement destination independent from the
-candidate VPN endpoint.
+The caller resolves the M-Lab Locate target through the candidate's SOCKS
+proxy and passes the resulting WSS /ndt/v7/download service URL here.
 """
 
 import argparse
 import json
 import sys
 import time
-import urllib.request
 
 try:
     import websocket
-except Exception as exc:  # pragma: no cover
+except Exception as exc:
     print(
         json.dumps(
             {
@@ -27,77 +24,65 @@ except Exception as exc:  # pragma: no cover
     )
     sys.exit(2)
 
-
-LOCATE_URL = "https://locate.measurementlab.net/v2/nearest/ndt/ndt7"
-SUBPROTOCOL = "net.measurementlab.ndt.v7"
-USER_AGENT = "enter-config-healthcheck/1.0"
-
-
-def locate_service_url(timeout: float) -> str:
-    request = urllib.request.Request(
-        LOCATE_URL,
-        headers={
-            "User-Agent": USER_AGENT,
-            "Accept": "application/json",
-        },
+try:
+    import python_socks  # noqa: F401
+except Exception as exc:
+    print(
+        json.dumps(
+            {
+                "ok": False,
+                "error": f"python-socks unavailable: {exc}",
+            }
+        )
     )
-    last_error = None
-    for attempt in range(4):
-        try:
-            with urllib.request.urlopen(request, timeout=timeout) as response:
-                if response.status != 200:
-                    raise RuntimeError(
-                        f"M-Lab Locate returned HTTP {response.status}"
-                    )
-                payload = json.loads(response.read().decode("utf-8"))
-                break
-        except Exception as exc:
-            last_error = exc
-            if attempt >= 3:
-                raise
-            time.sleep(1.0 * (2 ** attempt))
-
-    results = payload.get("results") or payload.get("result") or []
-    if not results:
-        raise RuntimeError("M-Lab Locate returned no ndt7 targets")
-
-    for result in results:
-        urls = result.get("urls") or {}
-        for key, value in urls.items():
-            if "/ndt/v7/download" in key or "/ndt/v7/download" in value:
-                if value.startswith("wss://"):
-                    return value
-
-    raise RuntimeError("M-Lab Locate response has no WSS download URL")
+    sys.exit(2)
 
 
-def run_probe(socks_port: int, timeout: float, service_url: str | None = None) -> dict:
+SUBPROTOCOL = "net.measurementlab.ndt.v7"
+USER_AGENT = "enter-config-healthcheck/1.1"
+
+
+def run_probe(
+    socks_port: int,
+    timeout: float,
+    service_url: str,
+) -> dict:
     started = time.monotonic()
-    if not service_url:
-        service_url = locate_service_url(min(timeout, 10.0))
+
+    if not service_url.startswith("wss://"):
+        raise RuntimeError("M-Lab service URL must use wss://")
+
+    if "/ndt/v7/download" not in service_url:
+        raise RuntimeError(
+            "M-Lab service URL is not an ndt7 download endpoint"
+        )
 
     ws = websocket.create_connection(
         service_url,
-        timeout=min(timeout, 10.0),
+        timeout=min(timeout, 12.0),
         subprotocols=[SUBPROTOCOL],
         header=[
-            "User-Agent: enter-config-healthcheck/1.0",
+            f"User-Agent: {USER_AGENT}",
+            "Cache-Control: no-cache",
         ],
         http_proxy_host="127.0.0.1",
         http_proxy_port=socks_port,
         proxy_type="socks5h",
+        http_proxy_timeout=min(timeout, 8.0),
         enable_multithread=True,
-        suppress_origin=True,
     )
 
     connected = time.monotonic()
-    total_bytes = 0
+    total_binary_bytes = 0
     latest_num_bytes = 0
     latest_elapsed_us = 0
 
+    # NDT7 is a bounded measurement. Leave enough time for the final
+    # application-level Measurement result while keeping the overall probe
+    # under the health-check timeout.
     deadline = min(
-        connected + max(3.0, min(timeout - 1.0, 10.0)),
-        connected + 10.0,
+        connected + max(4.0, min(timeout - 1.0, 12.0)),
+        connected + 12.0,
     )
 
     ws.settimeout(1.0)
@@ -107,19 +92,15 @@ def run_probe(socks_port: int, timeout: float, service_url: str | None = None) -
             try:
                 message = ws.recv()
             except websocket.WebSocketTimeoutException:
-                # No frame during this one-second read window. Keep the
-                # connection alive and continue until the probe deadline.
                 continue
             except Exception:
-                # The server may close after its own test duration. We keep
-                # whatever application-level data we already collected.
                 break
 
             if message is None:
                 break
 
             if isinstance(message, bytes):
-                total_bytes += len(message)
+                total_binary_bytes += len(message)
                 continue
 
             if isinstance(message, str):
@@ -132,11 +113,13 @@ def run_probe(socks_port: int, timeout: float, service_url: str | None = None) -
                 if isinstance(app_info, dict):
                     value = app_info.get("NumBytes")
                     elapsed = app_info.get("ElapsedTime")
+
                     if isinstance(value, (int, float)):
                         latest_num_bytes = max(
                             latest_num_bytes,
                             int(value),
                         )
+
                     if isinstance(elapsed, (int, float)):
                         latest_elapsed_us = max(
                             latest_elapsed_us,
@@ -148,10 +131,13 @@ def run_probe(socks_port: int, timeout: float, service_url: str | None = None) -
         except Exception:
             pass
 
-    elapsed = max(time.monotonic() - connected, 0.001)
+    elapsed = max(
+        time.monotonic() - connected,
+        0.001,
+    )
 
     measured_bytes = max(
-        total_bytes,
+        total_binary_bytes,
         latest_num_bytes,
     )
 
@@ -162,13 +148,16 @@ def run_probe(socks_port: int, timeout: float, service_url: str | None = None) -
     )
 
     kbps = (
-        (measured_bytes / 1024.0) / max(measured_seconds, 0.001)
+        (measured_bytes / 1024.0)
+        / max(measured_seconds, 0.001)
     )
+
+    host = service_url.split("/")[2]
 
     return {
         "ok": measured_bytes > 0,
         "serviceUrl": service_url,
-        "server": service_url.split("/")[2],
+        "server": host,
         "bytes": measured_bytes,
         "elapsedMs": round(measured_seconds * 1000),
         "kbps": round(kbps, 1),
@@ -178,25 +167,28 @@ def run_probe(socks_port: int, timeout: float, service_url: str | None = None) -
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--socks-port", type=int, required=False, default=0)
-    parser.add_argument("--timeout", type=float, default=18.0)
-    parser.add_argument("--service-url", default="", help="Pre-resolved M-Lab ndt7 download URL")
-    parser.add_argument("--locate-only", action="store_true")
+    parser.add_argument(
+        "--socks-port",
+        type=int,
+        required=True,
+    )
+    parser.add_argument(
+        "--timeout",
+        type=float,
+        default=15.0,
+    )
+    parser.add_argument(
+        "--service-url",
+        required=True,
+        help="Pre-resolved M-Lab ndt7 WSS download URL",
+    )
     args = parser.parse_args()
-
-    if args.locate_only:
-        try:
-            print(locate_service_url(min(args.timeout, 10.0)))
-            return 0
-        except Exception as exc:
-            print(str(exc), file=sys.stderr)
-            return 1
 
     try:
         result = run_probe(
             args.socks_port,
             args.timeout,
-            args.service_url or None,
+            args.service_url,
         )
     except Exception as exc:
         result = {
@@ -205,10 +197,17 @@ def main() -> int:
             "elapsedMs": 0,
             "kbps": 0,
             "websocketCode": 0,
+            "server": "",
+            "serviceUrl": args.service_url,
             "error": str(exc),
         }
 
-    print(json.dumps(result, ensure_ascii=False))
+    print(
+        json.dumps(
+            result,
+            ensure_ascii=False,
+        )
+    )
     return 0 if result.get("ok") else 1
 
 

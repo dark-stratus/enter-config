@@ -144,8 +144,18 @@ const INDEPENDENT_SPEED_MIN_MEDIAN_KBPS =
 const INDEPENDENT_SPEED_TIMEOUT_MS =
     Math.max(
         5000,
-        Number(process.env.HEALTHCHECK_SPEED_TIMEOUT_MS) || 18000
+        Number(process.env.HEALTHCHECK_SPEED_TIMEOUT_MS) || 15000
     );
+
+const MLAB_LOCATE_TIMEOUT_MS =
+    Math.max(
+        3000,
+        Number(process.env.HEALTHCHECK_MLAB_LOCATE_TIMEOUT_MS) || 8000
+    );
+
+const MLAB_LOCATE_URL =
+    process.env.HEALTHCHECK_MLAB_LOCATE_URL ||
+    "https://locate.measurementlab.net/v2/nearest/ndt/ndt7";
 
 const INDEPENDENT_SPEED_PROVIDERS = [
     {
@@ -159,10 +169,14 @@ const INDEPENDENT_SPEED_PROVIDERS = [
     {
         id: "hetzner",
         label: "Hetzner",
-        type: "curl",
-        url:
+        type: "curl-fallback",
+        urls: [
             process.env.HEALTHCHECK_HETZNER_URL ||
-            "https://fsn1-speed.hetzner.com/10MB.bin"
+                "https://fsn1-speed.hetzner.com/100MB.bin",
+            process.env.HEALTHCHECK_HETZNER_FALLBACK_URL ||
+                "https://nbg1-speed.hetzner.com/100MB.bin",
+            "https://hel1-speed.hetzner.com/100MB.bin"
+        ]
     },
     {
         id: "mlab",
@@ -182,10 +196,6 @@ const MLAB_PROBE_SCRIPT =
 const PYTHON_BIN =
     process.env.HEALTHCHECK_PYTHON ||
     "python3";
-
-const MLAB_SERVICE_URL =
-    process.env.HEALTHCHECK_MLAB_SERVICE_URL ||
-    "";
 
 const HEALTH_CONCURRENCY =
     Math.max(
@@ -964,46 +974,198 @@ async function runIndependentCurlSpeedProvider(
     provider
 ) {
     const startedAt = Date.now();
-    const probeUrl = (() => {
-        try {
-            const url = new URL(provider.url);
-            url.searchParams.set(
-                "hc_probe",
-                `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
-            );
-            return url.toString();
-        } catch {
-            return provider.url;
-        }
-    })();
+    const urls = Array.isArray(provider.urls)
+        ? provider.urls
+        : [provider.url];
 
+    const attempts = [];
+
+    for (const targetUrl of urls) {
+        const result = await new Promise(resolve => {
+            const args = [
+                "--silent",
+                "--show-error",
+                "--fail",
+                "--connect-timeout",
+                "5",
+                "--max-time",
+                String(
+                    Math.ceil(
+                        INDEPENDENT_SPEED_TIMEOUT_MS / 1000
+                    )
+                ),
+                "--proxy",
+                `socks5h://127.0.0.1:${socksPort}`,
+                "--http1.1",
+                "--location",
+                targetUrl,
+                "--output",
+                "/dev/null",
+                "--write-out",
+                "%{http_code}\\n%{size_download}\\n%{time_total}\\n"
+            ];
+
+            const child = spawn(
+                "curl",
+                args,
+                {
+                    stdio: [
+                        "ignore",
+                        "pipe",
+                        "pipe"
+                    ]
+                }
+            );
+
+            let stdout = "";
+            let stderr = "";
+
+            child.stdout.on(
+                "data",
+                chunk => {
+                    stdout += String(chunk);
+                }
+            );
+
+            child.stderr.on(
+                "data",
+                chunk => {
+                    stderr += String(chunk);
+                }
+            );
+
+            const timeout = setTimeout(
+                () => {
+                    try {
+                        child.kill("SIGKILL");
+                    } catch {}
+                },
+                INDEPENDENT_SPEED_TIMEOUT_MS + 250
+            );
+
+            child.once(
+                "exit",
+                code => {
+                    clearTimeout(timeout);
+
+                    const lines = stdout
+                        .trim()
+                        .split(/\r?\n/)
+                        .map(value => value.trim());
+
+                    const httpCode =
+                        Number(lines[0] || 0) || 0;
+                    const bytes =
+                        Number(lines[1] || 0) || 0;
+                    const curlSeconds =
+                        Number(lines[2] || 0);
+
+                    const elapsedSeconds =
+                        Number.isFinite(curlSeconds) && curlSeconds > 0
+                            ? curlSeconds
+                            : Math.max(
+                                (Date.now() - startedAt) / 1000,
+                                0.001
+                            );
+
+                    const kbps =
+                        bytes > 0
+                            ? (bytes / 1024) / elapsedSeconds
+                            : 0;
+
+                    const ok =
+                        (code === 0 || code === 28) &&
+                        httpCode >= 200 &&
+                        httpCode < 400 &&
+                        bytes >= 262144 &&
+                        kbps >= INDEPENDENT_SPEED_MIN_MEDIAN_KBPS;
+
+                    resolve({
+                        provider: provider.id,
+                        label: provider.label,
+                        type: provider.type,
+                        ok,
+                        url: targetUrl,
+                        httpCode,
+                        bytes,
+                        elapsedMs: Math.round(elapsedSeconds * 1000),
+                        kbps:
+                            Math.round(kbps * 10) / 10,
+                        error:
+                            ok
+                                ? ""
+                                : (
+                                    stderr.trim() ||
+                                    `provider failed: HTTP ${httpCode || "?"}, ` +
+                                    `${bytes} bytes, ` +
+                                    `${Math.round(kbps * 10) / 10} KB/s`
+                                ).slice(0, 500)
+                    });
+                }
+            );
+        });
+
+        attempts.push(result);
+
+        if (result.ok) {
+            return {
+                ...result,
+                attempts: attempts.map(item => ({
+                    url: item.url,
+                    ok: Boolean(item.ok),
+                    httpCode: Number(item.httpCode) || 0,
+                    bytes: Number(item.bytes) || 0,
+                    elapsedMs: Number(item.elapsedMs) || 0,
+                    kbps: Number(item.kbps) || 0,
+                    error: item.error || ""
+                }))
+            };
+        }
+    }
+
+    const last = attempts.at(-1) || {
+        provider: provider.id,
+        label: provider.label,
+        type: provider.type,
+        ok: false,
+        url: "",
+        httpCode: 0,
+        bytes: 0,
+        elapsedMs: Date.now() - startedAt,
+        kbps: 0,
+        error: "no test URLs configured"
+    };
+
+    return {
+        ...last,
+        attempts: attempts.map(item => ({
+            url: item.url,
+            ok: Boolean(item.ok),
+            httpCode: Number(item.httpCode) || 0,
+            bytes: Number(item.bytes) || 0,
+            elapsedMs: Number(item.elapsedMs) || 0,
+            kbps: Number(item.kbps) || 0,
+            error: item.error || ""
+        }))
+    };
+}
+
+async function resolveMlabServiceUrlViaSocks(
+    socksPort
+) {
     return await new Promise(resolve => {
         const args = [
             "--silent",
             "--show-error",
             "--fail",
             "--connect-timeout",
-            "5",
+            String(Math.max(2, Math.ceil(MLAB_LOCATE_TIMEOUT_MS / 1000))),
             "--max-time",
-            String(
-                Math.ceil(
-                    INDEPENDENT_SPEED_TIMEOUT_MS / 1000
-                )
-            ),
+            String(Math.max(3, Math.ceil(MLAB_LOCATE_TIMEOUT_MS / 1000))),
             "--proxy",
             `socks5h://127.0.0.1:${socksPort}`,
             "--http1.1",
-            "--retry",
-            "2",
-            "--retry-delay",
-            "1",
-            "--retry-all-errors",
-            "--location",
-            probeUrl,
-            "--output",
-            "/dev/null",
-            "--write-out",
-            "%{http_code}\\n%{size_download}\\n%{time_total}\\n"
+            MLAB_LOCATE_URL,
         ];
 
         const child = spawn(
@@ -1037,9 +1199,11 @@ async function runIndependentCurlSpeedProvider(
 
         const timeout = setTimeout(
             () => {
-                child.kill("SIGKILL");
+                try {
+                    child.kill("SIGKILL");
+                } catch {}
             },
-            INDEPENDENT_SPEED_TIMEOUT_MS
+            MLAB_LOCATE_TIMEOUT_MS + 250
         );
 
         child.once(
@@ -1047,65 +1211,58 @@ async function runIndependentCurlSpeedProvider(
             code => {
                 clearTimeout(timeout);
 
-                const lines = stdout
-                    .trim()
-                    .split(/\r?\n/)
-                    .map(value => value.trim());
+                if (code !== 0) {
+                    resolve({
+                        ok: false,
+                        error:
+                            stderr.trim() ||
+                            `M-Lab Locate exited with code ${code}`
+                    });
+                    return;
+                }
 
-                const httpCode =
-                    Number(lines[0] || 0) || 0;
-                const bytes =
-                    Number(lines[1] || 0) || 0;
-                const curlSeconds =
-                    Number(lines[2] || 0);
+                try {
+                    const payload = JSON.parse(stdout);
+                    const results =
+                        payload?.results ||
+                        payload?.result ||
+                        [];
 
-                const elapsedSeconds =
-                    Number.isFinite(curlSeconds) && curlSeconds > 0
-                        ? curlSeconds
-                        : Math.max(
-                            (Date.now() - startedAt) / 1000,
-                            0.001
-                        );
+                    for (const result of results) {
+                        const urls = result?.urls || {};
+                        const candidates = Object.entries(urls);
 
-                const kbps =
-                    bytes > 0
-                        ? (bytes / 1024) / elapsedSeconds
-                        : 0;
+                        for (const [key, value] of candidates) {
+                            const url = String(value || "").trim();
+                            if (
+                                (
+                                    key.includes("/ndt/v7/download") ||
+                                    url.includes("/ndt/v7/download")
+                                ) &&
+                                url.startsWith("wss://")
+                            ) {
+                                resolve({
+                                    ok: true,
+                                    serviceUrl: url
+                                });
+                                return;
+                            }
+                        }
+                    }
 
-                const partialTransferAllowed =
-                    code === 28 &&
-                    httpCode >= 200 &&
-                    httpCode < 400 &&
-                    bytes >= 262144;
-
-                const ok =
-                    (code === 0 || partialTransferAllowed) &&
-                    httpCode >= 200 &&
-                    httpCode < 400 &&
-                    bytes > 0 &&
-                    kbps >= INDEPENDENT_SPEED_MIN_MEDIAN_KBPS;
-
-                resolve({
-                    provider: provider.id,
-                    label: provider.label,
-                    type: provider.type,
-                    ok,
-                    url: provider.url,
-                    httpCode,
-                    bytes,
-                    elapsedMs: Math.round(elapsedSeconds * 1000),
-                    kbps:
-                        Math.round(kbps * 10) / 10,
-                    error:
-                        ok
-                            ? ""
-                            : (
-                                stderr.trim() ||
-                                `provider failed: HTTP ${httpCode || "?"}, ` +
-                                `${bytes} bytes, ` +
-                                `${Math.round(kbps * 10) / 10} KB/s`
-                            ).slice(0, 500)
-                });
+                    resolve({
+                        ok: false,
+                        error: "M-Lab Locate returned no wss ndt7 download URL"
+                    });
+                } catch (error) {
+                    resolve({
+                        ok: false,
+                        error:
+                            `M-Lab Locate JSON parse failed: ${
+                                error?.message || error
+                            }`
+                    });
+                }
             }
         );
     });
@@ -1115,6 +1272,26 @@ async function runMlabSpeedProvider(
     socksPort
 ) {
     const startedAt = Date.now();
+
+    const located = await resolveMlabServiceUrlViaSocks(
+        socksPort
+    );
+
+    if (!located.ok) {
+        return {
+            provider: "mlab",
+            label: "M-Lab NDT7",
+            type: "ndt7",
+            ok: false,
+            url: MLAB_LOCATE_URL,
+            httpCode: 0,
+            bytes: 0,
+            elapsedMs: Math.max(Date.now() - startedAt, 0),
+            kbps: 0,
+            error: located.error,
+            server: ""
+        };
+    }
 
     return await new Promise(resolve => {
         const args = [
@@ -1126,15 +1303,10 @@ async function runMlabSpeedProvider(
                 Math.ceil(
                     INDEPENDENT_SPEED_TIMEOUT_MS / 1000
                 )
-            )
+            ),
+            "--service-url",
+            located.serviceUrl
         ];
-
-        if (MLAB_SERVICE_URL) {
-            args.push(
-                "--service-url",
-                MLAB_SERVICE_URL
-            );
-        }
 
         const child = spawn(
             PYTHON_BIN,
@@ -1167,7 +1339,9 @@ async function runMlabSpeedProvider(
 
         const timeout = setTimeout(
             () => {
-                child.kill("SIGKILL");
+                try {
+                    child.kill("SIGKILL");
+                } catch {}
             },
             INDEPENDENT_SPEED_TIMEOUT_MS + 2000
         );
@@ -1189,9 +1363,24 @@ async function runMlabSpeedProvider(
                         payload?.kbps
                     ) || 0;
 
+                const bytes =
+                    Number(
+                        payload?.bytes
+                    ) || 0;
+
+                const elapsedMs =
+                    Number(
+                        payload?.elapsedMs
+                    ) ||
+                    Math.max(
+                        Date.now() - startedAt,
+                        0
+                    );
+
                 const ok =
                     code === 0 &&
                     payload?.ok === true &&
+                    bytes >= 262144 &&
                     kbps >= INDEPENDENT_SPEED_MIN_MEDIAN_KBPS;
 
                 resolve({
@@ -1199,29 +1388,22 @@ async function runMlabSpeedProvider(
                     label: "M-Lab NDT7",
                     type: "ndt7",
                     ok,
-                    url:
-                        payload?.serviceUrl ||
-                        "https://locate.measurementlab.net/v2/nearest/ndt/ndt7",
-                    httpCode:
-                        payload?.websocketCode ||
-                        0,
-                    bytes:
-                        Number(payload?.bytes) || 0,
-                    elapsedMs:
-                        Number(payload?.elapsedMs) ||
-                        Math.max(Date.now() - startedAt, 0),
+                    url: located.serviceUrl,
+                    httpCode: 101,
+                    bytes,
+                    elapsedMs,
                     kbps:
                         Math.round(kbps * 10) / 10,
+                    server:
+                        payload?.server || "",
                     error:
                         ok
                             ? ""
-                            : String(
+                            : (
                                 payload?.error ||
                                 stderr.trim() ||
-                                "M-Lab NDT7 probe failed"
-                            ).slice(0, 500),
-                    server:
-                        payload?.server || ""
+                                `M-Lab NDT7 failed with exit code ${code}`
+                            ).slice(0, 500)
                 });
             }
         );
@@ -1354,7 +1536,11 @@ async function runIndependentSpeedCheck(
                     server:
                         provider.server || "",
                     error:
-                        provider.error || ""
+                        provider.error || "",
+                    attempts:
+                        Array.isArray(provider.attempts)
+                            ? provider.attempts
+                            : []
                 })
             ),
         error:
@@ -2603,7 +2789,7 @@ async function main() {
             minimumProviderPasses: INDEPENDENT_SPEED_PROVIDER_MIN_PASSES,
             minimumMedianKbps: INDEPENDENT_SPEED_MIN_MEDIAN_KBPS,
             mlabProbeScript: MLAB_PROBE_SCRIPT,
-            mlabServiceUrl: MLAB_SERVICE_URL ? "resolved" : "per-probe locate",
+            mlabLocateUrl: MLAB_LOCATE_URL,
         },
         gamingCriteria: {
             minKbps:
