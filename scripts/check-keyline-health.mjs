@@ -144,7 +144,7 @@ const INDEPENDENT_SPEED_MIN_MEDIAN_KBPS =
 const INDEPENDENT_SPEED_TIMEOUT_MS =
     Math.max(
         5000,
-        Number(process.env.HEALTHCHECK_SPEED_TIMEOUT_MS) || 15000
+        Number(process.env.HEALTHCHECK_SPEED_TIMEOUT_MS) || 12000
     );
 
 const MLAB_LOCATE_TIMEOUT_MS =
@@ -195,9 +195,6 @@ const INDEPENDENT_SPEED_PROVIDERS = [
                 "https://fsn1-speed.hetzner.com/100MB.bin",
             process.env.HEALTHCHECK_HETZNER_FALLBACK_URL ||
                 "https://nbg1-speed.hetzner.com/100MB.bin",
-            "https://hel1-speed.hetzner.com/100MB.bin",
-            "https://ash-speed.hetzner.com/100MB.bin",
-            "https://hil-speed.hetzner.com/100MB.bin"
         ]
     },
     {
