@@ -129,6 +129,16 @@ const CONNECTION_TIME_MAX_MEDIAN_MS =
 const CONNECTION_TIME_MAX_SINGLE_MS =
     Math.max(1000, Number(process.env.HEALTHCHECK_MAX_SINGLE_CONNECTION_MS) || 6000);
 
+// White-list nodes are a fallback for users who otherwise have no working
+// internet path. Their connection-time gate is intentionally much more
+// tolerant than the regular/faster pools. A slow but working white-list
+// node is preferable to showing no usable fallback at all.
+const WHITE_LIST_CONNECTION_TIME_MAX_MEDIAN_MS =
+    Math.max(5000, Number(process.env.HEALTHCHECK_WHITELIST_MAX_MEDIAN_CONNECTION_MS) || 5000);
+
+const WHITE_LIST_CONNECTION_TIME_MAX_SINGLE_MS =
+    Math.max(8000, Number(process.env.HEALTHCHECK_WHITELIST_MAX_SINGLE_CONNECTION_MS) || 8000);
+
 // Connectivity-only probes can report success even when real traffic is
 // effectively unusable. Run a small real download through every candidate
 // after the 3 HTTPS connectivity probes.
@@ -309,6 +319,17 @@ const HEALTH_TARGET_URLS = String(
         "https://www.gstatic.com/generate_204",
         "https://www.google.com/generate_204",
         "https://cp.cloudflare.com/generate_204"
+    ].join(",")
+)
+    .split(/[,\r\n;]+/)
+    .map(value => value.trim())
+    .filter(Boolean);
+
+const WHITE_LIST_HEALTH_TARGET_URLS = String(
+    process.env.HEALTHCHECK_WHITE_LIST_TARGET_URLS ||
+    [
+        "https://ya.ru/",
+        "https://yandex.ru/"
     ].join(",")
 )
     .split(/[,\r\n;]+/)
@@ -2014,7 +2035,7 @@ function median(values) {
         : (sorted[middle - 1] + sorted[middle]) / 2;
 }
 
-function connectionMetrics(remote = []) {
+function connectionMetrics(remote = [], { whiteList = false } = {}) {
     const successful = (Array.isArray(remote) ? remote : [])
         .filter(item => item?.ok && Number.isFinite(Number(item.latencyMs)))
         .map(item => Number(item.latencyMs));
@@ -2028,13 +2049,24 @@ function connectionMetrics(remote = []) {
         };
     }
 
+    const medianLimit = whiteList
+        ? WHITE_LIST_CONNECTION_TIME_MAX_MEDIAN_MS
+        : CONNECTION_TIME_MAX_MEDIAN_MS;
+    const singleLimit = whiteList
+        ? WHITE_LIST_CONNECTION_TIME_MAX_SINGLE_MS
+        : CONNECTION_TIME_MAX_SINGLE_MS;
+
     return {
         medianMs: Math.round(median(successful)),
         maxMs: Math.round(Math.max(...successful)),
         samples: successful.map(value => Math.round(value)),
         eligible: successful.length >= HEALTH_MIN_TARGET_PASSES &&
-            median(successful) <= CONNECTION_TIME_MAX_MEDIAN_MS &&
-            Math.max(...successful) <= CONNECTION_TIME_MAX_SINGLE_MS,
+            median(successful) <= medianLimit &&
+            Math.max(...successful) <= singleLimit,
+        limits: {
+            medianMs: medianLimit,
+            singleMs: singleLimit,
+        },
     };
 }
 
@@ -2829,14 +2861,22 @@ async function main() {
                 };
             }
 
+            const isWhiteListCandidate =
+                Boolean(candidateMap[linkFingerprint]?.whiteList) ||
+                MANAGED_WHITE_LIST_RE.test(String(item.id || ""));
+
+            const targetPool = isWhiteListCandidate
+                ? WHITE_LIST_HEALTH_TARGET_URLS
+                : HEALTH_TARGET_URLS;
+
             const targets = [...new Set(
-                HEALTH_TARGET_URLS
+                targetPool
                     .map(value => String(value || "").trim())
                     .filter(Boolean)
             )];
 
-            if (targets.length < 2) {
-                throw new Error("Need at least two distinct health-check target URLs");
+            if (targets.length < 1) {
+                throw new Error("Need at least one distinct health-check target URL");
             }
 
             const remote = await Promise.all(
@@ -2850,11 +2890,7 @@ async function main() {
 
             const passedTargets = remote.filter(result => result?.ok);
             const failedTargets = remote.filter(result => !result?.ok);
-            const connection = connectionMetrics(remote);
-            const isWhiteListCandidate =
-                Boolean(candidateMap[linkFingerprint]?.whiteList) ||
-                MANAGED_WHITE_LIST_RE.test(String(item.id || ""));
-
+            const connection = connectionMetrics(remote, { whiteList: isWhiteListCandidate });
             // Regular nodes use HTTPS reachability as an inexpensive liveness
             // gate before we spend time on the four heavy speed providers.
             // White-list/LTE nodes are intentionally different: their traffic
@@ -2879,14 +2915,31 @@ async function main() {
                 };
             }
 
-            if (passedTargets.length === 0 && !isWhiteListCandidate) {
+            if (passedTargets.length === 0) {
                 return {
                     item,
                     ok: false,
                     reason:
-                        `TCP + Xray started; no HTTPS connectivity target passed; ` +
+                        `TCP + Xray started; no ${isWhiteListCandidate ? "whitelist" : "HTTPS"} connectivity target passed; ` +
                         `independent speed check skipped`,
                     quality: null,
+                    remote,
+                };
+            }
+
+            if (
+                isWhiteListCandidate &&
+                !connection.eligible
+            ) {
+                return {
+                    item,
+                    ok: false,
+                    reason:
+                        `TCP + Xray + whitelist HTTPS passed, but effective connection time is too slow ` +
+                        `(median ${connection.medianMs} ms, max ${connection.maxMs} ms; ` +
+                        `limits ${CONNECTION_TIME_MAX_MEDIAN_MS}/${CONNECTION_TIME_MAX_SINGLE_MS} ms)`,
+                    quality: null,
+                    connection,
                     remote,
                 };
             }
@@ -2896,7 +2949,7 @@ async function main() {
                     xray.socksPort
                 );
 
-            if (!quality.ok) {
+            if (!quality.ok && !isWhiteListCandidate) {
                 const details = failedTargets
                     .map(result =>
                         `${result.targetUrl}: ${result.error || "proxy request failed"}`
@@ -2926,9 +2979,10 @@ async function main() {
                 ok: true,
                 protocol,
                 stages:
-                    `TCP + Xray + ${targets.length}/${targets.length} HTTPS + ` +
+                    `TCP + Xray + ${passedTargets.length}/${targets.length} HTTPS + ` +
                     `quality ${quality.passedCount}/${quality.providerCount} probes passed ` +
-                    `(avg passing ${quality.kbps} KB/s)`,
+                    `(avg passing ${quality.kbps} KB/s)` +
+                    (isWhiteListCandidate && !quality.ok ? ` [whitelist: speed probe non-gating]` : ""),
                 quality,
                 connection,
                 gaming: {
