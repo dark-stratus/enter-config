@@ -1,0 +1,197 @@
+{
+  "dns": {
+    "servers": [
+      "1.1.1.1",
+      "1.0.0.1"
+    ],
+    "queryStrategy": "UseIP"
+  },
+  "routing": {
+    "rules": [
+      {
+        "type": "field",
+        "domain": [
+          "domain:ru",
+          "domain:su",
+          "domain:xn--p1ai",
+          "domain:moscow",
+          "vk.com",
+          "vk.ru",
+          "vkontakte.ru",
+          "userapi.com",
+          "vk-cdn.net",
+          "vkuservideo.net",
+          "vkuser.net",
+          "mycdn.me",
+          "vk.me",
+          "mail.ru",
+          "list.ru",
+          "ozon.ru",
+          "ozone.ru",
+          "ozon.com",
+          "wildberries.ru",
+          "wb.ru",
+          "wbbasket.ru",
+          "wildberries.by",
+          "gosuslugi.ru",
+          "gu-st.ru",
+          "nalog.gov.ru",
+          "mos.ru",
+          "gov.ru",
+          "mil.ru",
+          "edu.ru",
+          "sberbank.ru",
+          "sber.ru",
+          "sbrf.ru",
+          "tinkoff.ru",
+          "tbank.ru",
+          "alfabank.ru",
+          "vtb.ru",
+          "gazprombank.ru",
+          "raiffeisen.ru",
+          "psbank.ru",
+          "sberbank.com",
+          "yandex.ru",
+          "yandex.net",
+          "ya.ru",
+          "yastatic.net",
+          "dzen.ru",
+          "kinopoisk.ru",
+          "avito.ru",
+          "avito.st",
+          "auto.ru",
+          "drom.ru",
+          "2gis.ru",
+          "2gis.com",
+          "ok.ru",
+          "odnoklassniki.ru",
+          "rutube.ru",
+          "ivi.ru",
+          "okko.tv",
+          "premier.one",
+          "more.tv",
+          "start.ru",
+          "wink.ru",
+          "smotrim.ru",
+          "1tv.ru",
+          "mts.ru",
+          "megafon.ru",
+          "beeline.ru",
+          "tele2.ru",
+          "rostelecom.ru",
+          "rt.ru",
+          "hh.ru",
+          "dns-shop.ru",
+          "citilink.ru",
+          "mvideo.ru",
+          "eldorado.ru",
+          "megamarket.ru",
+          "sbermarket.ru",
+          "samokat.ru",
+          "kuper.ru",
+          "pochta.ru",
+          "russianpost.ru",
+          "cdek.ru",
+          "boxberry.ru",
+          "gismeteo.ru",
+          "rambler.ru",
+          "lenta.ru",
+          "rbc.ru",
+          "ria.ru",
+          "aliexpress.ru",
+          "litres.ru"
+        ],
+        "outboundTag": "direct"
+      },
+      {
+        "type": "field",
+        "protocol": [
+          "bittorrent"
+        ],
+        "outboundTag": "direct"
+      }
+    ],
+    "domainMatcher": "hybrid",
+    "domainStrategy": "IPIfNonMatch"
+  },
+  "inbounds": [
+    {
+      "tag": "socks",
+      "port": 10808,
+      "listen": "127.0.0.1",
+      "protocol": "socks",
+      "settings": {
+        "udp": true,
+        "auth": "noauth"
+      },
+      "sniffing": {
+        "enabled": true,
+        "routeOnly": false,
+        "destOverride": [
+          "http",
+          "tls",
+          "quic"
+        ]
+      }
+    },
+    {
+      "tag": "http",
+      "port": 10809,
+      "listen": "127.0.0.1",
+      "protocol": "http",
+      "settings": {
+        "allowTransparent": false
+      },
+      "sniffing": {
+        "enabled": true,
+        "routeOnly": false,
+        "destOverride": [
+          "http",
+          "tls",
+          "quic"
+        ]
+      }
+    }
+  ],
+  "outbounds": [
+    {
+      "tag": "proxy",
+      "protocol": "vless",
+      "settings": {
+        "vnext": [
+          {
+            "address": "86.54.82.146",
+            "port": 443,
+            "users": [
+              {
+                "id": "e75ad2eb-6c1f-45ce-8023-f5f10875df66",
+                "encryption": "none",
+                "flow": "xtls-rprx-vision"
+              }
+            ]
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "tcp",
+        "tcpSettings": {},
+        "security": "reality",
+        "realitySettings": {
+          "serverName": "cz6.eu-cdn294.com",
+          "publicKey": "fjghtlNmfMAZrKZvQ-Tpwl9v8IogL_mLwVsPORu5jwc",
+          "shortId": "19f9a3de0d5e225b",
+          "fingerprint": "firefox"
+        }
+      }
+    },
+    {
+      "tag": "direct",
+      "protocol": "freedom"
+    },
+    {
+      "tag": "block",
+      "protocol": "blackhole"
+    }
+  ],
+  "remarks": "🇯🇵 Япония"
+}
