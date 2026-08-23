@@ -123,6 +123,12 @@ const REQUEST_TIMEOUT_MS =
 const REQUEST_RETRIES =
     2;
 
+const CONNECTION_TIME_MAX_MEDIAN_MS =
+    Math.max(500, Number(process.env.HEALTHCHECK_MAX_MEDIAN_CONNECTION_MS) || 2500);
+
+const CONNECTION_TIME_MAX_SINGLE_MS =
+    Math.max(1000, Number(process.env.HEALTHCHECK_MAX_SINGLE_CONNECTION_MS) || 6000);
+
 // Connectivity-only probes can report success even when real traffic is
 // effectively unusable. Run a small real download through every candidate
 // after the 3 HTTPS connectivity probes.
@@ -861,9 +867,7 @@ function runCurlOnce(
     targetUrl
 ) {
     return new Promise(resolve => {
-        const startedAt =
-            Date.now();
-
+        const startedAt = Date.now();
         const args = [
             "--silent",
             "--show-error",
@@ -871,81 +875,58 @@ function runCurlOnce(
             "--connect-timeout",
             "4",
             "--max-time",
-            String(
-                Math.ceil(
-                    REQUEST_TIMEOUT_MS /
-                    1000
-                )
-            ),
+            String(Math.ceil(REQUEST_TIMEOUT_MS / 1000)),
             "--proxy",
             `socks5h://127.0.0.1:${socksPort}`,
             targetUrl,
             "--output",
             "/dev/null",
+            "--write-out",
+            "\n%{time_total}\n%{time_starttransfer}\n",
         ];
 
-        const child =
-            spawn(
-                "curl",
-                args,
-                {
-                    stdio:
-                        [
-                            "ignore",
-                            "ignore",
-                            "pipe"
-                        ]
-                }
-            );
+        const child = spawn("curl", args, {
+            stdio: ["ignore", "pipe", "pipe"]
+        });
 
+        let stdout = "";
         let stderr = "";
 
-        child.stderr.on(
-            "data",
-            chunk => {
-                stderr +=
-                    String(chunk);
-            }
-        );
+        child.stdout.on("data", chunk => {
+            stdout += String(chunk);
+        });
 
-        const timeout =
-            setTimeout(
-                () => {
-                    child.kill(
-                        "SIGKILL"
-                    );
-                },
-                REQUEST_TIMEOUT_MS
-            );
+        child.stderr.on("data", chunk => {
+            stderr += String(chunk);
+        });
 
-        child.once(
-            "exit",
-            code => {
-                clearTimeout(
-                    timeout
-                );
+        const timeout = setTimeout(() => {
+            child.kill("SIGKILL");
+        }, REQUEST_TIMEOUT_MS);
 
-                resolve({
-                    ok:
-                        code === 0,
+        child.once("exit", code => {
+            clearTimeout(timeout);
 
-                    latencyMs:
-                        Math.max(
-                            Date.now() -
-                            startedAt,
-                            0
-                        ),
+            const lines = stdout
+                .trim()
+                .split(/\r?\n/)
+                .map(value => value.trim())
+                .filter(Boolean);
 
-                    error:
-                        stderr
-                            .trim()
-                            .slice(
-                                0,
-                                240
-                            )
-                });
-            }
-        );
+            const totalSeconds = Number(lines.at(-2)) || 0;
+            const firstByteSeconds = Number(lines.at(-1)) || 0;
+
+            resolve({
+                ok: code === 0,
+                latencyMs: totalSeconds > 0
+                    ? Math.round(totalSeconds * 1000)
+                    : Math.max(Date.now() - startedAt, 0),
+                firstByteMs: firstByteSeconds > 0
+                    ? Math.round(firstByteSeconds * 1000)
+                    : 0,
+                error: stderr.trim().slice(0, 240)
+            });
+        });
     });
 }
 
@@ -976,6 +957,8 @@ async function probeTargetOnceWithRetries(
                 targetUrl,
                 latencyMs:
                     Number(result.latencyMs) || 0,
+                firstByteMs:
+                    Number(result.firstByteMs) || 0,
                 attempts,
                 error:
                     ""
@@ -2031,6 +2014,30 @@ function median(values) {
         : (sorted[middle - 1] + sorted[middle]) / 2;
 }
 
+function connectionMetrics(remote = []) {
+    const successful = (Array.isArray(remote) ? remote : [])
+        .filter(item => item?.ok && Number.isFinite(Number(item.latencyMs)))
+        .map(item => Number(item.latencyMs));
+
+    if (!successful.length) {
+        return {
+            medianMs: 0,
+            maxMs: Infinity,
+            samples: [],
+            eligible: false,
+        };
+    }
+
+    return {
+        medianMs: Math.round(median(successful)),
+        maxMs: Math.round(Math.max(...successful)),
+        samples: successful.map(value => Math.round(value)),
+        eligible: successful.length >= HEALTH_MIN_TARGET_PASSES &&
+            median(successful) <= CONNECTION_TIME_MAX_MEDIAN_MS &&
+            Math.max(...successful) <= CONNECTION_TIME_MAX_SINGLE_MS,
+    };
+}
+
 function standardDeviation(values) {
     const normalized =
         values.filter(Number.isFinite);
@@ -2433,18 +2440,42 @@ function resultLatency(result) {
     return Number(result?.gaming?.medianLatencyMs) || Infinity;
 }
 
+function fastSelectionScore(result) {
+    const speed = Math.max(resultSpeed(result), 0);
+    const medianConnection = Number(result?.connection?.medianMs) || Infinity;
+    const qualityPassed = Number(result?.quality?.passedCount) || 0;
+
+    const speedScore = Math.min(1, Math.log1p(speed) / Math.log1p(50000));
+    const connectionScore = Number.isFinite(medianConnection)
+        ? Math.max(0, 1 - Math.min(medianConnection / CONNECTION_TIME_MAX_SINGLE_MS, 1))
+        : 0;
+    const stabilityScore = Math.min(1, qualityPassed / Math.max(INDEPENDENT_SPEED_PROVIDERS.length, 1));
+
+    return speedScore * 0.55 + connectionScore * 0.35 + stabilityScore * 0.10;
+}
+
 function selectFeaturedFastServers(results, limit = FAST_TOP_N) {
     const candidates = results
-        .filter(result => result.ok && !result.whiteList && result.country)
+        .filter(result =>
+            result.ok &&
+            !result.whiteList &&
+            result.country &&
+            result.connection?.eligible === true
+        )
         .sort((a, b) => {
+            const score = fastSelectionScore(b) - fastSelectionScore(a);
+            if (Math.abs(score) > 0.0001) return score;
+
             const speed = resultSpeed(b) - resultSpeed(a);
-            return speed !== 0 ? speed : resultLatency(a) - resultLatency(b);
+            return speed !== 0
+                ? speed
+                : resultLatency(a) - resultLatency(b);
         });
 
     const seenCountries = new Set();
     const selected = [];
     for (const result of candidates) {
-        const country = String(result.country || '').trim();
+        const country = String(result.country || '').trim().toLowerCase();
         if (!country || seenCountries.has(country)) continue;
         seenCountries.add(country);
         selected.push(result);
@@ -2488,6 +2519,7 @@ function applyFeaturedRegularBadges(indexEntries, healthResults) {
         country: item.country,
         linkFingerprint: item.linkFingerprint,
         medianKbps: resultSpeed(item),
+        connectionMedianMs: Number(item.connection?.medianMs) || 0,
     }));
     const gamingMeta = gaming.map((item, index) => ({
         rank: index + 1,
@@ -2496,6 +2528,7 @@ function applyFeaturedRegularBadges(indexEntries, healthResults) {
         score: Number(item.gaming?.score) || 0,
         medianKbps: resultSpeed(item),
         medianLatencyMs: Number(item.gaming?.medianLatencyMs) || 0,
+        connectionMedianMs: Number(item.connection?.medianMs) || 0,
     }));
 
     for (const entry of indexEntries) {
@@ -2506,8 +2539,8 @@ function applyFeaturedRegularBadges(indexEntries, healthResults) {
         if (fastFingerprints.has(result.linkFingerprint)) {
             entry.featured = 'fast';
             entry.featuredRank = fast.find(item => item.linkFingerprint === result.linkFingerprint)?.rank || 0;
-            const flag = extractFlag(result.remarks) || '🌐';
-            entry.remarks = `🔥 ${flag} ${result.country}`.trim();
+            const flag = extractFlag(result.remarks) || countryFlag(result.country) || '🌐';
+            entry.remarks = `${flag} 🔥 ${result.country}`.trim();
         } else if (gamingFingerprints.has(result.linkFingerprint)) {
             entry.featured = 'gaming';
             entry.featuredRank = gaming.find(item => item.linkFingerprint === result.linkFingerprint)?.rank || 0;
@@ -2548,7 +2581,7 @@ async function buildGamingAssignments(
             id: `gaming-${index + 1}`,
             country: item.country,
             flag,
-            remarks: `🎮 ${flag} ${item.country}`.replace(/\s+/g, ' ').trim(),
+            remarks: `${flag} 🎮 ${item.country}`.replace(/\s+/g, ' ').trim(),
             linkFingerprint: item.linkFingerprint,
             link: selectedLink,
             quality: item.quality,
@@ -2817,6 +2850,7 @@ async function main() {
 
             const passedTargets = remote.filter(result => result?.ok);
             const failedTargets = remote.filter(result => !result?.ok);
+            const connection = connectionMetrics(remote);
             const isWhiteListCandidate =
                 Boolean(candidateMap[linkFingerprint]?.whiteList) ||
                 MANAGED_WHITE_LIST_RE.test(String(item.id || ""));
@@ -2827,6 +2861,24 @@ async function main() {
             // path is special, so a failure of all three ordinary public HTTPS
             // probes must not prevent the actual speed test from determining
             // whether the node can carry real traffic.
+            if (
+                !isWhiteListCandidate &&
+                passedTargets.length >= HEALTH_MIN_TARGET_PASSES &&
+                !connection.eligible
+            ) {
+                return {
+                    item,
+                    ok: false,
+                    reason:
+                        `TCP + Xray + HTTPS passed, but effective connection time is too slow ` +
+                        `(median ${connection.medianMs} ms, max ${connection.maxMs} ms; ` +
+                        `limits ${CONNECTION_TIME_MAX_MEDIAN_MS}/${CONNECTION_TIME_MAX_SINGLE_MS} ms)`,
+                    quality: null,
+                    connection,
+                    remote,
+                };
+            }
+
             if (passedTargets.length === 0 && !isWhiteListCandidate) {
                 return {
                     item,
@@ -2861,6 +2913,7 @@ async function main() {
                         `Synthetic HTTPS diagnostics: ${passedTargets.length}/${targets.length} passed` +
                         `${details ? `; ${details}` : ""}`,
                     quality,
+                    connection,
                     remote,
                 };
             }
@@ -2877,6 +2930,7 @@ async function main() {
                     `quality ${quality.passedCount}/${quality.providerCount} probes passed ` +
                     `(avg passing ${quality.kbps} KB/s)`,
                 quality,
+                connection,
                 gaming: {
                     ...gaming,
                     latencyProbeError: gamingLatency.error || "",
@@ -2962,6 +3016,7 @@ async function main() {
                 stages: result.stages || "",
                 reason: result.reason || "",
                 quality: result.quality || null,
+                connection: result.connection || null,
                 gaming: result.gaming || null,
                 remote: result.remote || [],
                 telegram: result.telegram || null
