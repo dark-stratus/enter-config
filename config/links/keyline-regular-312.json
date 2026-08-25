@@ -160,26 +160,39 @@
       "settings": {
         "vnext": [
           {
-            "address": "92.118.205.114",
+            "address": "23.95.75.14",
             "port": 443,
             "users": [
               {
                 "id": "e75ad2eb-6c1f-45ce-8023-f5f10875df66",
                 "encryption": "none",
-                "flow": "xtls-rprx-vision"
+                "flow": ""
               }
             ]
           }
         ]
       },
       "streamSettings": {
-        "network": "tcp",
-        "tcpSettings": {},
+        "network": "xhttp",
+        "xhttpSettings": {
+          "mode": "packet-up",
+          "host": "us11.eu-cdn294.com",
+          "path": "/92c2ac060de29e94fb837791a8af43dd",
+          "extra": {
+            "xmux": {
+              "cMaxReuseTimes": "64-128",
+              "maxConcurrency": "16-32",
+              "hKeepAlivePeriod": 25,
+              "hMaxRequestTimes": "800-1200",
+              "hMaxReusableSecs": "1800-3600"
+            }
+          }
+        },
         "security": "reality",
         "realitySettings": {
-          "serverName": "pl11.eu-cdn391.com",
-          "publicKey": "oG7Vx_nIwY1ATmNLIsJ_MZvEYCT4byFDwUInp3ta3Tw",
-          "shortId": "93c7d9718e697871",
+          "serverName": "us11.eu-cdn294.com",
+          "publicKey": "borNhp9h-kp1aGwdgOX13s5M3w6fXEinqi3LN-Yowms",
+          "shortId": "ef7416ad8cd61887",
           "fingerprint": "firefox"
         }
       }
@@ -193,5 +206,5 @@
       "protocol": "blackhole"
     }
   ],
-  "remarks": "🇵🇱 Польша"
+  "remarks": "🇺🇸 США"
 }
