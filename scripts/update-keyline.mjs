@@ -1730,7 +1730,7 @@ function normalizeSourceData(source) {
   }
 
   if (autoEntry && result.some(item => item.whiteList)) {
-    result.push({ ...autoEntry, whiteList: true, isAutoWhiteListCandidate: true, originalRemarks: "⚡ Auto White List" });
+    result.push({ ...autoEntry, whiteList: true, isAutoWhiteListCandidate: true, originalRemarks: "⚡️ LTE Auto" });
   }
 
   return { entries: result, stats };
@@ -1749,7 +1749,7 @@ function extractAutoLink(entry) {
     sourceIndex: -1,
     source: "auto",
     flag: "⚡",
-    country: "Auto White List",
+    country: "⚡️ LTE Auto",
     link,
   };
 }
