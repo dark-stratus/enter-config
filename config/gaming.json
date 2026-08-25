@@ -1,610 +1,22 @@
 [
   {
     "id": "gaming-1",
-    "country": "Austria",
-    "flag": "🇦🇹",
-    "remarks": "🇦🇹 🎮 Austria",
-    "linkFingerprint": "076eaa126aa9",
-    "link": "trojan://humanity@212.183.88.136:443?allowInsecure=1&host=www.calmlunch.com&path=/assignment&sni=www.calmlunch.com&type=ws#%F0%9F%87%A6%F0%9F%87%B9%20%D0%90%D0%B2%D1%81%D1%82%D1%80%D0%B8%D1%8F",
-    "quality": {
-      "ok": true,
-      "providerCount": 4,
-      "requiredProviders": 3,
-      "passedCount": 4,
-      "failedCount": 0,
-      "medianKbps": 7254.8,
-      "minKbps": 2089.6,
-      "maxKbps": 14331.1,
-      "kbps": 7254.8,
-      "bytes": 85667840,
-      "probes": [
-        {
-          "provider": "cloudflare",
-          "label": "Cloudflare",
-          "type": "curl",
-          "ok": true,
-          "url": "https://speed.cloudflare.com/__down?bytes=4194304",
-          "httpCode": 200,
-          "bytes": 4194304,
-          "elapsedMs": 1960,
-          "kbps": 2089.6,
-          "curlCode": 0,
-          "error": "",
-          "attempts": [
-            {
-              "url": "https://speed.cloudflare.com/__down?bytes=4194304",
-              "ok": true,
-              "httpCode": 200,
-              "bytes": 4194304,
-              "elapsedMs": 1960,
-              "kbps": 2089.6,
-              "curlCode": 0,
-              "error": ""
-            }
-          ]
-        },
-        {
-          "provider": "hetzner",
-          "label": "Hetzner",
-          "type": "curl-fallback",
-          "ok": true,
-          "url": "https://fsn1-speed.hetzner.com/100MB.bin",
-          "httpCode": 200,
-          "bytes": 104857600,
-          "elapsedMs": 8759,
-          "kbps": 11690.2,
-          "curlCode": 0,
-          "error": "",
-          "attempts": [
-            {
-              "url": "https://fsn1-speed.hetzner.com/100MB.bin",
-              "ok": true,
-              "httpCode": 200,
-              "bytes": 104857600,
-              "elapsedMs": 8759,
-              "kbps": 11690.2,
-              "curlCode": 0,
-              "error": ""
-            }
-          ]
-        },
-        {
-          "provider": "mlab",
-          "label": "M-Lab NDT7",
-          "type": "ndt7",
-          "ok": true,
-          "url": "wss://ndt-lyp138910-67a7ff37.aerocable.autojoin.measurement-lab.org/ndt/v7/download?access_token=eyJhbGciOiJFZERTQSIsImtpZCI6ImxvY2F0ZV8yMDIwMDQwOSJ9.eyJhdWQiOiJuZHQtbHlwMTM4OTEwLTY3YTdmZjM3LmFlcm9jYWJsZS5hdXRvam9pbi5tZWFzdXJlbWVudC1sYWIub3JnIiwiZXhwIjoxNzg3NjczMjkyLCJpc3MiOiJsb2NhdGUiLCJqdGkiOiJmZTY2MTYyNi1iYzA3LTRjNjYtODI0Yy1mMTlhMDIxZTg1YjMiLCJzdWIiOiJuZHQifQ.OXW6fV75ekXs3XFZ2Df_NUmg7BeWaE9vWaPJterFR-H47g89VnVmL7dXWwqWcY7wGlwq6gcX5Yu60Yd7xdH4AQ&index=0&locate_version=v2&metro_rank=0",
-          "httpCode": 101,
-          "bytes": 207618048,
-          "elapsedMs": 14148,
-          "kbps": 14331.1,
-          "server": "ndt-lyp138910-67a7ff37.aerocable.autojoin.measurement-lab.org",
-          "error": "",
-          "attempts": [
-            {
-              "url": "wss://ndt-lyp138910-67a7ff37.aerocable.autojoin.measurement-lab.org/ndt/v7/download?access_token=eyJhbGciOiJFZERTQSIsImtpZCI6ImxvY2F0ZV8yMDIwMDQwOSJ9.eyJhdWQiOiJuZHQtbHlwMTM4OTEwLTY3YTdmZjM3LmFlcm9jYWJsZS5hdXRvam9pbi5tZWFzdXJlbWVudC1sYWIub3JnIiwiZXhwIjoxNzg3NjczMjkyLCJpc3MiOiJsb2NhdGUiLCJqdGkiOiJmZTY2MTYyNi1iYzA3LTRjNjYtODI0Yy1mMTlhMDIxZTg1YjMiLCJzdWIiOiJuZHQifQ.OXW6fV75ekXs3XFZ2Df_NUmg7BeWaE9vWaPJterFR-H47g89VnVmL7dXWwqWcY7wGlwq6gcX5Yu60Yd7xdH4AQ&index=0&locate_version=v2&metro_rank=0",
-              "server": "ndt-lyp138910-67a7ff37.aerocable.autojoin.measurement-lab.org",
-              "ok": true,
-              "httpCode": 101,
-              "bytes": 207618048,
-              "elapsedMs": 14148,
-              "kbps": 14331.1,
-              "error": ""
-            },
-            {
-              "url": "wss://ndt-mlab2-doh03.mlab-oti.measurement-lab.org/ndt/v7/download?access_token=eyJhbGciOiJFZERTQSIsImtpZCI6ImxvY2F0ZV8yMDIwMDQwOSJ9.eyJhdWQiOiJtbGFiMi1kb2gwMy5tbGFiLW90aS5tZWFzdXJlbWVudC1sYWIub3JnIiwiZXhwIjoxNzg3NjczMjkyLCJpc3MiOiJsb2NhdGUiLCJqdGkiOiI4Mzg3ODk4My04M2E5LTQwYTUtODA0NS03Mzg2YTk0OWZhOWIiLCJzdWIiOiJuZHQifQ.3glqSx8R0xzrXJ9XwI0z_YwalF6btQfMlVkS-iHUYdHu4708tkxyHuQXcr8W4htGR672Y3bvzIg74vc3B3uwCA&index=1&locate_version=v2&metro_rank=1",
-              "server": "mlab2-doh03.mlab-oti.measurement-lab.org",
-              "ok": false,
-              "httpCode": 0,
-              "bytes": 0,
-              "elapsedMs": 8206,
-              "kbps": 0,
-              "error": "_ssl.c:983: The handshake operation timed out"
-            }
-          ]
-        },
-        {
-          "provider": "yandex",
-          "label": "Yandex Internetometer",
-          "type": "yandex",
-          "ok": true,
-          "url": "https://yandex.ru/internet/api/v0/get-probes",
-          "httpCode": 200,
-          "bytes": 26001408,
-          "elapsedMs": 9006,
-          "kbps": 2819.4,
-          "server": "cloudcdn-ams-07.cdn.yandex.net",
-          "targets": [
-            "https://cloudcdn-fra-03.cdn.yandex.net/cdnrphoszsa2sp7ilm7a/probes/50mb?lid=328&mid=eb2m3m4evac852nix1787673237",
-            "https://cloudcdn-ams-07.cdn.yandex.net/cdnrphoszsa2sp7ilm7a/probes/50mb?lid=300&mid=eb2m3m4evac852nix1787673237"
-          ],
-          "attempts": [
-            {
-              "provider": "yandex",
-              "label": "Yandex Internetometer",
-              "type": "yandex",
-              "ok": false,
-              "url": "https://cloudcdn-fra-03.cdn.yandex.net/cdnrphoszsa2sp7ilm7a/probes/50mb?lid=328&mid=eb2m3m4evac852nix1787673237",
-              "server": "cloudcdn-fra-03.cdn.yandex.net",
-              "httpCode": 0,
-              "bytes": 0,
-              "elapsedMs": 3170,
-              "kbps": 0,
-              "curlCode": 0,
-              "error": "Yandex probe failed: curl=0, HTTP=?, 0 bytes, 0 KB/s"
-            },
-            {
-              "provider": "yandex",
-              "label": "Yandex Internetometer",
-              "type": "yandex",
-              "ok": true,
-              "url": "https://cloudcdn-ams-07.cdn.yandex.net/cdnrphoszsa2sp7ilm7a/probes/50mb?lid=300&mid=eb2m3m4evac852nix1787673237",
-              "server": "cloudcdn-ams-07.cdn.yandex.net",
-              "httpCode": 200,
-              "bytes": 26001408,
-              "elapsedMs": 9006,
-              "kbps": 2819.4,
-              "curlCode": 28,
-              "error": ""
-            }
-          ],
-          "error": ""
-        }
-      ],
-      "providers": [
-        {
-          "provider": "cloudflare",
-          "label": "Cloudflare",
-          "ok": true,
-          "kbps": 2089.6,
-          "bytes": 4194304,
-          "elapsedMs": 1960,
-          "httpCode": 200,
-          "server": "",
-          "error": "",
-          "attempts": [
-            {
-              "url": "https://speed.cloudflare.com/__down?bytes=4194304",
-              "ok": true,
-              "httpCode": 200,
-              "bytes": 4194304,
-              "elapsedMs": 1960,
-              "kbps": 2089.6,
-              "curlCode": 0,
-              "error": ""
-            }
-          ]
-        },
-        {
-          "provider": "hetzner",
-          "label": "Hetzner",
-          "ok": true,
-          "kbps": 11690.2,
-          "bytes": 104857600,
-          "elapsedMs": 8759,
-          "httpCode": 200,
-          "server": "",
-          "error": "",
-          "attempts": [
-            {
-              "url": "https://fsn1-speed.hetzner.com/100MB.bin",
-              "ok": true,
-              "httpCode": 200,
-              "bytes": 104857600,
-              "elapsedMs": 8759,
-              "kbps": 11690.2,
-              "curlCode": 0,
-              "error": ""
-            }
-          ]
-        },
-        {
-          "provider": "mlab",
-          "label": "M-Lab NDT7",
-          "ok": true,
-          "kbps": 14331.1,
-          "bytes": 207618048,
-          "elapsedMs": 14148,
-          "httpCode": 101,
-          "server": "ndt-lyp138910-67a7ff37.aerocable.autojoin.measurement-lab.org",
-          "error": "",
-          "attempts": [
-            {
-              "url": "wss://ndt-lyp138910-67a7ff37.aerocable.autojoin.measurement-lab.org/ndt/v7/download?access_token=eyJhbGciOiJFZERTQSIsImtpZCI6ImxvY2F0ZV8yMDIwMDQwOSJ9.eyJhdWQiOiJuZHQtbHlwMTM4OTEwLTY3YTdmZjM3LmFlcm9jYWJsZS5hdXRvam9pbi5tZWFzdXJlbWVudC1sYWIub3JnIiwiZXhwIjoxNzg3NjczMjkyLCJpc3MiOiJsb2NhdGUiLCJqdGkiOiJmZTY2MTYyNi1iYzA3LTRjNjYtODI0Yy1mMTlhMDIxZTg1YjMiLCJzdWIiOiJuZHQifQ.OXW6fV75ekXs3XFZ2Df_NUmg7BeWaE9vWaPJterFR-H47g89VnVmL7dXWwqWcY7wGlwq6gcX5Yu60Yd7xdH4AQ&index=0&locate_version=v2&metro_rank=0",
-              "server": "ndt-lyp138910-67a7ff37.aerocable.autojoin.measurement-lab.org",
-              "ok": true,
-              "httpCode": 101,
-              "bytes": 207618048,
-              "elapsedMs": 14148,
-              "kbps": 14331.1,
-              "error": ""
-            },
-            {
-              "url": "wss://ndt-mlab2-doh03.mlab-oti.measurement-lab.org/ndt/v7/download?access_token=eyJhbGciOiJFZERTQSIsImtpZCI6ImxvY2F0ZV8yMDIwMDQwOSJ9.eyJhdWQiOiJtbGFiMi1kb2gwMy5tbGFiLW90aS5tZWFzdXJlbWVudC1sYWIub3JnIiwiZXhwIjoxNzg3NjczMjkyLCJpc3MiOiJsb2NhdGUiLCJqdGkiOiI4Mzg3ODk4My04M2E5LTQwYTUtODA0NS03Mzg2YTk0OWZhOWIiLCJzdWIiOiJuZHQifQ.3glqSx8R0xzrXJ9XwI0z_YwalF6btQfMlVkS-iHUYdHu4708tkxyHuQXcr8W4htGR672Y3bvzIg74vc3B3uwCA&index=1&locate_version=v2&metro_rank=1",
-              "server": "mlab2-doh03.mlab-oti.measurement-lab.org",
-              "ok": false,
-              "httpCode": 0,
-              "bytes": 0,
-              "elapsedMs": 8206,
-              "kbps": 0,
-              "error": "_ssl.c:983: The handshake operation timed out"
-            }
-          ]
-        },
-        {
-          "provider": "yandex",
-          "label": "Yandex Internetometer",
-          "ok": true,
-          "kbps": 2819.4,
-          "bytes": 26001408,
-          "elapsedMs": 9006,
-          "httpCode": 200,
-          "server": "cloudcdn-ams-07.cdn.yandex.net",
-          "error": "",
-          "attempts": [
-            {
-              "provider": "yandex",
-              "label": "Yandex Internetometer",
-              "type": "yandex",
-              "ok": false,
-              "url": "https://cloudcdn-fra-03.cdn.yandex.net/cdnrphoszsa2sp7ilm7a/probes/50mb?lid=328&mid=eb2m3m4evac852nix1787673237",
-              "server": "cloudcdn-fra-03.cdn.yandex.net",
-              "httpCode": 0,
-              "bytes": 0,
-              "elapsedMs": 3170,
-              "kbps": 0,
-              "curlCode": 0,
-              "error": "Yandex probe failed: curl=0, HTTP=?, 0 bytes, 0 KB/s"
-            },
-            {
-              "provider": "yandex",
-              "label": "Yandex Internetometer",
-              "type": "yandex",
-              "ok": true,
-              "url": "https://cloudcdn-ams-07.cdn.yandex.net/cdnrphoszsa2sp7ilm7a/probes/50mb?lid=300&mid=eb2m3m4evac852nix1787673237",
-              "server": "cloudcdn-ams-07.cdn.yandex.net",
-              "httpCode": 200,
-              "bytes": 26001408,
-              "elapsedMs": 9006,
-              "kbps": 2819.4,
-              "curlCode": 28,
-              "error": ""
-            }
-          ]
-        }
-      ],
-      "error": ""
-    },
-    "gaming": {
-      "eligible": true,
-      "medianLatencyMs": 2,
-      "maxLatencyMs": 2,
-      "latencySpreadMs": 0,
-      "latencyStdDevMs": 0,
-      "latencySamples": [
-        2,
-        2,
-        2
-      ],
-      "speedScore": 25,
-      "latencyScore": 48.9,
-      "stabilityScore": 25,
-      "score": 98.9,
-      "latencyProbeError": ""
-    }
-  },
-  {
-    "id": "gaming-2",
-    "country": "Seychelles",
-    "flag": "🇸🇨",
-    "remarks": "🇸🇨 🎮 Seychelles",
-    "linkFingerprint": "6d49e7f8df93",
-    "link": "vless://dc8eccdb-ecfa-435f-9ac1-5dc4882e7b51@45.130.125.209:80?host=de.vpnbase.net&path=%2Fhttp&security=none&type=ws#%F0%9F%87%B8%F0%9F%87%A8%20%D0%A1%D0%B5%D0%B9%D1%88%D0%B5%D0%BB%D1%8B",
-    "quality": {
-      "ok": true,
-      "providerCount": 4,
-      "requiredProviders": 3,
-      "passedCount": 4,
-      "failedCount": 0,
-      "medianKbps": 2210.3,
-      "minKbps": 1190.8,
-      "maxKbps": 5137.2,
-      "kbps": 2210.3,
-      "bytes": 26181451,
-      "probes": [
-        {
-          "provider": "cloudflare",
-          "label": "Cloudflare",
-          "type": "curl",
-          "ok": true,
-          "url": "https://speed.cloudflare.com/__down?bytes=4194304",
-          "httpCode": 200,
-          "bytes": 4194304,
-          "elapsedMs": 3440,
-          "kbps": 1190.8,
-          "curlCode": 0,
-          "error": "",
-          "attempts": [
-            {
-              "url": "https://speed.cloudflare.com/__down?bytes=4194304",
-              "ok": true,
-              "httpCode": 200,
-              "bytes": 4194304,
-              "elapsedMs": 3440,
-              "kbps": 1190.8,
-              "curlCode": 0,
-              "error": ""
-            }
-          ]
-        },
-        {
-          "provider": "hetzner",
-          "label": "Hetzner",
-          "type": "curl-fallback",
-          "ok": true,
-          "url": "https://fsn1-speed.hetzner.com/100MB.bin",
-          "httpCode": 200,
-          "bytes": 32210688,
-          "elapsedMs": 12002,
-          "kbps": 2620.8,
-          "curlCode": 28,
-          "error": "",
-          "attempts": [
-            {
-              "url": "https://fsn1-speed.hetzner.com/100MB.bin",
-              "ok": true,
-              "httpCode": 200,
-              "bytes": 32210688,
-              "elapsedMs": 12002,
-              "kbps": 2620.8,
-              "curlCode": 28,
-              "error": ""
-            }
-          ]
-        },
-        {
-          "provider": "mlab",
-          "label": "M-Lab NDT7",
-          "type": "ndt7",
-          "ok": true,
-          "url": "wss://ndt-mlab2-doh03.mlab-oti.measurement-lab.org/ndt/v7/download?access_token=eyJhbGciOiJFZERTQSIsImtpZCI6ImxvY2F0ZV8yMDIwMDQwOSJ9.eyJhdWQiOiJtbGFiMi1kb2gwMy5tbGFiLW90aS5tZWFzdXJlbWVudC1sYWIub3JnIiwiZXhwIjoxNzg3NjczNDI1LCJpc3MiOiJsb2NhdGUiLCJqdGkiOiJhZGQzMGFmNS0yNTE1LTRhMjMtYWUwNC01OGNhYjlmYjJjMTEiLCJzdWIiOiJuZHQifQ.TBDXonRkVqx7pm_FYj6EWUGyduslsq2qNp-gVaf--n-ZDYUeEb278FYnaOlVFNoNyeIqF_KYVEqdOsJZQ238Ag&index=0&locate_version=v2&metro_rank=0",
-          "httpCode": 101,
-          "bytes": 20971520,
-          "elapsedMs": 11379,
-          "kbps": 1799.7,
-          "server": "ndt-mlab2-doh03.mlab-oti.measurement-lab.org",
-          "error": "",
-          "attempts": [
-            {
-              "url": "wss://ndt-mlab2-doh03.mlab-oti.measurement-lab.org/ndt/v7/download?access_token=eyJhbGciOiJFZERTQSIsImtpZCI6ImxvY2F0ZV8yMDIwMDQwOSJ9.eyJhdWQiOiJtbGFiMi1kb2gwMy5tbGFiLW90aS5tZWFzdXJlbWVudC1sYWIub3JnIiwiZXhwIjoxNzg3NjczNDI1LCJpc3MiOiJsb2NhdGUiLCJqdGkiOiJhZGQzMGFmNS0yNTE1LTRhMjMtYWUwNC01OGNhYjlmYjJjMTEiLCJzdWIiOiJuZHQifQ.TBDXonRkVqx7pm_FYj6EWUGyduslsq2qNp-gVaf--n-ZDYUeEb278FYnaOlVFNoNyeIqF_KYVEqdOsJZQ238Ag&index=0&locate_version=v2&metro_rank=0",
-              "server": "ndt-mlab2-doh03.mlab-oti.measurement-lab.org",
-              "ok": true,
-              "httpCode": 101,
-              "bytes": 20971520,
-              "elapsedMs": 11379,
-              "kbps": 1799.7,
-              "error": ""
-            },
-            {
-              "url": "wss://ndt-mlab2-tlv03.mlab-oti.measurement-lab.org/ndt/v7/download?access_token=eyJhbGciOiJFZERTQSIsImtpZCI6ImxvY2F0ZV8yMDIwMDQwOSJ9.eyJhdWQiOiJtbGFiMi10bHYwMy5tbGFiLW90aS5tZWFzdXJlbWVudC1sYWIub3JnIiwiZXhwIjoxNzg3NjczNDI1LCJpc3MiOiJsb2NhdGUiLCJqdGkiOiJmMzYwYjI5Zi02ZDhkLTRhZDYtYTZhMi1lNTYzOTlkOTMxOTAiLCJzdWIiOiJuZHQifQ.QCpcKf4Km00pKb1TnPMqjKwvOIN59jVDxsczJHRmjDMvzaC4d6KJGLe-LxpKMw6lRhyoKlJ2MQfOssHBPxZlAQ&index=1&locate_version=v2&metro_rank=1",
-              "server": "ndt-mlab2-tlv03.mlab-oti.measurement-lab.org",
-              "ok": true,
-              "httpCode": 101,
-              "bytes": 26214400,
-              "elapsedMs": 11522,
-              "kbps": 2221.9,
-              "error": ""
-            }
-          ]
-        },
-        {
-          "provider": "yandex",
-          "label": "Yandex Internetometer",
-          "type": "yandex",
-          "ok": true,
-          "url": "https://yandex.ru/internet/api/v0/get-probes",
-          "httpCode": 200,
-          "bytes": 47349292,
-          "elapsedMs": 9001,
-          "kbps": 5137.2,
-          "server": "cloudcdn-ams-06.cdn.yandex.net",
-          "targets": [
-            "https://cloudcdn-fra-03.cdn.yandex.net/cdnrphoszsa2sp7ilm7a/probes/50mb?lid=293&mid=utv511hvk8nqa3d0x1787673366",
-            "https://cloudcdn-ams-06.cdn.yandex.net/cdnrphoszsa2sp7ilm7a/probes/50mb?lid=294&mid=utv511hvk8nqa3d0x1787673366"
-          ],
-          "attempts": [
-            {
-              "provider": "yandex",
-              "label": "Yandex Internetometer",
-              "type": "yandex",
-              "ok": false,
-              "url": "https://cloudcdn-fra-03.cdn.yandex.net/cdnrphoszsa2sp7ilm7a/probes/50mb?lid=293&mid=utv511hvk8nqa3d0x1787673366",
-              "server": "cloudcdn-fra-03.cdn.yandex.net",
-              "httpCode": 200,
-              "bytes": 5684780,
-              "elapsedMs": 9000,
-              "kbps": 616.8,
-              "curlCode": 28,
-              "error": "curl: (28) Operation timed out after 9000 milliseconds with 5684780 out of 52428800 bytes received"
-            },
-            {
-              "provider": "yandex",
-              "label": "Yandex Internetometer",
-              "type": "yandex",
-              "ok": true,
-              "url": "https://cloudcdn-ams-06.cdn.yandex.net/cdnrphoszsa2sp7ilm7a/probes/50mb?lid=294&mid=utv511hvk8nqa3d0x1787673366",
-              "server": "cloudcdn-ams-06.cdn.yandex.net",
-              "httpCode": 200,
-              "bytes": 41664512,
-              "elapsedMs": 9001,
-              "kbps": 4520.4,
-              "curlCode": 28,
-              "error": ""
-            }
-          ],
-          "error": ""
-        }
-      ],
-      "providers": [
-        {
-          "provider": "cloudflare",
-          "label": "Cloudflare",
-          "ok": true,
-          "kbps": 1190.8,
-          "bytes": 4194304,
-          "elapsedMs": 3440,
-          "httpCode": 200,
-          "server": "",
-          "error": "",
-          "attempts": [
-            {
-              "url": "https://speed.cloudflare.com/__down?bytes=4194304",
-              "ok": true,
-              "httpCode": 200,
-              "bytes": 4194304,
-              "elapsedMs": 3440,
-              "kbps": 1190.8,
-              "curlCode": 0,
-              "error": ""
-            }
-          ]
-        },
-        {
-          "provider": "hetzner",
-          "label": "Hetzner",
-          "ok": true,
-          "kbps": 2620.8,
-          "bytes": 32210688,
-          "elapsedMs": 12002,
-          "httpCode": 200,
-          "server": "",
-          "error": "",
-          "attempts": [
-            {
-              "url": "https://fsn1-speed.hetzner.com/100MB.bin",
-              "ok": true,
-              "httpCode": 200,
-              "bytes": 32210688,
-              "elapsedMs": 12002,
-              "kbps": 2620.8,
-              "curlCode": 28,
-              "error": ""
-            }
-          ]
-        },
-        {
-          "provider": "mlab",
-          "label": "M-Lab NDT7",
-          "ok": true,
-          "kbps": 1799.7,
-          "bytes": 20971520,
-          "elapsedMs": 11379,
-          "httpCode": 101,
-          "server": "ndt-mlab2-doh03.mlab-oti.measurement-lab.org",
-          "error": "",
-          "attempts": [
-            {
-              "url": "wss://ndt-mlab2-doh03.mlab-oti.measurement-lab.org/ndt/v7/download?access_token=eyJhbGciOiJFZERTQSIsImtpZCI6ImxvY2F0ZV8yMDIwMDQwOSJ9.eyJhdWQiOiJtbGFiMi1kb2gwMy5tbGFiLW90aS5tZWFzdXJlbWVudC1sYWIub3JnIiwiZXhwIjoxNzg3NjczNDI1LCJpc3MiOiJsb2NhdGUiLCJqdGkiOiJhZGQzMGFmNS0yNTE1LTRhMjMtYWUwNC01OGNhYjlmYjJjMTEiLCJzdWIiOiJuZHQifQ.TBDXonRkVqx7pm_FYj6EWUGyduslsq2qNp-gVaf--n-ZDYUeEb278FYnaOlVFNoNyeIqF_KYVEqdOsJZQ238Ag&index=0&locate_version=v2&metro_rank=0",
-              "server": "ndt-mlab2-doh03.mlab-oti.measurement-lab.org",
-              "ok": true,
-              "httpCode": 101,
-              "bytes": 20971520,
-              "elapsedMs": 11379,
-              "kbps": 1799.7,
-              "error": ""
-            },
-            {
-              "url": "wss://ndt-mlab2-tlv03.mlab-oti.measurement-lab.org/ndt/v7/download?access_token=eyJhbGciOiJFZERTQSIsImtpZCI6ImxvY2F0ZV8yMDIwMDQwOSJ9.eyJhdWQiOiJtbGFiMi10bHYwMy5tbGFiLW90aS5tZWFzdXJlbWVudC1sYWIub3JnIiwiZXhwIjoxNzg3NjczNDI1LCJpc3MiOiJsb2NhdGUiLCJqdGkiOiJmMzYwYjI5Zi02ZDhkLTRhZDYtYTZhMi1lNTYzOTlkOTMxOTAiLCJzdWIiOiJuZHQifQ.QCpcKf4Km00pKb1TnPMqjKwvOIN59jVDxsczJHRmjDMvzaC4d6KJGLe-LxpKMw6lRhyoKlJ2MQfOssHBPxZlAQ&index=1&locate_version=v2&metro_rank=1",
-              "server": "ndt-mlab2-tlv03.mlab-oti.measurement-lab.org",
-              "ok": true,
-              "httpCode": 101,
-              "bytes": 26214400,
-              "elapsedMs": 11522,
-              "kbps": 2221.9,
-              "error": ""
-            }
-          ]
-        },
-        {
-          "provider": "yandex",
-          "label": "Yandex Internetometer",
-          "ok": true,
-          "kbps": 5137.2,
-          "bytes": 47349292,
-          "elapsedMs": 9001,
-          "httpCode": 200,
-          "server": "cloudcdn-ams-06.cdn.yandex.net",
-          "error": "",
-          "attempts": [
-            {
-              "provider": "yandex",
-              "label": "Yandex Internetometer",
-              "type": "yandex",
-              "ok": false,
-              "url": "https://cloudcdn-fra-03.cdn.yandex.net/cdnrphoszsa2sp7ilm7a/probes/50mb?lid=293&mid=utv511hvk8nqa3d0x1787673366",
-              "server": "cloudcdn-fra-03.cdn.yandex.net",
-              "httpCode": 200,
-              "bytes": 5684780,
-              "elapsedMs": 9000,
-              "kbps": 616.8,
-              "curlCode": 28,
-              "error": "curl: (28) Operation timed out after 9000 milliseconds with 5684780 out of 52428800 bytes received"
-            },
-            {
-              "provider": "yandex",
-              "label": "Yandex Internetometer",
-              "type": "yandex",
-              "ok": true,
-              "url": "https://cloudcdn-ams-06.cdn.yandex.net/cdnrphoszsa2sp7ilm7a/probes/50mb?lid=294&mid=utv511hvk8nqa3d0x1787673366",
-              "server": "cloudcdn-ams-06.cdn.yandex.net",
-              "httpCode": 200,
-              "bytes": 41664512,
-              "elapsedMs": 9001,
-              "kbps": 4520.4,
-              "curlCode": 28,
-              "error": ""
-            }
-          ]
-        }
-      ],
-      "error": ""
-    },
-    "gaming": {
-      "eligible": true,
-      "medianLatencyMs": 2,
-      "maxLatencyMs": 3,
-      "latencySpreadMs": 1,
-      "latencyStdDevMs": 0.5,
-      "latencySamples": [
-        2,
-        3,
-        2
-      ],
-      "speedScore": 25,
-      "latencyScore": 48.9,
-      "stabilityScore": 25,
-      "score": 98.9,
-      "latencyProbeError": ""
-    }
-  },
-  {
-    "id": "gaming-3",
     "country": "United Kingdom",
     "flag": "🇬🇧",
     "remarks": "🇬🇧 🎮 United Kingdom",
-    "linkFingerprint": "04e319975760",
-    "link": "trojan://7e70223b-f331-41d5-9313-02b8d2df2885@kkvlvvq-a.catcat321.com:20065?sni=hk.catxstar.com&type=tcp#🇬🇧",
+    "linkFingerprint": "dd55f74e1a16",
+    "link": "vless://e75ad2eb-6c1f-45ce-8023-f5f10875df66@45.154.205.200:443?encryption=none&type=xhttp&host=gb8.eu-cdn391.com&path=%2Fbf083cffe7c4256484ee5f76f835eac4&mode=packet-up&security=reality&sni=gb8.eu-cdn391.com&pbk=wQ3GIxcQhzdu-cTxjHcVpERGPdEVzE4DqKhAuGXzxXg&sid=ee0cde6d9b0a1f09&fp=firefox",
     "quality": {
       "ok": true,
       "providerCount": 4,
       "requiredProviders": 3,
       "passedCount": 4,
       "failedCount": 0,
-      "medianKbps": 7085.6,
-      "minKbps": 1849.5,
-      "maxKbps": 15958.2,
-      "kbps": 7085.6,
-      "bytes": 68546496,
+      "medianKbps": 18502.9,
+      "minKbps": 2729.9,
+      "maxKbps": 23579.9,
+      "kbps": 18502.9,
+      "bytes": 116654080,
       "probes": [
         {
           "provider": "cloudflare",
@@ -614,8 +26,8 @@
           "url": "https://speed.cloudflare.com/__down?bytes=4194304",
           "httpCode": 200,
           "bytes": 4194304,
-          "elapsedMs": 2215,
-          "kbps": 1849.5,
+          "elapsedMs": 1500,
+          "kbps": 2729.9,
           "curlCode": 0,
           "error": "",
           "attempts": [
@@ -624,8 +36,8 @@
               "ok": true,
               "httpCode": 200,
               "bytes": 4194304,
-              "elapsedMs": 2215,
-              "kbps": 1849.5,
+              "elapsedMs": 1500,
+              "kbps": 2729.9,
               "curlCode": 0,
               "error": ""
             }
@@ -638,20 +50,20 @@
           "ok": true,
           "url": "https://fsn1-speed.hetzner.com/100MB.bin",
           "httpCode": 200,
-          "bytes": 81248000,
-          "elapsedMs": 12000,
-          "kbps": 6611.8,
-          "curlCode": 28,
+          "bytes": 104857600,
+          "elapsedMs": 5881,
+          "kbps": 17411.5,
+          "curlCode": 0,
           "error": "",
           "attempts": [
             {
               "url": "https://fsn1-speed.hetzner.com/100MB.bin",
               "ok": true,
               "httpCode": 200,
-              "bytes": 81248000,
-              "elapsedMs": 12000,
-              "kbps": 6611.8,
-              "curlCode": 28,
+              "bytes": 104857600,
+              "elapsedMs": 5881,
+              "kbps": 17411.5,
+              "curlCode": 0,
               "error": ""
             }
           ]
@@ -661,32 +73,32 @@
           "label": "M-Lab NDT7",
           "type": "ndt7",
           "ok": true,
-          "url": "wss://ndt-mlab2-hkg03.mlab-oti.measurement-lab.org/ndt/v7/download?access_token=eyJhbGciOiJFZERTQSIsImtpZCI6ImxvY2F0ZV8yMDIwMDQwOSJ9.eyJhdWQiOiJtbGFiMi1oa2cwMy5tbGFiLW90aS5tZWFzdXJlbWVudC1sYWIub3JnIiwiZXhwIjoxNzg3NjczNDY0LCJpc3MiOiJsb2NhdGUiLCJqdGkiOiJlYzdlNmIyZi1iNTg1LTRiOGEtYWY2Mi04ZDU4MGRmMDBhMzMiLCJzdWIiOiJuZHQifQ.wND9Yym3WTqu03bssQim-DK314GmTJnAQG_JCPLN84OvLGJ4S_mIW263JswjiqsN41srLju_t_GM7jUm_s6WDA&index=0&locate_version=v2&metro_rank=0",
+          "url": "wss://ndt-mlab1-dub01.mlab-oti.measurement-lab.org/ndt/v7/download?access_token=eyJhbGciOiJFZERTQSIsImtpZCI6ImxvY2F0ZV8yMDIwMDQwOSJ9.eyJhdWQiOiJtbGFiMS1kdWIwMS5tbGFiLW90aS5tZWFzdXJlbWVudC1sYWIub3JnIiwiZXhwIjoxNzg3Njc2ODA0LCJpc3MiOiJsb2NhdGUiLCJqdGkiOiIzNTljMGVjNC1hNzBjLTQ4MzEtYjYyMi1iMjQ2N2IwOWIxMWIiLCJzdWIiOiJuZHQifQ.XmUMuxZ0OidIXbpsz_jyYwgyPQ2L0fzrDMgaXKxObfbu1EayM6UPGVJZvOL0pPaWzAv4M5kfNUMpPY-9iaWeAQ&index=0&locate_version=v2&metro_rank=0",
           "httpCode": 101,
-          "bytes": 83886080,
-          "elapsedMs": 10837,
-          "kbps": 7559.3,
-          "server": "ndt-mlab2-hkg03.mlab-oti.measurement-lab.org",
+          "bytes": 252706816,
+          "elapsedMs": 10466,
+          "kbps": 23579.9,
+          "server": "ndt-mlab1-dub01.mlab-oti.measurement-lab.org",
           "error": "",
           "attempts": [
             {
-              "url": "wss://ndt-mlab2-hkg03.mlab-oti.measurement-lab.org/ndt/v7/download?access_token=eyJhbGciOiJFZERTQSIsImtpZCI6ImxvY2F0ZV8yMDIwMDQwOSJ9.eyJhdWQiOiJtbGFiMi1oa2cwMy5tbGFiLW90aS5tZWFzdXJlbWVudC1sYWIub3JnIiwiZXhwIjoxNzg3NjczNDY0LCJpc3MiOiJsb2NhdGUiLCJqdGkiOiJlYzdlNmIyZi1iNTg1LTRiOGEtYWY2Mi04ZDU4MGRmMDBhMzMiLCJzdWIiOiJuZHQifQ.wND9Yym3WTqu03bssQim-DK314GmTJnAQG_JCPLN84OvLGJ4S_mIW263JswjiqsN41srLju_t_GM7jUm_s6WDA&index=0&locate_version=v2&metro_rank=0",
-              "server": "ndt-mlab2-hkg03.mlab-oti.measurement-lab.org",
+              "url": "wss://ndt-mlab1-dub01.mlab-oti.measurement-lab.org/ndt/v7/download?access_token=eyJhbGciOiJFZERTQSIsImtpZCI6ImxvY2F0ZV8yMDIwMDQwOSJ9.eyJhdWQiOiJtbGFiMS1kdWIwMS5tbGFiLW90aS5tZWFzdXJlbWVudC1sYWIub3JnIiwiZXhwIjoxNzg3Njc2ODA0LCJpc3MiOiJsb2NhdGUiLCJqdGkiOiIzNTljMGVjNC1hNzBjLTQ4MzEtYjYyMi1iMjQ2N2IwOWIxMWIiLCJzdWIiOiJuZHQifQ.XmUMuxZ0OidIXbpsz_jyYwgyPQ2L0fzrDMgaXKxObfbu1EayM6UPGVJZvOL0pPaWzAv4M5kfNUMpPY-9iaWeAQ&index=0&locate_version=v2&metro_rank=0",
+              "server": "ndt-mlab1-dub01.mlab-oti.measurement-lab.org",
               "ok": true,
               "httpCode": 101,
-              "bytes": 83886080,
-              "elapsedMs": 10837,
-              "kbps": 7559.3,
+              "bytes": 252706816,
+              "elapsedMs": 10466,
+              "kbps": 23579.9,
               "error": ""
             },
             {
-              "url": "wss://ndt-mlab3-tpe01.mlab-oti.measurement-lab.org/ndt/v7/download?access_token=eyJhbGciOiJFZERTQSIsImtpZCI6ImxvY2F0ZV8yMDIwMDQwOSJ9.eyJhdWQiOiJtbGFiMy10cGUwMS5tbGFiLW90aS5tZWFzdXJlbWVudC1sYWIub3JnIiwiZXhwIjoxNzg3NjczNDY0LCJpc3MiOiJsb2NhdGUiLCJqdGkiOiJlMDJjNjQ3Zi01ZDI0LTRkNjAtOTZkMS0zNDdhYzI0MzM3NDUiLCJzdWIiOiJuZHQifQ.nqRwfspdgxbkWgkglylAopY5cmqBIQRetcOu03YCdcP59703FupN7BNQ8CRSQSjAQxDCUNFHNiTNsgvTG5-NBQ&index=1&locate_version=v2&metro_rank=1",
-              "server": "ndt-mlab3-tpe01.mlab-oti.measurement-lab.org",
+              "url": "wss://ndt-mlab3-lhr07.mlab-oti.measurement-lab.org/ndt/v7/download?access_token=eyJhbGciOiJFZERTQSIsImtpZCI6ImxvY2F0ZV8yMDIwMDQwOSJ9.eyJhdWQiOiJtbGFiMy1saHIwNy5tbGFiLW90aS5tZWFzdXJlbWVudC1sYWIub3JnIiwiZXhwIjoxNzg3Njc2ODA0LCJpc3MiOiJsb2NhdGUiLCJqdGkiOiIzYTA5NjYxZC1mM2UxLTQxZmQtODU5My1jODEzNzMyMTMzYmIiLCJzdWIiOiJuZHQifQ.-sQ4-lr4zrcQUrI09jGPaoZQDas8sUriB8PDP18dPmHbg5OhyFekw3YhWEuurHEiL6W9ZnBVpGjdeDqcl3mcCw&index=1&locate_version=v2&metro_rank=1",
+              "server": "ndt-mlab3-lhr07.mlab-oti.measurement-lab.org",
               "ok": true,
               "httpCode": 101,
-              "bytes": 23068672,
-              "elapsedMs": 11385,
-              "kbps": 1978.7,
+              "bytes": 241172480,
+              "elapsedMs": 10670,
+              "kbps": 22072.6,
               "error": ""
             }
           ]
@@ -699,12 +111,12 @@
           "url": "https://yandex.ru/internet/api/v0/get-probes",
           "httpCode": 200,
           "bytes": 104857600,
-          "elapsedMs": 6417,
-          "kbps": 15958.2,
-          "server": "cloudcdn-ams-07.cdn.yandex.net, cloudcdn-fra-03.cdn.yandex.net",
+          "elapsedMs": 5226,
+          "kbps": 19594.2,
+          "server": "cloudcdn-ams-06.cdn.yandex.net, cloudcdn-fra-03.cdn.yandex.net",
           "targets": [
-            "https://cloudcdn-ams-07.cdn.yandex.net/cdnrphoszsa2sp7ilm7a/probes/50mb?lid=300&mid=igeekcbo4yf8n5qpx1787673405",
-            "https://cloudcdn-fra-03.cdn.yandex.net/cdnrphoszsa2sp7ilm7a/probes/50mb?lid=293&mid=igeekcbo4yf8n5qpx1787673405"
+            "https://cloudcdn-ams-06.cdn.yandex.net/cdnrphoszsa2sp7ilm7a/probes/50mb?lid=294&mid=ismcz593x5sl42lux1787676744",
+            "https://cloudcdn-fra-03.cdn.yandex.net/cdnrphoszsa2sp7ilm7a/probes/50mb?lid=293&mid=ismcz593x5sl42lux1787676744"
           ],
           "attempts": [
             {
@@ -712,12 +124,12 @@
               "label": "Yandex Internetometer",
               "type": "yandex",
               "ok": true,
-              "url": "https://cloudcdn-ams-07.cdn.yandex.net/cdnrphoszsa2sp7ilm7a/probes/50mb?lid=300&mid=igeekcbo4yf8n5qpx1787673405",
-              "server": "cloudcdn-ams-07.cdn.yandex.net",
+              "url": "https://cloudcdn-ams-06.cdn.yandex.net/cdnrphoszsa2sp7ilm7a/probes/50mb?lid=294&mid=ismcz593x5sl42lux1787676744",
+              "server": "cloudcdn-ams-06.cdn.yandex.net",
               "httpCode": 200,
               "bytes": 52428800,
-              "elapsedMs": 6417,
-              "kbps": 7979.1,
+              "elapsedMs": 4343,
+              "kbps": 11789.1,
               "curlCode": 0,
               "error": ""
             },
@@ -726,12 +138,12 @@
               "label": "Yandex Internetometer",
               "type": "yandex",
               "ok": true,
-              "url": "https://cloudcdn-fra-03.cdn.yandex.net/cdnrphoszsa2sp7ilm7a/probes/50mb?lid=293&mid=igeekcbo4yf8n5qpx1787673405",
+              "url": "https://cloudcdn-fra-03.cdn.yandex.net/cdnrphoszsa2sp7ilm7a/probes/50mb?lid=293&mid=ismcz593x5sl42lux1787676744",
               "server": "cloudcdn-fra-03.cdn.yandex.net",
               "httpCode": 200,
               "bytes": 52428800,
-              "elapsedMs": 4954,
-              "kbps": 10335.2,
+              "elapsedMs": 5226,
+              "kbps": 9797.1,
               "curlCode": 0,
               "error": ""
             }
@@ -744,9 +156,9 @@
           "provider": "cloudflare",
           "label": "Cloudflare",
           "ok": true,
-          "kbps": 1849.5,
+          "kbps": 2729.9,
           "bytes": 4194304,
-          "elapsedMs": 2215,
+          "elapsedMs": 1500,
           "httpCode": 200,
           "server": "",
           "error": "",
@@ -756,8 +168,8 @@
               "ok": true,
               "httpCode": 200,
               "bytes": 4194304,
-              "elapsedMs": 2215,
-              "kbps": 1849.5,
+              "elapsedMs": 1500,
+              "kbps": 2729.9,
               "curlCode": 0,
               "error": ""
             }
@@ -767,9 +179,9 @@
           "provider": "hetzner",
           "label": "Hetzner",
           "ok": true,
-          "kbps": 6611.8,
-          "bytes": 81248000,
-          "elapsedMs": 12000,
+          "kbps": 17411.5,
+          "bytes": 104857600,
+          "elapsedMs": 5881,
           "httpCode": 200,
           "server": "",
           "error": "",
@@ -778,10 +190,10 @@
               "url": "https://fsn1-speed.hetzner.com/100MB.bin",
               "ok": true,
               "httpCode": 200,
-              "bytes": 81248000,
-              "elapsedMs": 12000,
-              "kbps": 6611.8,
-              "curlCode": 28,
+              "bytes": 104857600,
+              "elapsedMs": 5881,
+              "kbps": 17411.5,
+              "curlCode": 0,
               "error": ""
             }
           ]
@@ -790,31 +202,31 @@
           "provider": "mlab",
           "label": "M-Lab NDT7",
           "ok": true,
-          "kbps": 7559.3,
-          "bytes": 83886080,
-          "elapsedMs": 10837,
+          "kbps": 23579.9,
+          "bytes": 252706816,
+          "elapsedMs": 10466,
           "httpCode": 101,
-          "server": "ndt-mlab2-hkg03.mlab-oti.measurement-lab.org",
+          "server": "ndt-mlab1-dub01.mlab-oti.measurement-lab.org",
           "error": "",
           "attempts": [
             {
-              "url": "wss://ndt-mlab2-hkg03.mlab-oti.measurement-lab.org/ndt/v7/download?access_token=eyJhbGciOiJFZERTQSIsImtpZCI6ImxvY2F0ZV8yMDIwMDQwOSJ9.eyJhdWQiOiJtbGFiMi1oa2cwMy5tbGFiLW90aS5tZWFzdXJlbWVudC1sYWIub3JnIiwiZXhwIjoxNzg3NjczNDY0LCJpc3MiOiJsb2NhdGUiLCJqdGkiOiJlYzdlNmIyZi1iNTg1LTRiOGEtYWY2Mi04ZDU4MGRmMDBhMzMiLCJzdWIiOiJuZHQifQ.wND9Yym3WTqu03bssQim-DK314GmTJnAQG_JCPLN84OvLGJ4S_mIW263JswjiqsN41srLju_t_GM7jUm_s6WDA&index=0&locate_version=v2&metro_rank=0",
-              "server": "ndt-mlab2-hkg03.mlab-oti.measurement-lab.org",
+              "url": "wss://ndt-mlab1-dub01.mlab-oti.measurement-lab.org/ndt/v7/download?access_token=eyJhbGciOiJFZERTQSIsImtpZCI6ImxvY2F0ZV8yMDIwMDQwOSJ9.eyJhdWQiOiJtbGFiMS1kdWIwMS5tbGFiLW90aS5tZWFzdXJlbWVudC1sYWIub3JnIiwiZXhwIjoxNzg3Njc2ODA0LCJpc3MiOiJsb2NhdGUiLCJqdGkiOiIzNTljMGVjNC1hNzBjLTQ4MzEtYjYyMi1iMjQ2N2IwOWIxMWIiLCJzdWIiOiJuZHQifQ.XmUMuxZ0OidIXbpsz_jyYwgyPQ2L0fzrDMgaXKxObfbu1EayM6UPGVJZvOL0pPaWzAv4M5kfNUMpPY-9iaWeAQ&index=0&locate_version=v2&metro_rank=0",
+              "server": "ndt-mlab1-dub01.mlab-oti.measurement-lab.org",
               "ok": true,
               "httpCode": 101,
-              "bytes": 83886080,
-              "elapsedMs": 10837,
-              "kbps": 7559.3,
+              "bytes": 252706816,
+              "elapsedMs": 10466,
+              "kbps": 23579.9,
               "error": ""
             },
             {
-              "url": "wss://ndt-mlab3-tpe01.mlab-oti.measurement-lab.org/ndt/v7/download?access_token=eyJhbGciOiJFZERTQSIsImtpZCI6ImxvY2F0ZV8yMDIwMDQwOSJ9.eyJhdWQiOiJtbGFiMy10cGUwMS5tbGFiLW90aS5tZWFzdXJlbWVudC1sYWIub3JnIiwiZXhwIjoxNzg3NjczNDY0LCJpc3MiOiJsb2NhdGUiLCJqdGkiOiJlMDJjNjQ3Zi01ZDI0LTRkNjAtOTZkMS0zNDdhYzI0MzM3NDUiLCJzdWIiOiJuZHQifQ.nqRwfspdgxbkWgkglylAopY5cmqBIQRetcOu03YCdcP59703FupN7BNQ8CRSQSjAQxDCUNFHNiTNsgvTG5-NBQ&index=1&locate_version=v2&metro_rank=1",
-              "server": "ndt-mlab3-tpe01.mlab-oti.measurement-lab.org",
+              "url": "wss://ndt-mlab3-lhr07.mlab-oti.measurement-lab.org/ndt/v7/download?access_token=eyJhbGciOiJFZERTQSIsImtpZCI6ImxvY2F0ZV8yMDIwMDQwOSJ9.eyJhdWQiOiJtbGFiMy1saHIwNy5tbGFiLW90aS5tZWFzdXJlbWVudC1sYWIub3JnIiwiZXhwIjoxNzg3Njc2ODA0LCJpc3MiOiJsb2NhdGUiLCJqdGkiOiIzYTA5NjYxZC1mM2UxLTQxZmQtODU5My1jODEzNzMyMTMzYmIiLCJzdWIiOiJuZHQifQ.-sQ4-lr4zrcQUrI09jGPaoZQDas8sUriB8PDP18dPmHbg5OhyFekw3YhWEuurHEiL6W9ZnBVpGjdeDqcl3mcCw&index=1&locate_version=v2&metro_rank=1",
+              "server": "ndt-mlab3-lhr07.mlab-oti.measurement-lab.org",
               "ok": true,
               "httpCode": 101,
-              "bytes": 23068672,
-              "elapsedMs": 11385,
-              "kbps": 1978.7,
+              "bytes": 241172480,
+              "elapsedMs": 10670,
+              "kbps": 22072.6,
               "error": ""
             }
           ]
@@ -823,11 +235,11 @@
           "provider": "yandex",
           "label": "Yandex Internetometer",
           "ok": true,
-          "kbps": 15958.2,
+          "kbps": 19594.2,
           "bytes": 104857600,
-          "elapsedMs": 6417,
+          "elapsedMs": 5226,
           "httpCode": 200,
-          "server": "cloudcdn-ams-07.cdn.yandex.net, cloudcdn-fra-03.cdn.yandex.net",
+          "server": "cloudcdn-ams-06.cdn.yandex.net, cloudcdn-fra-03.cdn.yandex.net",
           "error": "",
           "attempts": [
             {
@@ -835,12 +247,12 @@
               "label": "Yandex Internetometer",
               "type": "yandex",
               "ok": true,
-              "url": "https://cloudcdn-ams-07.cdn.yandex.net/cdnrphoszsa2sp7ilm7a/probes/50mb?lid=300&mid=igeekcbo4yf8n5qpx1787673405",
-              "server": "cloudcdn-ams-07.cdn.yandex.net",
+              "url": "https://cloudcdn-ams-06.cdn.yandex.net/cdnrphoszsa2sp7ilm7a/probes/50mb?lid=294&mid=ismcz593x5sl42lux1787676744",
+              "server": "cloudcdn-ams-06.cdn.yandex.net",
               "httpCode": 200,
               "bytes": 52428800,
-              "elapsedMs": 6417,
-              "kbps": 7979.1,
+              "elapsedMs": 4343,
+              "kbps": 11789.1,
               "curlCode": 0,
               "error": ""
             },
@@ -849,12 +261,12 @@
               "label": "Yandex Internetometer",
               "type": "yandex",
               "ok": true,
-              "url": "https://cloudcdn-fra-03.cdn.yandex.net/cdnrphoszsa2sp7ilm7a/probes/50mb?lid=293&mid=igeekcbo4yf8n5qpx1787673405",
+              "url": "https://cloudcdn-fra-03.cdn.yandex.net/cdnrphoszsa2sp7ilm7a/probes/50mb?lid=293&mid=ismcz593x5sl42lux1787676744",
               "server": "cloudcdn-fra-03.cdn.yandex.net",
               "httpCode": 200,
               "bytes": 52428800,
-              "elapsedMs": 4954,
-              "kbps": 10335.2,
+              "elapsedMs": 5226,
+              "kbps": 9797.1,
               "curlCode": 0,
               "error": ""
             }
@@ -865,19 +277,19 @@
     },
     "gaming": {
       "eligible": true,
-      "medianLatencyMs": 16,
-      "maxLatencyMs": 20,
-      "latencySpreadMs": 4,
-      "latencyStdDevMs": 1.9,
+      "medianLatencyMs": 77,
+      "maxLatencyMs": 78,
+      "latencySpreadMs": 1,
+      "latencyStdDevMs": 0.5,
       "latencySamples": [
-        16,
-        16,
-        20
+        78,
+        77,
+        77
       ],
       "speedScore": 25,
-      "latencyScore": 41.1,
+      "latencyScore": 7.2,
       "stabilityScore": 25,
-      "score": 91.1,
+      "score": 57.2,
       "latencyProbeError": ""
     }
   }
