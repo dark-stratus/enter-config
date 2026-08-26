@@ -103,6 +103,9 @@ const UPDATE_STATUS_FILE =
 const HEALTH_REPORT_FILE =
     path.join(ROOT, "config", "keyline-health-report.json");
 
+const UPDATE_VPN_POOL_FILE =
+    path.join(ROOT, "config", "keyline-update-pool.json");
+
 const XRAY_BIN =
     process.env.XRAY_BIN ||
     path.join(
@@ -513,6 +516,7 @@ async function updateHealthHistory(results) {
             ? state.healthHistory
             : {};
     const now = Date.now();
+    const WINDOW = 10;
 
     for (const result of results) {
         const link = String(result?.item?.link || "").trim();
@@ -520,34 +524,52 @@ async function updateHealthHistory(results) {
 
         const fingerprint = fingerprintLink(link);
         const previous = history[fingerprint] || {};
+        const recentStatuses = Array.isArray(previous.recentStatuses)
+            ? previous.recentStatuses.slice(-WINDOW + 1)
+            : [];
+        recentStatuses.push(result.ok ? "pass" : "fail");
 
-        if (result.ok) {
-            history[fingerprint] = {
-                lastStatus: "pass",
-                consecutiveFailures: 0,
-                lastCheckedAt: now,
-                lastPassedAt: now,
-                lastKbps: Number(result?.quality?.kbps) || 0,
-                lastBytes: Number(result?.quality?.bytes) || 0,
-                gamingEligible: Boolean(result?.gaming?.eligible),
-                gamingScore: Number(result?.gaming?.score) || 0,
-                lastMedianLatencyMs: Number(result?.gaming?.medianLatencyMs) || 0,
-            };
-            continue;
-        }
+        const recentPasses = recentStatuses.filter(status => status === "pass").length;
+        const successRate = recentStatuses.length
+            ? recentPasses / recentStatuses.length
+            : 0;
+        const recentFailures = recentStatuses.length - recentPasses;
+        const consecutiveHealthyCycles = result.ok
+            ? (Number(previous.consecutiveHealthyCycles) || 0) + 1
+            : 0;
+        const consecutiveFailures = result.ok
+            ? 0
+            : (Number(previous.consecutiveFailures) || 0) + 1;
+        const stabilityScore =
+            successRate * 0.60 +
+            Math.min(consecutiveHealthyCycles / 3, 1) * 0.25 +
+            (1 - (recentFailures / Math.max(recentStatuses.length, 1))) * 0.15;
 
         history[fingerprint] = {
-            lastStatus: "fail",
-            consecutiveFailures: (Number(previous.consecutiveFailures) || 0) + 1,
+            lastStatus: result.ok ? "pass" : "fail",
+            consecutiveFailures,
+            consecutiveHealthyCycles,
+            successRate: Number(successRate.toFixed(4)),
+            recentFailures,
+            recentStatuses,
+            stabilityScore: Number(stabilityScore.toFixed(4)),
             lastCheckedAt: now,
-            lastPassedAt: Number(previous.lastPassedAt) || 0,
-            lastKbps: Number(result?.quality?.kbps) || 0,
-            lastBytes: Number(result?.quality?.bytes) || 0,
+            lastPassedAt: result.ok ? now : (Number(previous.lastPassedAt) || 0),
+            lastKbps: result.ok
+                ? Number(result?.quality?.kbps) || 0
+                : Number(previous.lastKbps) || Number(result?.quality?.kbps) || 0,
+            lastBytes: result.ok
+                ? Number(result?.quality?.bytes) || 0
+                : Number(previous.lastBytes) || Number(result?.quality?.bytes) || 0,
             gamingEligible: Boolean(result?.gaming?.eligible),
             gamingScore: Number(result?.gaming?.score) || 0,
-            lastMedianLatencyMs: Number(result?.gaming?.medianLatencyMs) || 0,
-            lastReason: String(result.reason || "health check failed").slice(0, 500),
-            quarantineUntil: now + 90 * 60 * 1000,
+            lastMedianLatencyMs: result.ok
+                ? Number(result?.connection?.medianMs || result?.gaming?.medianLatencyMs) || 0
+                : Number(previous.lastMedianLatencyMs) || 0,
+            lastReason: result.ok
+                ? ""
+                : String(result.reason || "health check failed").slice(0, 500),
+            quarantineUntil: result.ok ? 0 : now + 90 * 60 * 1000,
         };
     }
 
@@ -564,6 +586,65 @@ async function updateHealthHistory(results) {
         `${JSON.stringify(state, null, 2)}\n`,
         "utf8"
     );
+
+    return history;
+}
+
+function selectUpdateVpnPool(healthResults, history, limit = 10) {
+    const currentPassing = healthResults.filter(result =>
+        result?.ok && result?.whiteList && result?.linkFingerprint
+    );
+
+    if (currentPassing.length === 0) return [];
+
+    const eligible = healthResults.filter(result => {
+        if (!result?.whiteList || !result?.linkFingerprint || !result?.item?.link) {
+            return false;
+        }
+        if (result.ok) return true;
+
+        const h = history[result.linkFingerprint] || {};
+        return Number(h.consecutiveFailures) <= 2 && Number(h.successRate) >= 0.5;
+    });
+
+    const scoreFor = result => {
+        const h = history[result.linkFingerprint] || {};
+        const stability = Number(h.stabilityScore) || 0;
+        const consecutive = Number(h.consecutiveHealthyCycles) || 0;
+        const successRate = Number(h.successRate) || 0;
+        const recentFailures = Number(h.recentFailures) || 0;
+        const latency = Number(result?.connection?.medianMs) || Number(h.lastMedianLatencyMs) || Infinity;
+        const speed = Number(result?.quality?.medianKbps ?? result?.quality?.kbps) || Number(h.lastKbps) || 0;
+
+        const stabilityPart = Math.max(0, Math.min(stability, 1)) * 0.50;
+        const healthyPart = Math.min(consecutive / 3, 1) * 0.20;
+        const successPart = Math.max(0, Math.min(successRate, 1)) * 0.15;
+        const failurePart = Math.max(0, 1 - Math.min(recentFailures / 3, 1)) * 0.08;
+        const latencyPart = Number.isFinite(latency)
+            ? Math.max(0, 1 - Math.min(latency / 5000, 1)) * 0.05
+            : 0;
+        const speedPart = Math.min(Math.log1p(Math.max(speed, 0)) / Math.log1p(20000), 1) * 0.02;
+
+        return stabilityPart + healthyPart + successPart + failurePart + latencyPart + speedPart;
+    };
+
+    return eligible
+        .map(result => ({
+            id: result.id,
+            remarks: `${extractFlag(result.remarks) || countryFlag(result.country) || "🇪🇺"} 🏳️ LTE ${result.country || "Europe"}`.trim(),
+            country: result.country || "Europe",
+            whiteList: true,
+            link: String(result.item.link || "").trim(),
+            ...(result.item.configFile ? { configFile: result.item.configFile, sourceKind: result.item.sourceKind || "json" } : {}),
+            score: Number(scoreFor(result).toFixed(6)),
+            stabilityScore: Number((Number(history[result.linkFingerprint]?.stabilityScore) || 0).toFixed(4)),
+            consecutiveHealthyCycles: Number(history[result.linkFingerprint]?.consecutiveHealthyCycles) || 0,
+            successRate: Number(history[result.linkFingerprint]?.successRate) || 0,
+            recentFailures: Number(history[result.linkFingerprint]?.recentFailures) || 0,
+            currentHealth: Boolean(result.ok),
+        }))
+        .sort((a, b) => b.score - a.score)
+        .slice(0, limit);
 }
 
 function getProtocol(link) {
@@ -3133,6 +3214,9 @@ async function main() {
         );
     }
 
+    const healthHistory = await updateHealthHistory(healthResults);
+    const updateVpnPool = selectUpdateVpnPool(healthResults, healthHistory, 10);
+
     const selectedCountries =
         buildCountryHealthPool(healthResults, false);
 
@@ -3213,12 +3297,18 @@ async function main() {
             featuredFastCountries
         );
 
-    await updateHealthHistory(
-        healthResults
-    );
-
     await writeGamingAssignments(
         gamingAssignments
+    );
+
+    await fs.writeFile(
+        UPDATE_VPN_POOL_FILE,
+        `${JSON.stringify({
+            generatedAt: new Date().toISOString(),
+            maxServers: 10,
+            servers: updateVpnPool,
+        }, null, 2)}\n`,
+        "utf8"
     );
 
     await fs.writeFile(
@@ -3497,6 +3587,17 @@ async function main() {
             ),
         gaming:
             gamingAssignments,
+        updateVpnPool:
+            updateVpnPool.map(item => ({
+                id: item.id,
+                country: item.country,
+                score: item.score,
+                stabilityScore: item.stabilityScore,
+                consecutiveHealthyCycles: item.consecutiveHealthyCycles,
+                successRate: item.successRate,
+                recentFailures: item.recentFailures,
+                currentHealth: item.currentHealth,
+            })),
     };
 
     const byReason = new Map();
