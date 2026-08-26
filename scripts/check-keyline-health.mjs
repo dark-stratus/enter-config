@@ -592,7 +592,7 @@ async function updateHealthHistory(results) {
 
 function selectUpdateVpnPool(healthResults, history, limit = 10) {
     const eligible = healthResults.filter(result => {
-        if (!result?.whiteList || !result?.linkFingerprint || !result?.item?.link) {
+        if (!result?.whiteList || !result?.linkFingerprint || !result?.link) {
             return false;
         }
         if (result.ok) return true;
@@ -628,8 +628,8 @@ function selectUpdateVpnPool(healthResults, history, limit = 10) {
             remarks: `${extractFlag(result.remarks) || countryFlag(result.country) || "🇪🇺"} 🏳️ LTE ${result.country || "Europe"}`.trim(),
             country: result.country || "Europe",
             whiteList: true,
-            link: String(result.item.link || "").trim(),
-            ...(result.item.configFile ? { configFile: result.item.configFile, sourceKind: result.item.sourceKind || "json" } : {}),
+            link: String(result.link || "").trim(),
+            ...(result.configFile ? { configFile: result.configFile, sourceKind: result.sourceKind || "json" } : {}),
             score: Number(scoreFor(result).toFixed(6)),
             stabilityScore: Number((Number(history[result.linkFingerprint]?.stabilityScore) || 0).toFixed(4)),
             consecutiveHealthyCycles: Number(history[result.linkFingerprint]?.consecutiveHealthyCycles) || 0,
@@ -3136,6 +3136,9 @@ async function main() {
             healthResults.push({
                 id: item.id,
                 remarks: item.remarks || "",
+                link: String(item.link || "").trim(),
+                configFile: item.configFile || null,
+                sourceKind: item.sourceKind || null,
                 country: resolvedCountry,
                 whiteList: isWhiteList,
                 source: meta.sourceMeta?.source || "retained/manual",
