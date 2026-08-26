@@ -601,6 +601,9 @@ async function updateHealthHistory(results) {
             lastMedianLatencyMs: result.ok
                 ? Number(result?.connection?.medianMs || result?.gaming?.medianLatencyMs) || 0
                 : Number(previous.lastMedianLatencyMs) || 0,
+            lastServiceLatencyMs: result.ok
+                ? Number(result?.updateConnectivity?.latencyMs) || 0
+                : Number(previous.lastServiceLatencyMs) || 0,
             lastReason: result.ok
                 ? ""
                 : String(result.reason || "health check failed").slice(0, 500),
@@ -625,6 +628,18 @@ async function updateHealthHistory(results) {
     return history;
 }
 
+function canonicalEndpointKey(link) {
+    try {
+        const url = new URL(String(link || "").trim());
+        const protocol = String(url.protocol || "").toLowerCase();
+        const host = String(url.hostname || "").toLowerCase();
+        const port = String(url.port || "").trim();
+        return `${protocol}|${host}|${port}`;
+    } catch {
+        return String(link || "").trim().toLowerCase();
+    }
+}
+
 function selectUpdateVpnPool(healthResults, history, limit = 10) {
     const eligible = healthResults.filter(result => {
         if (!result?.whiteList || !result?.linkFingerprint || !result?.link) {
@@ -640,46 +655,110 @@ function selectUpdateVpnPool(healthResults, history, limit = 10) {
         return true;
     });
 
+    // Prefer the best-scoring variant for each physical endpoint. Different
+    // fingerprints/SNI values on the same host:port are not useful as separate
+    // UPDATE slots because they fail together when that underlying endpoint dies.
+    const bestByEndpoint = new Map();
+
     const scoreFor = result => {
         const h = history[result.linkFingerprint] || {};
-        const stability = Number(h.stabilityScore) || 0;
-        const consecutive = Number(h.consecutiveHealthyCycles) || 0;
-        const successRate = Number(h.successRate) || 0;
-        const recentFailures = Number(h.recentFailures) || 0;
-        const latency = Number(result?.connection?.medianMs) || Number(h.lastMedianLatencyMs) || Infinity;
-        const speed = Number(result?.quality?.medianKbps ?? result?.quality?.kbps) || Number(h.lastKbps) || 0;
+        const hasHistory = Boolean(
+            Number(h.lastCheckedAt) ||
+            Array.isArray(h.recentStatuses) && h.recentStatuses.length
+        );
 
-        const stabilityPart = Math.max(0, Math.min(stability, 1)) * 0.50;
-        const healthyPart = Math.min(consecutive / 3, 1) * 0.20;
-        const successPart = Math.max(0, Math.min(successRate, 1)) * 0.15;
-        const failurePart = Math.max(0, 1 - Math.min(recentFailures / 3, 1)) * 0.08;
-        const latencyPart = Number.isFinite(latency)
-            ? Math.max(0, 1 - Math.min(latency / 5000, 1)) * 0.05
+        // A first observation should be neutral rather than treated as a zero
+        // quality server. The current pass still counts as one healthy cycle.
+        const stability = hasHistory
+            ? Number(h.stabilityScore) || 0
+            : 0.75;
+        const consecutive = hasHistory
+            ? (Number(h.consecutiveHealthyCycles) || (result.ok ? 1 : 0))
+            : 1;
+        const successRate = hasHistory
+            ? (Number(h.successRate) || (result.ok ? 1 : 0))
+            : (result.ok ? 1 : 0);
+        const recentFailures = hasHistory
+            ? (Number(h.recentFailures) || 0)
             : 0;
-        const speedPart = Math.min(Math.log1p(Math.max(speed, 0)) / Math.log1p(20000), 1) * 0.02;
 
-        return stabilityPart + healthyPart + successPart + failurePart + latencyPart + speedPart;
+        const serviceLatency =
+            Number(result?.updateConnectivity?.latencyMs) ||
+            Number(h.lastServiceLatencyMs) ||
+            Infinity;
+        const speed =
+            Number(result?.quality?.medianKbps ?? result?.quality?.kbps) ||
+            Number(h.lastKbps) ||
+            0;
+
+        // UPDATE VPN is primarily about reliably reaching the service endpoint.
+        // Service latency + historical stability dominate; speed is meaningful,
+        // but deliberately remains secondary to connectivity and reliability.
+        const stabilityPart = Math.max(0, Math.min(stability, 1)) * 0.30;
+        const healthyPart = Math.min(consecutive / 3, 1) * 0.15;
+        const successPart = Math.max(0, Math.min(successRate, 1)) * 0.10;
+        const failurePart = Math.max(0, 1 - Math.min(recentFailures / 3, 1)) * 0.05;
+        const serviceLatencyPart = Number.isFinite(serviceLatency)
+            ? Math.max(0, 1 - Math.min(serviceLatency / 2500, 1)) * 0.30
+            : 0;
+        const speedPart = Math.min(
+            Math.log1p(Math.max(speed, 0)) / Math.log1p(50000),
+            1
+        ) * 0.10;
+
+        return stabilityPart +
+            healthyPart +
+            successPart +
+            failurePart +
+            serviceLatencyPart +
+            speedPart;
     };
 
-    return eligible
-        .map(result => ({
-            id: result.id,
-            remarks: `${extractFlag(result.remarks) || countryFlag(result.country) || "🇪🇺"} 🏳️ LTE ${result.country || "Europe"}`.trim(),
-            country: result.country || "Europe",
-            whiteList: true,
-            link: String(result.link || "").trim(),
-            ...(result.configFile ? { configFile: result.configFile, sourceKind: result.sourceKind || "json" } : {}),
-            score: Number(scoreFor(result).toFixed(6)),
-            stabilityScore: Number((Number(history[result.linkFingerprint]?.stabilityScore) || 0).toFixed(4)),
-            consecutiveHealthyCycles: Number(history[result.linkFingerprint]?.consecutiveHealthyCycles) || 0,
-            successRate: Number(history[result.linkFingerprint]?.successRate) || 0,
-            recentFailures: Number(history[result.linkFingerprint]?.recentFailures) || 0,
-            currentHealth: Boolean(result.ok),
-        }))
-        .sort((a, b) => b.score - a.score)
-        .slice(0, limit);
-}
+    for (const result of eligible) {
+        const endpointKey = canonicalEndpointKey(result.link);
+        const candidate = {
+            result,
+            score: scoreFor(result),
+            endpointKey,
+        };
+        const existing = bestByEndpoint.get(endpointKey);
+        if (!existing || candidate.score > existing.score) {
+            bestByEndpoint.set(endpointKey, candidate);
+        }
+    }
 
+    const selected = [...bestByEndpoint.values()]
+        .sort((a, b) => {
+            if (b.score !== a.score) return b.score - a.score;
+
+            const aLatency = Number(a.result?.updateConnectivity?.latencyMs) || Infinity;
+            const bLatency = Number(b.result?.updateConnectivity?.latencyMs) || Infinity;
+            if (aLatency !== bLatency) return aLatency - bLatency;
+
+            const speed = resultSpeed(b.result) - resultSpeed(a.result);
+            if (speed !== 0) return speed;
+
+            return String(a.result.id).localeCompare(String(b.result.id));
+        })
+        .slice(0, limit);
+
+    return selected.map(({ result, score, endpointKey }) => ({
+        id: result.id,
+        remarks: `${extractFlag(result.remarks) || countryFlag(result.country) || "🇪🇺"} 🏳️ LTE ${result.country || "Europe"}`.trim(),
+        country: result.country || "Europe",
+        whiteList: true,
+        link: String(result.link || "").trim(),
+        ...(result.configFile ? { configFile: result.configFile, sourceKind: result.sourceKind || "json" } : {}),
+        score: Number(score.toFixed(6)),
+        stabilityScore: Number((Number(history[result.linkFingerprint]?.stabilityScore) || (result.ok ? 0.75 : 0)).toFixed(4)),
+        consecutiveHealthyCycles: Number(history[result.linkFingerprint]?.consecutiveHealthyCycles) || 1,
+        successRate: Number(history[result.linkFingerprint]?.successRate) || 1,
+        recentFailures: Number(history[result.linkFingerprint]?.recentFailures) || 0,
+        serviceLatencyMs: Number(result?.updateConnectivity?.latencyMs) || Number(history[result.linkFingerprint]?.lastServiceLatencyMs) || 0,
+        speedKbps: Number(resultSpeed(result)) || Number(history[result.linkFingerprint]?.lastKbps) || 0,
+        currentHealth: Boolean(result.ok),
+    }));
+}
 function getProtocol(link) {
     return String(link)
         .split("://")[0]
