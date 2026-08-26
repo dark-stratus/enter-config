@@ -591,12 +591,6 @@ async function updateHealthHistory(results) {
 }
 
 function selectUpdateVpnPool(healthResults, history, limit = 10) {
-    const currentPassing = healthResults.filter(result =>
-        result?.ok && result?.whiteList && result?.linkFingerprint
-    );
-
-    if (currentPassing.length === 0) return [];
-
     const eligible = healthResults.filter(result => {
         if (!result?.whiteList || !result?.linkFingerprint || !result?.item?.link) {
             return false;
