@@ -885,7 +885,7 @@ async function readState() {
 
 
 
-async function getHappClientIdentity(url) {
+async function getHappClientIdentity(url, activeUrlFingerprints = null) {
   const state = await readState();
 
   if (
@@ -896,6 +896,34 @@ async function getHappClientIdentity(url) {
   }
 
   const fingerprint = fingerprintUrl(url);
+
+  // Source URLs can be replaced over time. Keep assignments only for URLs
+  // that are part of the current configured source set so retired URLs
+  // release their dedicated device profiles for newly added URLs.
+  if (activeUrlFingerprints instanceof Set) {
+    let removedAssignments = 0;
+
+    for (const assignedFingerprint of Object.keys(
+      state.sourceDeviceAssignments
+    )) {
+      if (!activeUrlFingerprints.has(assignedFingerprint)) {
+        delete state.sourceDeviceAssignments[assignedFingerprint];
+        removedAssignments += 1;
+      }
+    }
+
+    if (removedAssignments > 0) {
+      await writeAtomic(
+        STATE_FILE,
+        `${JSON.stringify(state, null, 2)}\n`
+      );
+
+      console.log(
+        `Released ${removedAssignments} stale Source device profile assignment(s).`
+      );
+    }
+  }
+
   const existingIndex = Number(
     state.sourceDeviceAssignments[fingerprint]
   );
@@ -1179,6 +1207,10 @@ async function fetchSourceSources() {
     );
   }
 
+  const activeUrlFingerprints = new Set(
+    [...uniqueConfiguredUrls].map(url => fingerprintUrl(url))
+  );
+
   const fetchQueue = [
     ...regularRequests.map(({ url, slot, label }, index) => ({
       url,
@@ -1204,7 +1236,7 @@ async function fetchSourceSources() {
       request.scope === "whitelist" &&
       /(?:githubusercontent\.com|github\.com)/i.test(request.url)
         ? SOURCE_DEVICE_PROFILES[0]
-        : await getHappClientIdentity(request.url);
+        : await getHappClientIdentity(request.url, activeUrlFingerprints);
 
     console.log(
       `${request.label}: device=${clientIdentity.deviceModel}, ` +
