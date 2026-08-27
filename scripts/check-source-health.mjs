@@ -3797,51 +3797,51 @@ async function main() {
     );
 
     // Human-facing source stats: exactly three numbers per source.
-    // taken = fetched entries, alive = health-check passes, final = entries
-    // that survived selection and are present in the final managed index.
-    const finalHealthIds = new Set(
-        normalizedIndex
-            .filter(item => isManagedSourceId(item?.id))
-            .map(item => String(item.id))
-    );
-    const healthById = new Map(
-        healthResults.map(item => [String(item.id), item])
-    );
-    const sourceNames = new Set([
-        ...Object.keys(report.sourceCandidateCounts || {}),
-        ...Object.keys(report.healthCheckBySource || {}),
+    // `slot` is the processing slot (the LAST number in SOURCE_URL..._<slot>).
+    // The prefix is retained as the operator-facing source identifier.
+    const sourceLabels = new Set([
         ...(report.sourceFetches || []).map(row => row.label),
+        ...Object.keys(report.healthCheckBySource || {}),
+        ...Object.keys(report.sourceCandidateCounts || {}),
     ]);
-    const sourceStatsBySlot = new Map();
-    for (const source of [...sourceNames].filter(Boolean).filter(key => key !== "retained" && key !== "retained/manual")) {
-        const match = /Source URL (\d+)/i.exec(source);
-        if (!match) continue;
 
-        const slot = Number(match[1]);
-        const fetchRow = (report.sourceFetches || []).find(row => row.label === source);
-        const fetched = Number(
-            report.sourceCandidateCounts?.[source]?.raw ?? fetchRow?.rawCount ?? 0
-        ) || 0;
-        const alive = Number(report.healthCheckBySource?.[source]?.passed || 0);
-        const final = healthResults.filter(item =>
-            item.source === source && item.ok && finalHealthIds.has(String(item.id))
-        ).length;
+    const sourceStats = [...sourceLabels]
+        .filter(Boolean)
+        .filter(label => label !== "retained" && label !== "retained/manual")
+        .map(label => {
+            const match = /^SOURCE_URL(?:([0-9]+))?_(\d+)$/i.exec(label);
+            const slot = match ? Number(match[2]) : null;
+            const origin = match?.[1] ? Number(match[1]) : null;
+            const fetchRow = (report.sourceFetches || []).find(row => row.label === label);
+            const fetched = Number(
+                report.sourceCandidateCounts?.[label]?.raw ??
+                fetchRow?.rawCount ??
+                0
+            ) || 0;
+            const alive = Number(report.healthCheckBySource?.[label]?.passed || 0);
+            const final = normalizedIndex.filter(item =>
+                isManagedSourceId(item?.id) &&
+                item.source === label
+            ).length;
 
-        sourceStatsBySlot.set(slot, {
-            slot,
-            source,
-            name: SOURCE_REGISTRY[slot] || "",
-            fetched,
-            alive,
-            final,
-            failedToFetch: fetchRow?.status === "failed",
+            return {
+                label,
+                slot,
+                origin,
+                name: origin && SOURCE_REGISTRY[origin] ? SOURCE_REGISTRY[origin] : "",
+                fetched,
+                alive,
+                final,
+                failedToFetch: fetchRow?.status === "failed",
+            };
+        })
+        .sort((a, b) => {
+            const as = Number.isFinite(a.slot) ? a.slot : 999;
+            const bs = Number.isFinite(b.slot) ? b.slot : 999;
+            if (as !== bs) return as - bs;
+            return a.label.localeCompare(b.label);
         });
-    }
 
-    // Keep the human-facing report aligned with the fixed 40-slot scheme.
-    // Empty slots are omitted; every configured slot appears exactly once.
-    const sourceStats = [...sourceStatsBySlot.values()]
-        .sort((a, b) => a.slot - b.slot);
     report.sourceStats = sourceStats;
 
     const readmeLines = [
@@ -3849,27 +3849,40 @@ async function main() {
         "",
         `Последнее обновление: ${new Date().toISOString()}`,
         "",
-        "Статистика по каждому источнику: **взяли → живы → в итоговом пуле**.",
+        "Статистика **по каждому источнику отдельно**: **взяли → живы → в итоговом пуле**.",
         "",
-        "| Источник | Взяли | Живы | В итоговом пуле | Состояние |",
-        "|---|---:|---:|---:|---|",
+        `🧠 Из памяти предыдущего пула сохранено: **${report.retainedFromPreviousPool ?? 0}** серверов.`,
+        "",
+        "## Источники",
+        "",
+        "| Источник | Слот | Взяли | Живы | В итоговом пуле | Состояние |",
+        "|---|---:|---:|---:|---:|---|",
     ];
+
     for (const row of sourceStats) {
         const failed = row.failedToFetch;
         const attention = failed || (row.fetched > 0 && row.alive === 0) ? "⚠️" : "✅";
-        const name = row.name ? ` — ${row.name}` : "";
-        readmeLines.push(`| **SOURCE_URL_${row.slot}**${name} | ${row.fetched} | ${row.alive} | ${row.final} | ${attention} |`);
+        const name = row.name ? ` (${row.name})` : "";
+        const slot = Number.isFinite(row.slot) ? row.slot : "?";
+        readmeLines.push(
+            `| **${row.label}**${name} | ${slot} | ${row.fetched} | ${row.alive} | ${row.final} | ${attention} |`
+        );
     }
+
+    if (!sourceStats.length) {
+        readmeLines.push("| — | — | 0 | 0 | 0 | ⚠️ нет настроенных источников |");
+    }
+
     readmeLines.push(
         "",
-        "## Раскладка источников",
+        "## Правила слотов",
         "",
-        "**SOURCE_URL_1–20** — обычные источники.",
-        "**SOURCE_URL_21–40** — whitelist-источники.",
+        "**Слоты 1–8** — обычные источники.",
+        "**Слоты 9–15** — whitelist / LTE-источники.",
         "",
-        "Один секрет может содержать одну ссылку или несколько ссылок, разделённых переводом строки, запятой или `;`.",
+        "У имени секрета может быть произвольный номер источника перед последним `_`: например, `SOURCE_URL1_1`, `SOURCE_URL15_1`, `SOURCE_URL20_2`. **Последнее число — единственное, которое определяет слот.**",
         "",
-        "Названия известных источников указаны рядом с их слотами. Для остальных используется только номер секрета, чтобы URL и содержимое секрета не попадали в репозиторий.",
+        "Для обычных источников дополнительно работает автоматическое распознавание whitelist по текущим ключевым словам: если найден такой конкретный сервер, он уходит в LTE-пул сам по себе; весь источник целиком whitelist-источником не становится.",
     );
     await fs.writeFile(path.join(ROOT, "README.md"), `${readmeLines.join("\n")}\n`, "utf8");
 
