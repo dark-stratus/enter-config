@@ -14,17 +14,13 @@ const UPDATE_STATUS_FILE = path.join(ROOT, "config", "source-update-status.json"
 const REGULAR_LIMIT = Number.POSITIVE_INFINITY;
 const AUTO_WHITE_LIST_LIMIT = Number.POSITIVE_INFINITY;
 
-// SOURCE_URL_1..20 are regular sources. SOURCE_URL_21..40 are the
-// dedicated whitelist sources. All external URLs live in GitHub Secrets;
-// no third-party source URL is hardcoded in this repository.
-const REGULAR_SECRET_SLOT_START = 1;
-const REGULAR_SECRET_SLOT_END = 20;
-const WHITE_LIST_SECRET_SLOT_START = 21;
-const WHITE_LIST_SECRET_SLOT_END = 40;
-const WHITE_LIST_SECRET_SLOTS = Array.from(
-  { length: WHITE_LIST_SECRET_SLOT_END - WHITE_LIST_SECRET_SLOT_START + 1 },
-  (_, index) => WHITE_LIST_SECRET_SLOT_START + index
-);
+// 15 logical source slots: 1-8 regular, 9-15 whitelist.
+// External URLs are supplied by GitHub Secrets through the workflow.
+const SOURCE_SLOT_START = 1;
+const SOURCE_SLOT_END = 15;
+const REGULAR_SLOT_END = 8;
+const WHITE_LIST_SLOT_START = 9;
+const WHITE_LIST_SLOT_END = 15;
 
 const FETCH_TIMEOUT_MS = 60_000;
 const FETCH_RETRIES = 4;
@@ -1137,10 +1133,17 @@ async function fetchSourceSources() {
     };
   }
 
+  // Exactly 15 logical source slots are supported by the dedicated Happ
+  // client identities: slots 1-8 are regular, slots 9-15 are whitelist.
+  // The workflow maps each logical slot to a human-named GitHub Secret such
+  // as SOURCE_URL14_3. The final `_3` is the processing slot; `14` is only
+  // an origin label for the operator.
   const configuredRegularUrls = [];
-  for (let slot = REGULAR_SECRET_SLOT_START; slot <= REGULAR_SECRET_SLOT_END; slot += 1) {
-    for (const url of parseConfiguredUrls(process.env[`SOURCE_URL_${slot}`])) {
-      configuredRegularUrls.push({ url, slot });
+  for (let slot = SOURCE_SLOT_START; slot <= REGULAR_SLOT_END; slot += 1) {
+    const secretValue = String(process.env[`SOURCE_SLOT_${slot}`] || '').trim();
+    const slotLabel = String(process.env[`SOURCE_SLOT_LABEL_${slot}`] || `SOURCE_SLOT_${slot}`).trim();
+    for (const url of parseConfiguredUrls(secretValue)) {
+      configuredRegularUrls.push({ url, slot, label: slotLabel });
     }
   }
 
@@ -1151,24 +1154,41 @@ async function fetchSourceSources() {
     return true;
   });
 
-  const configuredWhiteListRequests = WHITE_LIST_SECRET_SLOTS.flatMap(slot =>
-    parseConfiguredUrls(process.env[`SOURCE_URL_${slot}`]).map(url => ({ url, slot }))
-  );
+  const configuredWhiteListRequests = [];
+  for (let slot = WHITE_LIST_SLOT_START; slot <= WHITE_LIST_SLOT_END; slot += 1) {
+    const secretValue = String(process.env[`SOURCE_SLOT_${slot}`] || '').trim();
+    const slotLabel = String(process.env[`SOURCE_SLOT_LABEL_${slot}`] || `SOURCE_SLOT_${slot}`).trim();
+    for (const url of parseConfiguredUrls(secretValue)) {
+      configuredWhiteListRequests.push({ url, slot, label: slotLabel });
+    }
+  }
 
   const sources = [];
   const failures = [];
   const sourceFetches = [];
 
+  const uniqueConfiguredUrls = new Set([
+    ...regularRequests.map(item => item.url),
+    ...configuredWhiteListRequests.map(item => item.url),
+  ]);
+
+  if (uniqueConfiguredUrls.size > SOURCE_SLOT_END) {
+    throw new Error(
+      `Configured ${uniqueConfiguredUrls.size} unique source URLs, but the updater supports at most ${SOURCE_SLOT_END}. ` +
+      `Use one source URL per logical slot.`
+    );
+  }
+
   const fetchQueue = [
-    ...regularRequests.map(({ url, slot }, index) => ({
+    ...regularRequests.map(({ url, slot, label }, index) => ({
       url,
-      label: `Source URL ${slot}`,
+      label,
       scope: "regular",
       index,
     })),
-    ...configuredWhiteListRequests.map(({ url, slot }, index) => ({
+    ...configuredWhiteListRequests.map(({ url, slot, label }, index) => ({
       url,
-      label: `Source URL ${slot}`,
+      label,
       scope: "whitelist",
       index,
     })),
