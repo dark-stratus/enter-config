@@ -14,14 +14,10 @@ const UPDATE_STATUS_FILE = path.join(ROOT, "config", "source-update-status.json"
 const REGULAR_LIMIT = Number.POSITIVE_INFINITY;
 const AUTO_WHITE_LIST_LIMIT = Number.POSITIVE_INFINITY;
 
-const BUILTIN_WHITE_LIST_SOURCES = [
-  "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/Vless-Reality-White-Lists-Rus-Mobile.txt",
-  "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/Vless-Reality-White-Lists-Rus-Mobile-2.txt",
-  "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/WHITE-SNI-RU-all.txt",
-  "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/WHITE-CIDR-RU-checked.txt",
-  "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/WHITE-CIDR-RU-all.txt",
-  "https://raw.githubusercontent.com/zieng2/wl/main/vless_universal.txt",
-];
+// SOURCE_URL_1..18 are regular sources. SOURCE_URL_19..24 are the
+// dedicated whitelist sources. All external URLs live in GitHub Secrets;
+// no third-party source URL is hardcoded in this repository.
+const WHITE_LIST_SECRET_SLOTS = [19, 20, 21, 22, 23, 24];
 
 const FETCH_TIMEOUT_MS = 60_000;
 const FETCH_RETRIES = 4;
@@ -1135,7 +1131,7 @@ async function fetchSourceSources() {
   }
 
   const configuredRegularUrls = [];
-  for (let slot = 1; slot <= 15; slot += 1) {
+  for (let slot = 1; slot <= 18; slot += 1) {
     for (const url of parseConfiguredUrls(process.env[`SOURCE_URL_${slot}`])) {
       configuredRegularUrls.push({ url, slot });
     }
@@ -1148,10 +1144,10 @@ async function fetchSourceSources() {
     return true;
   });
 
-  const dedicatedWhiteListUrls = [
-    ...parseUrlList(process.env.SOURCE_WHITE_LIST_URLS),
-    ...BUILTIN_WHITE_LIST_SOURCES,
-  ].filter((url, index, list) => list.indexOf(url) === index);
+  const configuredWhiteListRequests = WHITE_LIST_SECRET_SLOTS.flatMap(slot =>
+    parseConfiguredUrls(process.env[`SOURCE_URL_${slot}`]).map(url => ({ url, slot }))
+  );
+  const legacyWhiteListUrls = parseUrlList(process.env.SOURCE_WHITE_LIST_URLS);
 
   const sources = [];
   const failures = [];
@@ -1164,7 +1160,13 @@ async function fetchSourceSources() {
       scope: "regular",
       index,
     })),
-    ...dedicatedWhiteListUrls.map((url, index) => ({
+    ...configuredWhiteListRequests.map(({ url, slot }, index) => ({
+      url,
+      label: `Source URL ${slot}`,
+      scope: "whitelist",
+      index,
+    })),
+    ...legacyWhiteListUrls.map((url, index) => ({
       url,
       label: `Source White List source ${index + 1}`,
       scope: "whitelist",

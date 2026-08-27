@@ -46,6 +46,20 @@ const COUNTRY_ALIASES = {
     "российская федерация": "Russia",
 };
 
+
+const SOURCE_REGISTRY = {
+    15: "igareck/vpn-configs-for-russia — BLACK_VLESS_RUS_mobile.txt (TOP mobile VLESS)",
+    16: "Baarcuda/vpn-configs — top100.txt (Top 100 fastest configs)",
+    17: "mehrtat/vless-collector — sub.txt (xray-tested VLESS collector)",
+    18: "morpheusadam/v2ray-config — subs/bundles/best.txt (measured best bundle)",
+    19: "igareck/vpn-configs-for-russia — Vless-Reality-White-Lists-Rus-Mobile.txt (whitelist)",
+    20: "igareck/vpn-configs-for-russia — Vless-Reality-White-Lists-Rus-Mobile-2.txt (whitelist)",
+    21: "igareck/vpn-configs-for-russia — WHITE-SNI-RU-all.txt (whitelist)",
+    22: "igareck/vpn-configs-for-russia — WHITE-CIDR-RU-checked.txt (whitelist)",
+    23: "igareck/vpn-configs-for-russia — WHITE-CIDR-RU-all.txt (whitelist)",
+    24: "zieng2/wl — vless_universal.txt (whitelist)",
+};
+
 function normalizeCountryName(value = "") {
     const raw = String(value || "")
         .trim();
@@ -3781,6 +3795,91 @@ async function main() {
     report.healthCheckByCountry = Object.fromEntries(
         [...byCountry.entries()].map(([key, value]) => [key, value])
     );
+
+    // Human-facing source stats: exactly three numbers per source.
+    // taken = fetched entries, alive = health-check passes, final = entries
+    // that survived selection and are present in the final managed index.
+    const finalHealthIds = new Set(
+        normalizedIndex
+            .filter(item => isManagedSourceId(item?.id))
+            .map(item => String(item.id))
+    );
+    const healthById = new Map(
+        healthResults.map(item => [String(item.id), item])
+    );
+    const sourceNames = new Set([
+        ...Object.keys(report.sourceCandidateCounts || {}),
+        ...Object.keys(report.healthCheckBySource || {}),
+        ...(report.sourceFetches || []).map(row => row.label),
+    ]);
+    const sourceStats = [];
+    for (const source of [...sourceNames].filter(Boolean).filter(key => key !== "retained" && key !== "retained/manual")) {
+        const match = /Source URL (\d+)/i.exec(source);
+        const slot = match ? Number(match[1]) : null;
+        const fetchRow = (report.sourceFetches || []).find(row => row.label === source);
+        const fetched = Number(
+            report.sourceCandidateCounts?.[source]?.raw ?? fetchRow?.rawCount ?? 0
+        ) || 0;
+        const alive = Number(report.healthCheckBySource?.[source]?.passed || 0);
+        const final = healthResults.filter(item =>
+            item.source === source && item.ok && finalHealthIds.has(String(item.id))
+        ).length;
+        sourceStats.push({
+            slot,
+            source,
+            name: slot && SOURCE_REGISTRY[slot] ? SOURCE_REGISTRY[slot] : source,
+            fetched,
+            alive,
+            final,
+            failedToFetch: fetchRow?.status === "failed",
+        });
+    }
+    sourceStats.sort((a, b) => (a.slot || 999) - (b.slot || 999));
+    report.sourceStats = sourceStats;
+
+    const readmeLines = [
+        "# VPN source report",
+        "",
+        `Последнее обновление: ${new Date().toISOString()}`,
+        "",
+        "Статистика по каждому источнику: **взяли → живы → в итоговом пуле**.",
+        "",
+        "| Источник | Взяли | Живы | В итоговом пуле | Состояние |",
+        "|---|---:|---:|---:|---|",
+    ];
+    for (const row of sourceStats) {
+        const failed = row.failedToFetch;
+        const attention = failed || (row.fetched > 0 && row.alive === 0) ? "⚠️" : "✅";
+        readmeLines.push(`| **${row.source}** — ${row.name} | ${row.fetched} | ${row.alive} | ${row.final} | ${attention} |`);
+    }
+    readmeLines.push(
+        "",
+        "## Источники 1–14",
+        "",
+        "Существующие источники проекта. Их URL остаются только в GitHub Secrets; слоты не переименовывались.",
+        "",
+        "## Новые источники",
+        "",
+        "15 — igareck/vpn-configs-for-russia — `BLACK_VLESS_RUS_mobile.txt`.",
+        "16 — Baarcuda/vpn-configs — `top100.txt`.",
+        "17 — mehrtat/vless-collector — `sub.txt`.",
+        "18 — morpheusadam/v2ray-config — `subs/bundles/best.txt`.",
+        "",
+        "## Whitelist-источники",
+        "",
+        "19 — igareck — `Vless-Reality-White-Lists-Rus-Mobile.txt`.",
+        "20 — igareck — `Vless-Reality-White-Lists-Rus-Mobile-2.txt`.",
+        "21 — igareck — `WHITE-SNI-RU-all.txt`.",
+        "22 — igareck — `WHITE-CIDR-RU-checked.txt`.",
+        "23 — igareck — `WHITE-CIDR-RU-all.txt`.",
+        "24 — zieng2/wl — `vless_universal.txt`.",
+        "",
+        "### Secrets",
+        "",
+        "`SOURCE_URL_1` … `SOURCE_URL_18` — обычные источники; `SOURCE_URL_19` … `SOURCE_URL_24` — whitelist.",
+        "Публичные URL не хранятся в коде репозитория.",
+    );
+    await fs.writeFile(path.join(ROOT, "README.md"), `${readmeLines.join("\n")}\n`, "utf8");
 
     if (process.env.GITHUB_STEP_SUMMARY) {
         const lines = [
