@@ -419,12 +419,6 @@ jobs:
           );
           NODE
 
-          echo "Resolved source slots:"
-          for slot in $(seq 1 15); do
-            label_var="SOURCE_SLOT_LABEL_${slot}"
-            echo "slot ${slot}: ${!label_var}"
-          done
-
       - name: Verify source URL diagnostics
         shell: bash
         run: |
@@ -440,8 +434,7 @@ jobs:
           }
 
           console.log(
-            `Secret diagnostics ready: ${data.configuredSlots}/15 slots, ` +
-            `${data.uniqueCount} unique URL fingerprints`
+            `Secret diagnostics ready: ${data.configuredSlots}/15 slots`
           );
           NODE
 
