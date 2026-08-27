@@ -1154,7 +1154,6 @@ async function fetchSourceSources() {
   const configuredWhiteListRequests = WHITE_LIST_SECRET_SLOTS.flatMap(slot =>
     parseConfiguredUrls(process.env[`SOURCE_URL_${slot}`]).map(url => ({ url, slot }))
   );
-  const legacyWhiteListUrls = parseUrlList(process.env.SOURCE_WHITE_LIST_URLS);
 
   const sources = [];
   const failures = [];
@@ -1170,12 +1169,6 @@ async function fetchSourceSources() {
     ...configuredWhiteListRequests.map(({ url, slot }, index) => ({
       url,
       label: `Source URL ${slot}`,
-      scope: "whitelist",
-      index,
-    })),
-    ...legacyWhiteListUrls.map((url, index) => ({
-      url,
-      label: `Source White List source ${index + 1}`,
       scope: "whitelist",
       index,
     })),

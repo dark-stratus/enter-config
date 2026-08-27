@@ -3812,10 +3812,12 @@ async function main() {
         ...Object.keys(report.healthCheckBySource || {}),
         ...(report.sourceFetches || []).map(row => row.label),
     ]);
-    const sourceStats = [];
+    const sourceStatsBySlot = new Map();
     for (const source of [...sourceNames].filter(Boolean).filter(key => key !== "retained" && key !== "retained/manual")) {
         const match = /Source URL (\d+)/i.exec(source);
-        const slot = match ? Number(match[1]) : null;
+        if (!match) continue;
+
+        const slot = Number(match[1]);
         const fetchRow = (report.sourceFetches || []).find(row => row.label === source);
         const fetched = Number(
             report.sourceCandidateCounts?.[source]?.raw ?? fetchRow?.rawCount ?? 0
@@ -3824,17 +3826,22 @@ async function main() {
         const final = healthResults.filter(item =>
             item.source === source && item.ok && finalHealthIds.has(String(item.id))
         ).length;
-        sourceStats.push({
+
+        sourceStatsBySlot.set(slot, {
             slot,
             source,
-            name: slot && SOURCE_REGISTRY[slot] ? SOURCE_REGISTRY[slot] : source,
+            name: SOURCE_REGISTRY[slot] || "",
             fetched,
             alive,
             final,
             failedToFetch: fetchRow?.status === "failed",
         });
     }
-    sourceStats.sort((a, b) => (a.slot || 999) - (b.slot || 999));
+
+    // Keep the human-facing report aligned with the fixed 40-slot scheme.
+    // Empty slots are omitted; every configured slot appears exactly once.
+    const sourceStats = [...sourceStatsBySlot.values()]
+        .sort((a, b) => a.slot - b.slot);
     report.sourceStats = sourceStats;
 
     const readmeLines = [
@@ -3850,29 +3857,19 @@ async function main() {
     for (const row of sourceStats) {
         const failed = row.failedToFetch;
         const attention = failed || (row.fetched > 0 && row.alive === 0) ? "⚠️" : "✅";
-        readmeLines.push(`| **${row.source}** — ${row.name} | ${row.fetched} | ${row.alive} | ${row.final} | ${attention} |`);
+        const name = row.name ? ` — ${row.name}` : "";
+        readmeLines.push(`| **SOURCE_URL_${row.slot}**${name} | ${row.fetched} | ${row.alive} | ${row.final} | ${attention} |`);
     }
     readmeLines.push(
         "",
         "## Раскладка источников",
         "",
-        "`SOURCE_URL_1` … `SOURCE_URL_20` — обычные источники.",
-        "`SOURCE_URL_21` … `SOURCE_URL_40` — whitelist-источники.",
+        "**SOURCE_URL_1–20** — обычные источники.",
+        "**SOURCE_URL_21–40** — whitelist-источники.",
         "",
-        "Известные источники:",
+        "Один секрет может содержать одну ссылку или несколько ссылок, разделённых переводом строки, запятой или `;`.",
         "",
-        "15 — igareck/vpn-configs-for-russia — `BLACK_VLESS_RUS_mobile.txt`.",
-        "16 — Baarcuda/vpn-configs — `top100.txt`.",
-        "17 — mehrtat/vless-collector — `sub.txt`.",
-        "18 — morpheusadam/v2ray-config — `subs/bundles/best.txt`.",
-        "21 — igareck/vpn-configs-for-russia — `Vless-Reality-White-Lists-Rus-Mobile.txt`.",
-        "22 — igareck/vpn-configs-for-russia — `Vless-Reality-White-Lists-Rus-Mobile-2.txt`.",
-        "23 — igareck/vpn-configs-for-russia — `WHITE-SNI-RU-all.txt`.",
-        "24 — igareck/vpn-configs-for-russia — `WHITE-CIDR-RU-checked.txt`.",
-        "25 — igareck/vpn-configs-for-russia — `WHITE-CIDR-RU-all.txt`.",
-        "26 — zieng2/wl — `vless_universal.txt`.",
-        "",
-        "Публичные URL не хранятся в коде репозитория.",
+        "Названия известных источников указаны рядом с их слотами. Для остальных используется только номер секрета, чтобы URL и содержимое секрета не попадали в репозиторий.",
     );
     await fs.writeFile(path.join(ROOT, "README.md"), `${readmeLines.join("\n")}\n`, "utf8");
 
