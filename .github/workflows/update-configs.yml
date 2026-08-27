@@ -201,7 +201,6 @@ jobs:
 
       - name: Update VPN configs
         env:
-          SOURCE_WHITE_LIST_URLS: ${{ secrets.KEYLINE_WHITE_LIST_URLS }}
           SOURCE_URL_1: ${{ secrets.SOURCE_URL_1 || secrets.KEYLINE_URL_1 }}
           SOURCE_URL_2: ${{ secrets.SOURCE_URL_2 || secrets.KEYLINE_URL_2 }}
           SOURCE_URL_3: ${{ secrets.SOURCE_URL_3 || secrets.KEYLINE_URL_3 }}
