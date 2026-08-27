@@ -14,10 +14,17 @@ const UPDATE_STATUS_FILE = path.join(ROOT, "config", "source-update-status.json"
 const REGULAR_LIMIT = Number.POSITIVE_INFINITY;
 const AUTO_WHITE_LIST_LIMIT = Number.POSITIVE_INFINITY;
 
-// SOURCE_URL_1..18 are regular sources. SOURCE_URL_19..24 are the
+// SOURCE_URL_1..20 are regular sources. SOURCE_URL_21..40 are the
 // dedicated whitelist sources. All external URLs live in GitHub Secrets;
 // no third-party source URL is hardcoded in this repository.
-const WHITE_LIST_SECRET_SLOTS = [19, 20, 21, 22, 23, 24];
+const REGULAR_SECRET_SLOT_START = 1;
+const REGULAR_SECRET_SLOT_END = 20;
+const WHITE_LIST_SECRET_SLOT_START = 21;
+const WHITE_LIST_SECRET_SLOT_END = 40;
+const WHITE_LIST_SECRET_SLOTS = Array.from(
+  { length: WHITE_LIST_SECRET_SLOT_END - WHITE_LIST_SECRET_SLOT_START + 1 },
+  (_, index) => WHITE_LIST_SECRET_SLOT_START + index
+);
 
 const FETCH_TIMEOUT_MS = 60_000;
 const FETCH_RETRIES = 4;
@@ -1131,7 +1138,7 @@ async function fetchSourceSources() {
   }
 
   const configuredRegularUrls = [];
-  for (let slot = 1; slot <= 18; slot += 1) {
+  for (let slot = REGULAR_SECRET_SLOT_START; slot <= REGULAR_SECRET_SLOT_END; slot += 1) {
     for (const url of parseConfiguredUrls(process.env[`SOURCE_URL_${slot}`])) {
       configuredRegularUrls.push({ url, slot });
     }
