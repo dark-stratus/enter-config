@@ -1113,6 +1113,35 @@ function fingerprintUrl(url) {
   return crypto.createHash("sha256").update(String(url)).digest("hex").slice(0, 12);
 }
 
+function formatSourceOrigin(url = "") {
+  const raw = String(url || "").trim();
+  if (!raw) return "—";
+
+  try {
+    const parsed = new URL(raw);
+    const host = parsed.hostname.toLowerCase();
+    const pathParts = parsed.pathname.split("/").filter(Boolean);
+
+    if (host === "raw.githubusercontent.com" && pathParts.length >= 4) {
+      return `${pathParts[0]}/${pathParts[1]} — ${pathParts.slice(3).join("/").split("/").pop()}`;
+    }
+
+    if (host === "github.com") {
+      const rawIndex = pathParts.indexOf("raw");
+      if (pathParts.length >= 4 && rawIndex >= 2) {
+        return `${pathParts[0]}/${pathParts[1]} — ${pathParts.slice(rawIndex + 2).join("/").split("/").pop()}`;
+      }
+      if (pathParts.length >= 2) {
+        return `${pathParts[0]}/${pathParts[1]}`;
+      }
+    }
+
+    return host;
+  } catch {
+    return "—";
+  }
+}
+
 
 async function fetchSourceSources() {
   const clientIdentity = SOURCE_DEVICE_PROFILES[0];
@@ -1257,6 +1286,7 @@ async function fetchSourceSources() {
         scope: request.scope,
         status: "ok",
         urlFingerprint,
+        originName: formatSourceOrigin(request.url),
         durationMs: Date.now() - startedAt,
         payloadKind: source.payloadKind,
         rawCount: Array.isArray(source.data)
@@ -1278,6 +1308,7 @@ async function fetchSourceSources() {
         scope: request.scope,
         status: "failed",
         urlFingerprint,
+        originName: formatSourceOrigin(request.url),
         durationMs: Date.now() - startedAt,
         error: error.message,
       });
@@ -1991,7 +2022,11 @@ function sortEntries(entries) {
   });
 }
 
-function buildRetainedEntries(currentIndex, healthHistory = {}) {
+function buildRetainedEntries(
+  currentIndex,
+  healthHistory = {},
+  previousSourceAttribution = new Map()
+) {
   const retained = [];
 
   for (const item of currentIndex) {
@@ -2028,12 +2063,18 @@ function buildRetainedEntries(currentIndex, healthHistory = {}) {
       }
     }
 
+    const source =
+      String(item?.source || "").trim() ||
+      previousSourceAttribution.get(fingerprintUrl(link)) ||
+      "retained";
+
     retained.push({
       link,
       remarks,
       flag: flag || "🇷🇺",
       country,
       whiteList: isWhiteList,
+      source,
       retained: true,
     });
   }
@@ -2046,10 +2087,11 @@ function mergeWithRetainedEntries(
   freshRegular,
   freshWhiteList,
   currentIndex,
-  healthHistory = {}
+  healthHistory = {},
+  previousSourceAttribution = new Map()
 ) {
   const retained =
-    buildRetainedEntries(currentIndex, healthHistory);
+    buildRetainedEntries(currentIndex, healthHistory, previousSourceAttribution);
   const seen = new Set(
     [...freshRegular, ...freshWhiteList]
       .map(item => String(item?.link || "").trim())
@@ -2222,6 +2264,11 @@ async function buildStagedLinks(
       id,
       remarks: item.remarks,
       link: item.link,
+      ...(item.source ? { source: item.source } : {}),
+      ...(item.retained ? { retained: true } : {}),
+      ...(item.whiteList ? { whiteList: true } : {}),
+      ...(item.country ? { country: item.country } : {}),
+      ...(item.flag ? { flag: item.flag } : {}),
     };
 
     if (item.sourceKind === "json" && item.sourceConfig && typeof item.sourceConfig === "object") {
@@ -2298,6 +2345,8 @@ async function buildStagedLinks(
       remarks: displayRemarks,
       link: displayLink,
       whiteList: true,
+      ...(item.source ? { source: item.source } : {}),
+      ...(item.retained ? { retained: true } : {}),
       ...(item.country ? { country: item.country } : {}),
       ...(item.flag ? { flag: item.flag } : {}),
     };
@@ -2401,6 +2450,25 @@ async function main() {
   const deduped = dedupe(allEntries);
   const currentIndex = await loadIndex();
 
+  // Preserve source attribution across retained servers even when older
+  // index.json files were generated before `source` was persisted there.
+  const previousSourceAttribution = new Map();
+  try {
+    const previousReport = JSON.parse(
+      await fs.readFile(path.join(ROOT, "source-report.json"), "utf8")
+    );
+    const previousCandidateMap = previousReport?.candidateMap || {};
+    for (const [fingerprint, meta] of Object.entries(previousCandidateMap)) {
+      const source = String(meta?.source || "").trim();
+      if (source && source !== "retained" && source !== "retained/manual") {
+        previousSourceAttribution.set(fingerprint, source);
+      }
+    }
+  } catch {
+    // Source report is diagnostics only; missing/corrupt history must not
+    // prevent a normal source refresh.
+  }
+
   const freshRegularEntries = deduped.filter(item => (
     !item.whiteList &&
     !item.isAutoWhiteListCandidate
@@ -2421,7 +2489,8 @@ async function main() {
     freshRegularEntries,
     freshWhiteListEntries,
     currentIndex,
-    healthHistory
+    healthHistory,
+    previousSourceAttribution
   );
 
   const regular = normalizeAndNumber(
@@ -2486,6 +2555,7 @@ async function main() {
       id: `source-regular-${String(index + 1).padStart(2, "0")}`,
       remarks: item.remarks || "",
       link: String(item.link || "").trim(),
+      ...(item.source ? { source: item.source } : {}),
       ...(item.sourceKind === "json" ? {
         configFile: `source-regular-${String(index + 1).padStart(2, "0")}.json`,
         sourceKind: "json",
@@ -2495,6 +2565,7 @@ async function main() {
       id: `source-whitelist-${String(index + 1).padStart(2, "0")}`,
       remarks: item.remarks || "",
       link: String(item.link || "").trim(),
+      ...(item.source ? { source: item.source } : {}),
       ...(item.sourceKind === "json" ? {
         configFile: `source-whitelist-${String(index + 1).padStart(2, "0")}.json`,
         sourceKind: "json",

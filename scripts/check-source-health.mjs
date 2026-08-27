@@ -3351,7 +3351,7 @@ async function main() {
                 sourceKind: item.sourceKind || null,
                 country: resolvedCountry,
                 whiteList: isWhiteList,
-                source: meta.sourceMeta?.source || "retained/manual",
+                source: meta.sourceMeta?.source || item.source || "retained/manual",
                 linkFingerprint: meta.linkFingerprint || "",
                 ok: result.ok,
                 protocol: result.protocol || "",
@@ -3482,6 +3482,8 @@ async function main() {
                 );
                 nextIndex.push({
                     ...item,
+                    ...(result?.source ? { source: result.source } : {}),
+                    ...(result?.retained ? { retained: true } : {}),
                     remarks: result?.country
                         ? `${countryFlag(result.country) || "🇪🇺"} 🏳️ LTE ${result.country}`
                         : item.remarks,
@@ -3493,7 +3495,15 @@ async function main() {
         }
 
         if (selectedRegularIds.has(id)) {
-            nextIndex.push(item);
+            const result = healthResults.find(
+                candidate => candidate.id === id
+            );
+            const source = String(result?.source || item?.source || "").trim();
+            nextIndex.push(
+                source
+                    ? { ...item, source, ...(result?.retained ? { retained: true } : {}) }
+                    : item
+            );
         }
     }
 
@@ -3866,7 +3876,7 @@ async function main() {
                 label,
                 slot,
                 origin,
-                name: formatSourceOrigin(fetchRow?.url),
+                name: fetchRow?.originName || formatSourceOrigin(fetchRow?.url),
                 fetched,
                 alive,
                 final,
