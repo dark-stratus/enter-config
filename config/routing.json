@@ -3,6 +3,34 @@
   "rules": [
     {
       "type": "field",
+      "ip": [
+        "8.8.8.8"
+      ],
+      "outboundTag": "direct",
+      "port": 443
+    },
+    {
+      "type": "field",
+      "ip": [
+        "1.1.1.1"
+      ],
+      "outboundTag": "proxy",
+      "port": 443
+    },
+    {
+      "type": "field",
+      "ip": [
+        "10.0.0.0/8",
+        "172.16.0.0/12",
+        "192.168.0.0/16",
+        "169.254.0.0/16",
+        "224.0.0.0/4",
+        "255.255.255.255/32"
+      ],
+      "outboundTag": "direct"
+    },
+    {
+      "type": "field",
       "domain": [
         "domain:doubleclick.net",
         "domain:googlesyndication.com",
@@ -69,8 +97,87 @@
     {
       "type": "field",
       "domain": [
-        "domain:.ru",
-        "domain:.xn--p1ai",
+        "domain:ru",
+        "domain:xn--p1ai",
+        "domain:yandex.net",
+        "domain:yandex.com",
+        "domain:yastatic.net",
+        "domain:avatars.mds.yandex.net",
+        "domain:avatars.mds.yandex.com",
+        "domain:favicon.yandex.com",
+        "domain:favicon.yandex.net",
+        "domain:browser.yandex.com",
+        "domain:api.browser.yandex.com",
+        "domain:wap.yandex.com",
+        "domain:kiks.yandex.com",
+        "domain:mediafeeds.yandex.com",
+        "domain:mc.yandex.com",
+        "domain:dr2.yandex.net",
+        "domain:dr.yandex.net",
+        "domain:cloud.cdn.yandex.net",
+        "domain:cloud.cdn.yandex.com",
+        "domain:mail.yandex.com",
+        "domain:s3.yandex.net",
+        "domain:zen.yandex.com",
+        "domain:zen.yandex.net",
+        "domain:static-mon.yandex.net",
+        "domain:sync.browser.yandex.net",
+        "domain:storage.ape.yandex.net",
+        "domain:egress.yandex.net",
+        "domain:strm.yandex.net",
+        "domain:vk-portal.net",
+        "domain:queuev4.vk.com",
+        "domain:login.vk.com",
+        "domain:cloud.vk.com",
+        "domain:eh.vk.com",
+        "domain:2gis.com",
+        "domain:ams2-cdn.2gis.com",
+        "domain:disk.2gis.com",
+        "domain:keys.api.2gis.com",
+        "domain:favorites.api.2gis.com",
+        "domain:styles.api.2gis.com",
+        "domain:mapgl.2gis.com",
+        "domain:tile0.maps.2gis.com",
+        "domain:tile1.maps.2gis.com",
+        "domain:tile2.maps.2gis.com",
+        "domain:tile3.maps.2gis.com",
+        "domain:tile4.maps.2gis.com",
+        "domain:avito.st",
+        "domain:www.avito.st",
+        "domain:okko.tv",
+        "domain:www.okko.tv",
+        "domain:api.okko.tv",
+        "domain:cdn.okko.tv",
+        "domain:img.okko.tv",
+        "domain:my.okko.tv",
+        "domain:stream.okko.tv",
+        "domain:auth.okko.tv",
+        "domain:push.okko.tv",
+        "domain:stats.okko.tv",
+        "domain:premier.one",
+        "domain:www.premier.one",
+        "domain:api.premier.one",
+        "domain:cdn.premier.one",
+        "domain:img.premier.one",
+        "domain:static.premier.one",
+        "domain:auth.premier.one",
+        "domain:my.premier.one",
+        "domain:push.premier.one",
+        "domain:stream.premier.one",
+        "domain:lenta.com",
+        "domain:www.lenta.com",
+        "domain:api.lenta.com",
+        "domain:cdn.lenta.com",
+        "domain:img.lenta.com",
+        "domain:static.lenta.com",
+        "domain:m.lenta.com",
+        "domain:supermarket.lenta.com",
+        "domain:gismeteo.com",
+        "domain:www.gismeteo.com",
+        "domain:wildberries.by",
+        "domain:static.nm-static.wbstatic.net",
+        "domain:pptest.userapi.com",
+        "domain:userapi.com",
         "domain:ipinfo.io",
         "domain:24h.tv",
         "domain:2w.ru",
@@ -205,7 +312,6 @@
         "domain:peer2profit.com",
         "domain:phoenix-ca.ru",
         "domain:pochtabank.ru",
-        "domain:premier.one",
         "domain:private-banking.ru",
         "domain:prodcontest.com",
         "domain:psk",
@@ -244,7 +350,6 @@
         "domain:turbopages.org",
         "domain:tutu.ru",
         "domain:tvigle.ru",
-        "domain:userapi.com",
         "domain:vamzakaz.ru",
         "domain:viju.ru",
         "domain:vkusnoitochka.ru",
@@ -295,13 +400,7 @@
         "domain:api-lmn.ru",
         "domain:lemanapro.ru",
         "domain:sputnik.ru",
-        "domain:yadro.ru"
-      ],
-      "outboundTag": "direct"
-    },
-    {
-      "type": "field",
-      "domain": [
+        "domain:yadro.ru",
         "regexp:youla\\.(io|ru)$",
         "regexp:(^|\\.)vk\\.(cc|com|company|design|link|me|ru|team)$",
         "regexp:(^|\\.)mosmetro\\.(ru|tech)$",
@@ -364,26 +463,6 @@
         "regexp:(^|\\.)rusfinance[a-z0-9-]*\\.(ru)$",
         "regexp:(^|\\.)t-[a-z0-9-]*\\.(by|group|ru|su)$",
         "regexp:(^|\\.)jivo[a-z0-9-]*\\.(chat|co.in|co.za|com|com.br|com.co|com.pe|com.tr|de|es|ng|ru)$"
-      ],
-      "outboundTag": "direct"
-    },
-    {
-      "type": "field",
-      "domain": [
-        "domain:.ru",
-        "domain:.xn--p1ai"
-      ],
-      "outboundTag": "direct"
-    },
-    {
-      "type": "field",
-      "ip": [
-        "10.0.0.0/8",
-        "172.16.0.0/12",
-        "192.168.0.0/16",
-        "169.254.0.0/16",
-        "224.0.0.0/4",
-        "255.255.255.255/32"
       ],
       "outboundTag": "direct"
     },
