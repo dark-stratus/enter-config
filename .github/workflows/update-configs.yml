@@ -61,6 +61,22 @@ jobs:
           SOURCE_URL_22: ${{ secrets.SOURCE_URL_22 || secrets.KEYLINE_URL_22 }}
           SOURCE_URL_23: ${{ secrets.SOURCE_URL_23 || secrets.KEYLINE_URL_23 }}
           SOURCE_URL_24: ${{ secrets.SOURCE_URL_24 || secrets.KEYLINE_URL_24 }}
+          SOURCE_URL_25: ${{ secrets.SOURCE_URL_25 || secrets.KEYLINE_URL_25 }}
+          SOURCE_URL_26: ${{ secrets.SOURCE_URL_26 || secrets.KEYLINE_URL_26 }}
+          SOURCE_URL_27: ${{ secrets.SOURCE_URL_27 || secrets.KEYLINE_URL_27 }}
+          SOURCE_URL_28: ${{ secrets.SOURCE_URL_28 || secrets.KEYLINE_URL_28 }}
+          SOURCE_URL_29: ${{ secrets.SOURCE_URL_29 || secrets.KEYLINE_URL_29 }}
+          SOURCE_URL_30: ${{ secrets.SOURCE_URL_30 || secrets.KEYLINE_URL_30 }}
+          SOURCE_URL_31: ${{ secrets.SOURCE_URL_31 || secrets.KEYLINE_URL_31 }}
+          SOURCE_URL_32: ${{ secrets.SOURCE_URL_32 || secrets.KEYLINE_URL_32 }}
+          SOURCE_URL_33: ${{ secrets.SOURCE_URL_33 || secrets.KEYLINE_URL_33 }}
+          SOURCE_URL_34: ${{ secrets.SOURCE_URL_34 || secrets.KEYLINE_URL_34 }}
+          SOURCE_URL_35: ${{ secrets.SOURCE_URL_35 || secrets.KEYLINE_URL_35 }}
+          SOURCE_URL_36: ${{ secrets.SOURCE_URL_36 || secrets.KEYLINE_URL_36 }}
+          SOURCE_URL_37: ${{ secrets.SOURCE_URL_37 || secrets.KEYLINE_URL_37 }}
+          SOURCE_URL_38: ${{ secrets.SOURCE_URL_38 || secrets.KEYLINE_URL_38 }}
+          SOURCE_URL_39: ${{ secrets.SOURCE_URL_39 || secrets.KEYLINE_URL_39 }}
+          SOURCE_URL_40: ${{ secrets.SOURCE_URL_40 || secrets.KEYLINE_URL_40 }}
         run: |
           set -euo pipefail
 
@@ -73,7 +89,7 @@ jobs:
           const rows = [];
           const seen = new Map();
 
-          for (let slot = 1; slot <= 24; slot += 1) {
+          for (let slot = 1; slot <= 40; slot += 1) {
             const name = `SOURCE_URL_${slot}`;
             const raw = String(process.env[name] || "");
             const trimmed = raw.trim();
@@ -158,7 +174,7 @@ jobs:
             JSON.stringify(diagnostic, null, 2) + "\n"
           );
 
-          console.log(`Configured secret slots: ${configuredSlots}/24`);
+          console.log(`Configured secret slots: ${configuredSlots}/40`);
           console.log(`Total configured URL values: ${valueCount}`);
           console.log(`Unique URL fingerprints across slots: ${uniqueCount}`);
           NODE
@@ -173,12 +189,12 @@ jobs:
           const path = "config/source-secret-diagnostics.json";
           const data = JSON.parse(fs.readFileSync(path, "utf8"));
 
-          if (!Array.isArray(data.rows) || data.rows.length !== 24) {
-            throw new Error("source URL diagnostics must contain exactly 24 slots");
+          if (!Array.isArray(data.rows) || data.rows.length !== 40) {
+            throw new Error("source URL diagnostics must contain exactly 40 slots");
           }
 
           console.log(
-            `Secret diagnostics ready: ${data.configuredSlots}/24 slots, ` +
+            `Secret diagnostics ready: ${data.configuredSlots}/40 slots, ` +
             `${data.uniqueCount} unique URL fingerprints`
           );
           NODE
@@ -210,6 +226,22 @@ jobs:
           SOURCE_URL_22: ${{ secrets.SOURCE_URL_22 || secrets.KEYLINE_URL_22 }}
           SOURCE_URL_23: ${{ secrets.SOURCE_URL_23 || secrets.KEYLINE_URL_23 }}
           SOURCE_URL_24: ${{ secrets.SOURCE_URL_24 || secrets.KEYLINE_URL_24 }}
+          SOURCE_URL_25: ${{ secrets.SOURCE_URL_25 || secrets.KEYLINE_URL_25 }}
+          SOURCE_URL_26: ${{ secrets.SOURCE_URL_26 || secrets.KEYLINE_URL_26 }}
+          SOURCE_URL_27: ${{ secrets.SOURCE_URL_27 || secrets.KEYLINE_URL_27 }}
+          SOURCE_URL_28: ${{ secrets.SOURCE_URL_28 || secrets.KEYLINE_URL_28 }}
+          SOURCE_URL_29: ${{ secrets.SOURCE_URL_29 || secrets.KEYLINE_URL_29 }}
+          SOURCE_URL_30: ${{ secrets.SOURCE_URL_30 || secrets.KEYLINE_URL_30 }}
+          SOURCE_URL_31: ${{ secrets.SOURCE_URL_31 || secrets.KEYLINE_URL_31 }}
+          SOURCE_URL_32: ${{ secrets.SOURCE_URL_32 || secrets.KEYLINE_URL_32 }}
+          SOURCE_URL_33: ${{ secrets.SOURCE_URL_33 || secrets.KEYLINE_URL_33 }}
+          SOURCE_URL_34: ${{ secrets.SOURCE_URL_34 || secrets.KEYLINE_URL_34 }}
+          SOURCE_URL_35: ${{ secrets.SOURCE_URL_35 || secrets.KEYLINE_URL_35 }}
+          SOURCE_URL_36: ${{ secrets.SOURCE_URL_36 || secrets.KEYLINE_URL_36 }}
+          SOURCE_URL_37: ${{ secrets.SOURCE_URL_37 || secrets.KEYLINE_URL_37 }}
+          SOURCE_URL_38: ${{ secrets.SOURCE_URL_38 || secrets.KEYLINE_URL_38 }}
+          SOURCE_URL_39: ${{ secrets.SOURCE_URL_39 || secrets.KEYLINE_URL_39 }}
+          SOURCE_URL_40: ${{ secrets.SOURCE_URL_40 || secrets.KEYLINE_URL_40 }}
           FORCE_SOURCE_REFRESH: ${{ (inputs.force == true || github.event_name == 'workflow_dispatch') && '1' || '0' }}
 
         run: node scripts/update-source.mjs
