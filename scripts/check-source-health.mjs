@@ -60,6 +60,44 @@ const SOURCE_REGISTRY = {
     26: "zieng2/wl — vless_universal.txt (whitelist)",
 };
 
+function formatSourceOrigin(url = "") {
+    const raw = String(url || "").trim();
+    if (!raw) return "—";
+
+    try {
+        const parsed = new URL(raw);
+        const host = parsed.hostname.toLowerCase();
+        let path = parsed.pathname.replace(/^\/+|\/+$/g, "");
+
+        if (host === "raw.githubusercontent.com") {
+            const parts = path.split("/").filter(Boolean);
+            if (parts.length >= 4) {
+                const owner = parts[0];
+                const repo = parts[1];
+                const file = parts.slice(3).join("/");
+                const filename = file.split("/").pop() || file;
+                return `${owner}/${repo} — ${filename}`;
+            }
+        }
+
+        if (host === "github.com") {
+            const parts = path.split("/").filter(Boolean);
+            const rawIndex = parts.indexOf("raw");
+            if (parts.length >= 4 && rawIndex >= 2) {
+                const owner = parts[0];
+                const repo = parts[1];
+                const file = parts.slice(rawIndex + 2).join("/");
+                const filename = file.split("/").pop() || file;
+                return `${owner}/${repo} — ${filename}`;
+            }
+        }
+    } catch {
+        // Non-URL or unsupported URL formats are intentionally shown as "—".
+    }
+
+    return "—";
+}
+
 function normalizeCountryName(value = "") {
     const raw = String(value || "")
         .trim();
@@ -3828,7 +3866,7 @@ async function main() {
                 label,
                 slot,
                 origin,
-                name: origin && SOURCE_REGISTRY[origin] ? SOURCE_REGISTRY[origin] : "",
+                name: formatSourceOrigin(fetchRow?.url),
                 fetched,
                 alive,
                 final,
@@ -3855,17 +3893,16 @@ async function main() {
         "",
         "## Источники",
         "",
-        "| Источник | Слот | Взяли | Живы | В итоговом пуле | Состояние |",
-        "|---|---:|---:|---:|---:|---|",
+        "| Секрет | Источник | Слот | Взяли | Живы | В итоговом пуле | Состояние |",
+        "|---|---|---:|---:|---:|---:|---|",
     ];
 
     for (const row of sourceStats) {
         const failed = row.failedToFetch;
         const attention = failed || (row.fetched > 0 && row.alive === 0) ? "⚠️" : "✅";
-        const name = row.name ? ` (${row.name})` : "";
         const slot = Number.isFinite(row.slot) ? row.slot : "?";
         readmeLines.push(
-            `| **${row.label}**${name} | ${slot} | ${row.fetched} | ${row.alive} | ${row.final} | ${attention} |`
+            `| **${row.label}** | ${row.name || "—"} | ${slot} | ${row.fetched} | ${row.alive} | ${row.final} | ${attention} |`
         );
     }
 
