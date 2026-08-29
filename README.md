@@ -1,25 +1,25 @@
 # VPN source report
 
-Последнее обновление: 2026-08-29T15:43:38.648Z
+Последнее обновление: 2026-08-29T19:18:13.891Z
 
 Статистика **по каждому источнику отдельно**: **взяли → живы → в итоговом пуле**.
 
-🧠 Из памяти предыдущего пула сохранено: **154** серверов.
+🧠 Из памяти предыдущего пула сохранено: **158** серверов.
 
 ## Источники
 
 | Секрет | Источник | Слот | Взяли | Живы | В итоговом пуле | Состояние |
 |---|---|---:|---:|---:|---:|---|
-| **SOURCE_URL_1** | rtwo2/FastNodes — verified.txt | 1 | 683 | 346 | 78 | ✅ |
-| **SOURCE_URL2_2** | keylineservices.top | 2 | 207 | 10 | 6 | ✅ |
+| **SOURCE_URL_1** | rtwo2/FastNodes — verified.txt | 1 | 682 | 369 | 70 | ✅ |
+| **SOURCE_URL2_2** | keylineservices.top | 2 | 207 | 9 | 4 | ✅ |
 | **SOURCE_URL4_4** | keylineservices.top | 4 | 88 | 0 | 0 | ⚠️ |
-| **SOURCE_URL_5** | VovaplusEXP/p-configs — vless.txt | 5 | 307 | 193 | 15 | ✅ |
-| **SOURCE_URL5_6** | keylineservices.top | 6 | 16 | 4 | 1 | ✅ |
-| **SOURCE_URL_7** | wlunlocker/vpn-configs — blacklist_vpn1.txt | 7 | 84 | 23 | 7 | ✅ |
-| **SOURCE_URL_8** | igareck/vpn-configs-for-russia — BLACK_VLESS_RUS_mobile.txt | 8 | 150 | 63 | 7 | ✅ |
-| **SOURCE_URL_9** | zieng2/wl — vless_universal.txt | 9 | 130 | 35 | 35 | ✅ |
-| **SOURCE_URL_10** | igareck/vpn-configs-for-russia — WHITE-CIDR-RU-all.txt | 10 | 26 | 0 | 0 | ⚠️ |
-| **SOURCE_URL_11** | igareck/vpn-configs-for-russia — WHITE-SNI-RU-all.txt | 11 | 21 | 7 | 7 | ✅ |
+| **SOURCE_URL_5** | VovaplusEXP/p-configs — vless.txt | 5 | 330 | 247 | 23 | ✅ |
+| **SOURCE_URL5_6** | keylineservices.top | 6 | 16 | 1 | 0 | ✅ |
+| **SOURCE_URL_7** | wlunlocker/vpn-configs — blacklist_vpn1.txt | 7 | 138 | 53 | 11 | ✅ |
+| **SOURCE_URL_8** | igareck/vpn-configs-for-russia — BLACK_VLESS_RUS_mobile.txt | 8 | 133 | 41 | 9 | ✅ |
+| **SOURCE_URL_9** | zieng2/wl — vless_universal.txt | 9 | 151 | 36 | 36 | ✅ |
+| **SOURCE_URL_10** | igareck/vpn-configs-for-russia — WHITE-CIDR-RU-all.txt | 10 | 33 | 6 | 6 | ✅ |
+| **SOURCE_URL_11** | igareck/vpn-configs-for-russia — WHITE-SNI-RU-all.txt | 11 | 44 | 14 | 14 | ✅ |
 
 ## Правила слотов
 
