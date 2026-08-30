@@ -379,6 +379,10 @@ const SPEED_PROVIDER_CONCURRENCY =
 
 const FAST_TOP_N = Math.max(1, Number(process.env.HEALTHCHECK_FAST_TOP_N) || 3);
 const GAMING_TOP_N = Math.max(1, Number(process.env.HEALTHCHECK_GAMING_TOP_N) || 3);
+const GAMING_SERVERS_PER_COUNTRY = Math.max(
+    1,
+    Math.min(2, Number(process.env.HEALTHCHECK_GAMING_SERVERS_PER_COUNTRY) || 2)
+);
 
 const GAMING_MIN_QUALITY_PASSES =
     Math.max(
@@ -2761,26 +2765,81 @@ function selectFeaturedFastServers(results, limit = FAST_TOP_N) {
     return selected;
 }
 
-function selectFeaturedGamingServers(results, excludedCountries = new Set(), limit = GAMING_TOP_N) {
+function selectFeaturedGamingServers(
+    results,
+    excludedCountries = new Set(),
+    limit = GAMING_TOP_N
+) {
     const candidates = results
-        .filter(result => result.ok && !result.whiteList && result.country && result.gaming?.eligible)
+        .filter(
+            result =>
+                result.ok &&
+                !result.whiteList &&
+                result.country &&
+                result.gaming?.eligible
+        )
         .sort((a, b) => {
-            const score = Number(b.gaming?.score || 0) - Number(a.gaming?.score || 0);
+            const score =
+                Number(b.gaming?.score || 0) -
+                Number(a.gaming?.score || 0);
+
             if (score !== 0) return score;
-            const speed = resultSpeed(b) - resultSpeed(a);
-            return speed !== 0 ? speed : resultLatency(a) - resultLatency(b);
+
+            const speed =
+                resultSpeed(b) -
+                resultSpeed(a);
+
+            return speed !== 0
+                ? speed
+                : resultLatency(a) -
+                    resultLatency(b);
         });
 
-    const seenCountries = new Set(excludedCountries);
-    const selected = [];
+    const excluded = new Set(
+        [...excludedCountries].map(country =>
+            String(country).trim().toLowerCase()
+        )
+    );
+
+    // Gaming locations remain country-based: first choose the best countries,
+    // then publish up to two best eligible servers inside each selected country.
+    const groups = new Map();
+
     for (const result of candidates) {
-        const country = String(result.country || '').trim();
-        if (!country || seenCountries.has(country)) continue;
-        seenCountries.add(country);
-        selected.push(result);
-        if (selected.length >= limit) break;
+        const country = String(result.country || "").trim();
+        const countryKey = country.toLowerCase();
+
+        if (!country || excluded.has(countryKey)) continue;
+
+        const bucket = groups.get(countryKey) || {
+            country,
+            members: [],
+        };
+
+        if (bucket.members.length < GAMING_SERVERS_PER_COUNTRY) {
+            bucket.members.push(result);
+        }
+
+        groups.set(countryKey, bucket);
     }
-    return selected;
+
+    const rankedCountries = [...groups.values()]
+        .sort((a, b) => {
+            const aBest = Number(a.members[0]?.gaming?.score || 0);
+            const bBest = Number(b.members[0]?.gaming?.score || 0);
+
+            if (aBest !== bBest) return bBest - aBest;
+
+            const aSpeed = resultSpeed(a.members[0]);
+            const bSpeed = resultSpeed(b.members[0]);
+
+            return bSpeed - aSpeed;
+        })
+        .slice(0, Math.max(1, limit));
+
+    return rankedCountries.flatMap(country =>
+        country.members
+    );
 }
 
 function applyFeaturedRegularBadges(indexEntries, healthResults) {
@@ -3743,6 +3802,8 @@ async function main() {
                 GAMING_MAX_LATENCY_SPREAD_MS,
             minQualityPasses:
                 GAMING_MIN_QUALITY_PASSES,
+            maxServersPerCountry:
+                GAMING_SERVERS_PER_COUNTRY,
         },
         quarantine: {
             durationMinutes: 90,
