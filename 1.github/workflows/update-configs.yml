@@ -1,0 +1,665 @@
+name: Update VPN configs
+
+on:
+  schedule:
+    - cron: "43 * * * *"
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Ignore the 1-hour success interval and refresh now"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: vpn-config-update
+  cancel-in-progress: true
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      - name: Resolve 15 logical source slots
+        shell: bash
+        env:
+          SOURCE_URL1_1: ${{ secrets.SOURCE_URL1_1 }}
+          SOURCE_URL2_1: ${{ secrets.SOURCE_URL2_1 }}
+          SOURCE_URL3_1: ${{ secrets.SOURCE_URL3_1 }}
+          SOURCE_URL4_1: ${{ secrets.SOURCE_URL4_1 }}
+          SOURCE_URL5_1: ${{ secrets.SOURCE_URL5_1 }}
+          SOURCE_URL6_1: ${{ secrets.SOURCE_URL6_1 }}
+          SOURCE_URL7_1: ${{ secrets.SOURCE_URL7_1 }}
+          SOURCE_URL8_1: ${{ secrets.SOURCE_URL8_1 }}
+          SOURCE_URL9_1: ${{ secrets.SOURCE_URL9_1 }}
+          SOURCE_URL10_1: ${{ secrets.SOURCE_URL10_1 }}
+          SOURCE_URL11_1: ${{ secrets.SOURCE_URL11_1 }}
+          SOURCE_URL12_1: ${{ secrets.SOURCE_URL12_1 }}
+          SOURCE_URL13_1: ${{ secrets.SOURCE_URL13_1 }}
+          SOURCE_URL14_1: ${{ secrets.SOURCE_URL14_1 }}
+          SOURCE_URL15_1: ${{ secrets.SOURCE_URL15_1 }}
+          SOURCE_URL16_1: ${{ secrets.SOURCE_URL16_1 }}
+          SOURCE_URL17_1: ${{ secrets.SOURCE_URL17_1 }}
+          SOURCE_URL18_1: ${{ secrets.SOURCE_URL18_1 }}
+          SOURCE_URL19_1: ${{ secrets.SOURCE_URL19_1 }}
+          SOURCE_URL20_1: ${{ secrets.SOURCE_URL20_1 }}
+          SOURCE_URL_PLAIN_1: ${{ secrets.SOURCE_URL_1 }}
+          SOURCE_URL1_2: ${{ secrets.SOURCE_URL1_2 }}
+          SOURCE_URL2_2: ${{ secrets.SOURCE_URL2_2 }}
+          SOURCE_URL3_2: ${{ secrets.SOURCE_URL3_2 }}
+          SOURCE_URL4_2: ${{ secrets.SOURCE_URL4_2 }}
+          SOURCE_URL5_2: ${{ secrets.SOURCE_URL5_2 }}
+          SOURCE_URL6_2: ${{ secrets.SOURCE_URL6_2 }}
+          SOURCE_URL7_2: ${{ secrets.SOURCE_URL7_2 }}
+          SOURCE_URL8_2: ${{ secrets.SOURCE_URL8_2 }}
+          SOURCE_URL9_2: ${{ secrets.SOURCE_URL9_2 }}
+          SOURCE_URL10_2: ${{ secrets.SOURCE_URL10_2 }}
+          SOURCE_URL11_2: ${{ secrets.SOURCE_URL11_2 }}
+          SOURCE_URL12_2: ${{ secrets.SOURCE_URL12_2 }}
+          SOURCE_URL13_2: ${{ secrets.SOURCE_URL13_2 }}
+          SOURCE_URL14_2: ${{ secrets.SOURCE_URL14_2 }}
+          SOURCE_URL15_2: ${{ secrets.SOURCE_URL15_2 }}
+          SOURCE_URL16_2: ${{ secrets.SOURCE_URL16_2 }}
+          SOURCE_URL17_2: ${{ secrets.SOURCE_URL17_2 }}
+          SOURCE_URL18_2: ${{ secrets.SOURCE_URL18_2 }}
+          SOURCE_URL19_2: ${{ secrets.SOURCE_URL19_2 }}
+          SOURCE_URL20_2: ${{ secrets.SOURCE_URL20_2 }}
+          SOURCE_URL_PLAIN_2: ${{ secrets.SOURCE_URL_2 }}
+          SOURCE_URL1_3: ${{ secrets.SOURCE_URL1_3 }}
+          SOURCE_URL2_3: ${{ secrets.SOURCE_URL2_3 }}
+          SOURCE_URL3_3: ${{ secrets.SOURCE_URL3_3 }}
+          SOURCE_URL4_3: ${{ secrets.SOURCE_URL4_3 }}
+          SOURCE_URL5_3: ${{ secrets.SOURCE_URL5_3 }}
+          SOURCE_URL6_3: ${{ secrets.SOURCE_URL6_3 }}
+          SOURCE_URL7_3: ${{ secrets.SOURCE_URL7_3 }}
+          SOURCE_URL8_3: ${{ secrets.SOURCE_URL8_3 }}
+          SOURCE_URL9_3: ${{ secrets.SOURCE_URL9_3 }}
+          SOURCE_URL10_3: ${{ secrets.SOURCE_URL10_3 }}
+          SOURCE_URL11_3: ${{ secrets.SOURCE_URL11_3 }}
+          SOURCE_URL12_3: ${{ secrets.SOURCE_URL12_3 }}
+          SOURCE_URL13_3: ${{ secrets.SOURCE_URL13_3 }}
+          SOURCE_URL14_3: ${{ secrets.SOURCE_URL14_3 }}
+          SOURCE_URL15_3: ${{ secrets.SOURCE_URL15_3 }}
+          SOURCE_URL16_3: ${{ secrets.SOURCE_URL16_3 }}
+          SOURCE_URL17_3: ${{ secrets.SOURCE_URL17_3 }}
+          SOURCE_URL18_3: ${{ secrets.SOURCE_URL18_3 }}
+          SOURCE_URL19_3: ${{ secrets.SOURCE_URL19_3 }}
+          SOURCE_URL20_3: ${{ secrets.SOURCE_URL20_3 }}
+          SOURCE_URL_PLAIN_3: ${{ secrets.SOURCE_URL_3 }}
+          SOURCE_URL1_4: ${{ secrets.SOURCE_URL1_4 }}
+          SOURCE_URL2_4: ${{ secrets.SOURCE_URL2_4 }}
+          SOURCE_URL3_4: ${{ secrets.SOURCE_URL3_4 }}
+          SOURCE_URL4_4: ${{ secrets.SOURCE_URL4_4 }}
+          SOURCE_URL5_4: ${{ secrets.SOURCE_URL5_4 }}
+          SOURCE_URL6_4: ${{ secrets.SOURCE_URL6_4 }}
+          SOURCE_URL7_4: ${{ secrets.SOURCE_URL7_4 }}
+          SOURCE_URL8_4: ${{ secrets.SOURCE_URL8_4 }}
+          SOURCE_URL9_4: ${{ secrets.SOURCE_URL9_4 }}
+          SOURCE_URL10_4: ${{ secrets.SOURCE_URL10_4 }}
+          SOURCE_URL11_4: ${{ secrets.SOURCE_URL11_4 }}
+          SOURCE_URL12_4: ${{ secrets.SOURCE_URL12_4 }}
+          SOURCE_URL13_4: ${{ secrets.SOURCE_URL13_4 }}
+          SOURCE_URL14_4: ${{ secrets.SOURCE_URL14_4 }}
+          SOURCE_URL15_4: ${{ secrets.SOURCE_URL15_4 }}
+          SOURCE_URL16_4: ${{ secrets.SOURCE_URL16_4 }}
+          SOURCE_URL17_4: ${{ secrets.SOURCE_URL17_4 }}
+          SOURCE_URL18_4: ${{ secrets.SOURCE_URL18_4 }}
+          SOURCE_URL19_4: ${{ secrets.SOURCE_URL19_4 }}
+          SOURCE_URL20_4: ${{ secrets.SOURCE_URL20_4 }}
+          SOURCE_URL_PLAIN_4: ${{ secrets.SOURCE_URL_4 }}
+          SOURCE_URL1_5: ${{ secrets.SOURCE_URL1_5 }}
+          SOURCE_URL2_5: ${{ secrets.SOURCE_URL2_5 }}
+          SOURCE_URL3_5: ${{ secrets.SOURCE_URL3_5 }}
+          SOURCE_URL4_5: ${{ secrets.SOURCE_URL4_5 }}
+          SOURCE_URL5_5: ${{ secrets.SOURCE_URL5_5 }}
+          SOURCE_URL6_5: ${{ secrets.SOURCE_URL6_5 }}
+          SOURCE_URL7_5: ${{ secrets.SOURCE_URL7_5 }}
+          SOURCE_URL8_5: ${{ secrets.SOURCE_URL8_5 }}
+          SOURCE_URL9_5: ${{ secrets.SOURCE_URL9_5 }}
+          SOURCE_URL10_5: ${{ secrets.SOURCE_URL10_5 }}
+          SOURCE_URL11_5: ${{ secrets.SOURCE_URL11_5 }}
+          SOURCE_URL12_5: ${{ secrets.SOURCE_URL12_5 }}
+          SOURCE_URL13_5: ${{ secrets.SOURCE_URL13_5 }}
+          SOURCE_URL14_5: ${{ secrets.SOURCE_URL14_5 }}
+          SOURCE_URL15_5: ${{ secrets.SOURCE_URL15_5 }}
+          SOURCE_URL16_5: ${{ secrets.SOURCE_URL16_5 }}
+          SOURCE_URL17_5: ${{ secrets.SOURCE_URL17_5 }}
+          SOURCE_URL18_5: ${{ secrets.SOURCE_URL18_5 }}
+          SOURCE_URL19_5: ${{ secrets.SOURCE_URL19_5 }}
+          SOURCE_URL20_5: ${{ secrets.SOURCE_URL20_5 }}
+          SOURCE_URL_PLAIN_5: ${{ secrets.SOURCE_URL_5 }}
+          SOURCE_URL1_6: ${{ secrets.SOURCE_URL1_6 }}
+          SOURCE_URL2_6: ${{ secrets.SOURCE_URL2_6 }}
+          SOURCE_URL3_6: ${{ secrets.SOURCE_URL3_6 }}
+          SOURCE_URL4_6: ${{ secrets.SOURCE_URL4_6 }}
+          SOURCE_URL5_6: ${{ secrets.SOURCE_URL5_6 }}
+          SOURCE_URL6_6: ${{ secrets.SOURCE_URL6_6 }}
+          SOURCE_URL7_6: ${{ secrets.SOURCE_URL7_6 }}
+          SOURCE_URL8_6: ${{ secrets.SOURCE_URL8_6 }}
+          SOURCE_URL9_6: ${{ secrets.SOURCE_URL9_6 }}
+          SOURCE_URL10_6: ${{ secrets.SOURCE_URL10_6 }}
+          SOURCE_URL11_6: ${{ secrets.SOURCE_URL11_6 }}
+          SOURCE_URL12_6: ${{ secrets.SOURCE_URL12_6 }}
+          SOURCE_URL13_6: ${{ secrets.SOURCE_URL13_6 }}
+          SOURCE_URL14_6: ${{ secrets.SOURCE_URL14_6 }}
+          SOURCE_URL15_6: ${{ secrets.SOURCE_URL15_6 }}
+          SOURCE_URL16_6: ${{ secrets.SOURCE_URL16_6 }}
+          SOURCE_URL17_6: ${{ secrets.SOURCE_URL17_6 }}
+          SOURCE_URL18_6: ${{ secrets.SOURCE_URL18_6 }}
+          SOURCE_URL19_6: ${{ secrets.SOURCE_URL19_6 }}
+          SOURCE_URL20_6: ${{ secrets.SOURCE_URL20_6 }}
+          SOURCE_URL_PLAIN_6: ${{ secrets.SOURCE_URL_6 }}
+          SOURCE_URL1_7: ${{ secrets.SOURCE_URL1_7 }}
+          SOURCE_URL2_7: ${{ secrets.SOURCE_URL2_7 }}
+          SOURCE_URL3_7: ${{ secrets.SOURCE_URL3_7 }}
+          SOURCE_URL4_7: ${{ secrets.SOURCE_URL4_7 }}
+          SOURCE_URL5_7: ${{ secrets.SOURCE_URL5_7 }}
+          SOURCE_URL6_7: ${{ secrets.SOURCE_URL6_7 }}
+          SOURCE_URL7_7: ${{ secrets.SOURCE_URL7_7 }}
+          SOURCE_URL8_7: ${{ secrets.SOURCE_URL8_7 }}
+          SOURCE_URL9_7: ${{ secrets.SOURCE_URL9_7 }}
+          SOURCE_URL10_7: ${{ secrets.SOURCE_URL10_7 }}
+          SOURCE_URL11_7: ${{ secrets.SOURCE_URL11_7 }}
+          SOURCE_URL12_7: ${{ secrets.SOURCE_URL12_7 }}
+          SOURCE_URL13_7: ${{ secrets.SOURCE_URL13_7 }}
+          SOURCE_URL14_7: ${{ secrets.SOURCE_URL14_7 }}
+          SOURCE_URL15_7: ${{ secrets.SOURCE_URL15_7 }}
+          SOURCE_URL16_7: ${{ secrets.SOURCE_URL16_7 }}
+          SOURCE_URL17_7: ${{ secrets.SOURCE_URL17_7 }}
+          SOURCE_URL18_7: ${{ secrets.SOURCE_URL18_7 }}
+          SOURCE_URL19_7: ${{ secrets.SOURCE_URL19_7 }}
+          SOURCE_URL20_7: ${{ secrets.SOURCE_URL20_7 }}
+          SOURCE_URL_PLAIN_7: ${{ secrets.SOURCE_URL_7 }}
+          SOURCE_URL1_8: ${{ secrets.SOURCE_URL1_8 }}
+          SOURCE_URL2_8: ${{ secrets.SOURCE_URL2_8 }}
+          SOURCE_URL3_8: ${{ secrets.SOURCE_URL3_8 }}
+          SOURCE_URL4_8: ${{ secrets.SOURCE_URL4_8 }}
+          SOURCE_URL5_8: ${{ secrets.SOURCE_URL5_8 }}
+          SOURCE_URL6_8: ${{ secrets.SOURCE_URL6_8 }}
+          SOURCE_URL7_8: ${{ secrets.SOURCE_URL7_8 }}
+          SOURCE_URL8_8: ${{ secrets.SOURCE_URL8_8 }}
+          SOURCE_URL9_8: ${{ secrets.SOURCE_URL9_8 }}
+          SOURCE_URL10_8: ${{ secrets.SOURCE_URL10_8 }}
+          SOURCE_URL11_8: ${{ secrets.SOURCE_URL11_8 }}
+          SOURCE_URL12_8: ${{ secrets.SOURCE_URL12_8 }}
+          SOURCE_URL13_8: ${{ secrets.SOURCE_URL13_8 }}
+          SOURCE_URL14_8: ${{ secrets.SOURCE_URL14_8 }}
+          SOURCE_URL15_8: ${{ secrets.SOURCE_URL15_8 }}
+          SOURCE_URL16_8: ${{ secrets.SOURCE_URL16_8 }}
+          SOURCE_URL17_8: ${{ secrets.SOURCE_URL17_8 }}
+          SOURCE_URL18_8: ${{ secrets.SOURCE_URL18_8 }}
+          SOURCE_URL19_8: ${{ secrets.SOURCE_URL19_8 }}
+          SOURCE_URL20_8: ${{ secrets.SOURCE_URL20_8 }}
+          SOURCE_URL_PLAIN_8: ${{ secrets.SOURCE_URL_8 }}
+          SOURCE_URL1_9: ${{ secrets.SOURCE_URL1_9 }}
+          SOURCE_URL2_9: ${{ secrets.SOURCE_URL2_9 }}
+          SOURCE_URL3_9: ${{ secrets.SOURCE_URL3_9 }}
+          SOURCE_URL4_9: ${{ secrets.SOURCE_URL4_9 }}
+          SOURCE_URL5_9: ${{ secrets.SOURCE_URL5_9 }}
+          SOURCE_URL6_9: ${{ secrets.SOURCE_URL6_9 }}
+          SOURCE_URL7_9: ${{ secrets.SOURCE_URL7_9 }}
+          SOURCE_URL8_9: ${{ secrets.SOURCE_URL8_9 }}
+          SOURCE_URL9_9: ${{ secrets.SOURCE_URL9_9 }}
+          SOURCE_URL10_9: ${{ secrets.SOURCE_URL10_9 }}
+          SOURCE_URL11_9: ${{ secrets.SOURCE_URL11_9 }}
+          SOURCE_URL12_9: ${{ secrets.SOURCE_URL12_9 }}
+          SOURCE_URL13_9: ${{ secrets.SOURCE_URL13_9 }}
+          SOURCE_URL14_9: ${{ secrets.SOURCE_URL14_9 }}
+          SOURCE_URL15_9: ${{ secrets.SOURCE_URL15_9 }}
+          SOURCE_URL16_9: ${{ secrets.SOURCE_URL16_9 }}
+          SOURCE_URL17_9: ${{ secrets.SOURCE_URL17_9 }}
+          SOURCE_URL18_9: ${{ secrets.SOURCE_URL18_9 }}
+          SOURCE_URL19_9: ${{ secrets.SOURCE_URL19_9 }}
+          SOURCE_URL20_9: ${{ secrets.SOURCE_URL20_9 }}
+          SOURCE_URL_PLAIN_9: ${{ secrets.SOURCE_URL_9 }}
+          SOURCE_URL1_10: ${{ secrets.SOURCE_URL1_10 }}
+          SOURCE_URL2_10: ${{ secrets.SOURCE_URL2_10 }}
+          SOURCE_URL3_10: ${{ secrets.SOURCE_URL3_10 }}
+          SOURCE_URL4_10: ${{ secrets.SOURCE_URL4_10 }}
+          SOURCE_URL5_10: ${{ secrets.SOURCE_URL5_10 }}
+          SOURCE_URL6_10: ${{ secrets.SOURCE_URL6_10 }}
+          SOURCE_URL7_10: ${{ secrets.SOURCE_URL7_10 }}
+          SOURCE_URL8_10: ${{ secrets.SOURCE_URL8_10 }}
+          SOURCE_URL9_10: ${{ secrets.SOURCE_URL9_10 }}
+          SOURCE_URL10_10: ${{ secrets.SOURCE_URL10_10 }}
+          SOURCE_URL11_10: ${{ secrets.SOURCE_URL11_10 }}
+          SOURCE_URL12_10: ${{ secrets.SOURCE_URL12_10 }}
+          SOURCE_URL13_10: ${{ secrets.SOURCE_URL13_10 }}
+          SOURCE_URL14_10: ${{ secrets.SOURCE_URL14_10 }}
+          SOURCE_URL15_10: ${{ secrets.SOURCE_URL15_10 }}
+          SOURCE_URL16_10: ${{ secrets.SOURCE_URL16_10 }}
+          SOURCE_URL17_10: ${{ secrets.SOURCE_URL17_10 }}
+          SOURCE_URL18_10: ${{ secrets.SOURCE_URL18_10 }}
+          SOURCE_URL19_10: ${{ secrets.SOURCE_URL19_10 }}
+          SOURCE_URL20_10: ${{ secrets.SOURCE_URL20_10 }}
+          SOURCE_URL_PLAIN_10: ${{ secrets.SOURCE_URL_10 }}
+          SOURCE_URL1_11: ${{ secrets.SOURCE_URL1_11 }}
+          SOURCE_URL2_11: ${{ secrets.SOURCE_URL2_11 }}
+          SOURCE_URL3_11: ${{ secrets.SOURCE_URL3_11 }}
+          SOURCE_URL4_11: ${{ secrets.SOURCE_URL4_11 }}
+          SOURCE_URL5_11: ${{ secrets.SOURCE_URL5_11 }}
+          SOURCE_URL6_11: ${{ secrets.SOURCE_URL6_11 }}
+          SOURCE_URL7_11: ${{ secrets.SOURCE_URL7_11 }}
+          SOURCE_URL8_11: ${{ secrets.SOURCE_URL8_11 }}
+          SOURCE_URL9_11: ${{ secrets.SOURCE_URL9_11 }}
+          SOURCE_URL10_11: ${{ secrets.SOURCE_URL10_11 }}
+          SOURCE_URL11_11: ${{ secrets.SOURCE_URL11_11 }}
+          SOURCE_URL12_11: ${{ secrets.SOURCE_URL12_11 }}
+          SOURCE_URL13_11: ${{ secrets.SOURCE_URL13_11 }}
+          SOURCE_URL14_11: ${{ secrets.SOURCE_URL14_11 }}
+          SOURCE_URL15_11: ${{ secrets.SOURCE_URL15_11 }}
+          SOURCE_URL16_11: ${{ secrets.SOURCE_URL16_11 }}
+          SOURCE_URL17_11: ${{ secrets.SOURCE_URL17_11 }}
+          SOURCE_URL18_11: ${{ secrets.SOURCE_URL18_11 }}
+          SOURCE_URL19_11: ${{ secrets.SOURCE_URL19_11 }}
+          SOURCE_URL20_11: ${{ secrets.SOURCE_URL20_11 }}
+          SOURCE_URL_PLAIN_11: ${{ secrets.SOURCE_URL_11 }}
+          SOURCE_URL1_12: ${{ secrets.SOURCE_URL1_12 }}
+          SOURCE_URL2_12: ${{ secrets.SOURCE_URL2_12 }}
+          SOURCE_URL3_12: ${{ secrets.SOURCE_URL3_12 }}
+          SOURCE_URL4_12: ${{ secrets.SOURCE_URL4_12 }}
+          SOURCE_URL5_12: ${{ secrets.SOURCE_URL5_12 }}
+          SOURCE_URL6_12: ${{ secrets.SOURCE_URL6_12 }}
+          SOURCE_URL7_12: ${{ secrets.SOURCE_URL7_12 }}
+          SOURCE_URL8_12: ${{ secrets.SOURCE_URL8_12 }}
+          SOURCE_URL9_12: ${{ secrets.SOURCE_URL9_12 }}
+          SOURCE_URL10_12: ${{ secrets.SOURCE_URL10_12 }}
+          SOURCE_URL11_12: ${{ secrets.SOURCE_URL11_12 }}
+          SOURCE_URL12_12: ${{ secrets.SOURCE_URL12_12 }}
+          SOURCE_URL13_12: ${{ secrets.SOURCE_URL13_12 }}
+          SOURCE_URL14_12: ${{ secrets.SOURCE_URL14_12 }}
+          SOURCE_URL15_12: ${{ secrets.SOURCE_URL15_12 }}
+          SOURCE_URL16_12: ${{ secrets.SOURCE_URL16_12 }}
+          SOURCE_URL17_12: ${{ secrets.SOURCE_URL17_12 }}
+          SOURCE_URL18_12: ${{ secrets.SOURCE_URL18_12 }}
+          SOURCE_URL19_12: ${{ secrets.SOURCE_URL19_12 }}
+          SOURCE_URL20_12: ${{ secrets.SOURCE_URL20_12 }}
+          SOURCE_URL_PLAIN_12: ${{ secrets.SOURCE_URL_12 }}
+          SOURCE_URL1_13: ${{ secrets.SOURCE_URL1_13 }}
+          SOURCE_URL2_13: ${{ secrets.SOURCE_URL2_13 }}
+          SOURCE_URL3_13: ${{ secrets.SOURCE_URL3_13 }}
+          SOURCE_URL4_13: ${{ secrets.SOURCE_URL4_13 }}
+          SOURCE_URL5_13: ${{ secrets.SOURCE_URL5_13 }}
+          SOURCE_URL6_13: ${{ secrets.SOURCE_URL6_13 }}
+          SOURCE_URL7_13: ${{ secrets.SOURCE_URL7_13 }}
+          SOURCE_URL8_13: ${{ secrets.SOURCE_URL8_13 }}
+          SOURCE_URL9_13: ${{ secrets.SOURCE_URL9_13 }}
+          SOURCE_URL10_13: ${{ secrets.SOURCE_URL10_13 }}
+          SOURCE_URL11_13: ${{ secrets.SOURCE_URL11_13 }}
+          SOURCE_URL12_13: ${{ secrets.SOURCE_URL12_13 }}
+          SOURCE_URL13_13: ${{ secrets.SOURCE_URL13_13 }}
+          SOURCE_URL14_13: ${{ secrets.SOURCE_URL14_13 }}
+          SOURCE_URL15_13: ${{ secrets.SOURCE_URL15_13 }}
+          SOURCE_URL16_13: ${{ secrets.SOURCE_URL16_13 }}
+          SOURCE_URL17_13: ${{ secrets.SOURCE_URL17_13 }}
+          SOURCE_URL18_13: ${{ secrets.SOURCE_URL18_13 }}
+          SOURCE_URL19_13: ${{ secrets.SOURCE_URL19_13 }}
+          SOURCE_URL20_13: ${{ secrets.SOURCE_URL20_13 }}
+          SOURCE_URL_PLAIN_13: ${{ secrets.SOURCE_URL_13 }}
+          SOURCE_URL1_14: ${{ secrets.SOURCE_URL1_14 }}
+          SOURCE_URL2_14: ${{ secrets.SOURCE_URL2_14 }}
+          SOURCE_URL3_14: ${{ secrets.SOURCE_URL3_14 }}
+          SOURCE_URL4_14: ${{ secrets.SOURCE_URL4_14 }}
+          SOURCE_URL5_14: ${{ secrets.SOURCE_URL5_14 }}
+          SOURCE_URL6_14: ${{ secrets.SOURCE_URL6_14 }}
+          SOURCE_URL7_14: ${{ secrets.SOURCE_URL7_14 }}
+          SOURCE_URL8_14: ${{ secrets.SOURCE_URL8_14 }}
+          SOURCE_URL9_14: ${{ secrets.SOURCE_URL9_14 }}
+          SOURCE_URL10_14: ${{ secrets.SOURCE_URL10_14 }}
+          SOURCE_URL11_14: ${{ secrets.SOURCE_URL11_14 }}
+          SOURCE_URL12_14: ${{ secrets.SOURCE_URL12_14 }}
+          SOURCE_URL13_14: ${{ secrets.SOURCE_URL13_14 }}
+          SOURCE_URL14_14: ${{ secrets.SOURCE_URL14_14 }}
+          SOURCE_URL15_14: ${{ secrets.SOURCE_URL15_14 }}
+          SOURCE_URL16_14: ${{ secrets.SOURCE_URL16_14 }}
+          SOURCE_URL17_14: ${{ secrets.SOURCE_URL17_14 }}
+          SOURCE_URL18_14: ${{ secrets.SOURCE_URL18_14 }}
+          SOURCE_URL19_14: ${{ secrets.SOURCE_URL19_14 }}
+          SOURCE_URL20_14: ${{ secrets.SOURCE_URL20_14 }}
+          SOURCE_URL_PLAIN_14: ${{ secrets.SOURCE_URL_14 }}
+          SOURCE_URL1_15: ${{ secrets.SOURCE_URL1_15 }}
+          SOURCE_URL2_15: ${{ secrets.SOURCE_URL2_15 }}
+          SOURCE_URL3_15: ${{ secrets.SOURCE_URL3_15 }}
+          SOURCE_URL4_15: ${{ secrets.SOURCE_URL4_15 }}
+          SOURCE_URL5_15: ${{ secrets.SOURCE_URL5_15 }}
+          SOURCE_URL6_15: ${{ secrets.SOURCE_URL6_15 }}
+          SOURCE_URL7_15: ${{ secrets.SOURCE_URL7_15 }}
+          SOURCE_URL8_15: ${{ secrets.SOURCE_URL8_15 }}
+          SOURCE_URL9_15: ${{ secrets.SOURCE_URL9_15 }}
+          SOURCE_URL10_15: ${{ secrets.SOURCE_URL10_15 }}
+          SOURCE_URL11_15: ${{ secrets.SOURCE_URL11_15 }}
+          SOURCE_URL12_15: ${{ secrets.SOURCE_URL12_15 }}
+          SOURCE_URL13_15: ${{ secrets.SOURCE_URL13_15 }}
+          SOURCE_URL14_15: ${{ secrets.SOURCE_URL14_15 }}
+          SOURCE_URL15_15: ${{ secrets.SOURCE_URL15_15 }}
+          SOURCE_URL16_15: ${{ secrets.SOURCE_URL16_15 }}
+          SOURCE_URL17_15: ${{ secrets.SOURCE_URL17_15 }}
+          SOURCE_URL18_15: ${{ secrets.SOURCE_URL18_15 }}
+          SOURCE_URL19_15: ${{ secrets.SOURCE_URL19_15 }}
+          SOURCE_URL20_15: ${{ secrets.SOURCE_URL20_15 }}
+          SOURCE_URL_PLAIN_15: ${{ secrets.SOURCE_URL_15 }}
+        run: |
+          set -euo pipefail
+
+          mkdir -p config
+
+          node - <<'NODE'
+          const fs = require("fs");
+          const candidates = [];
+          const MAX_ORIGIN = 20;
+
+          function esc(v) {
+            return String(v ?? "")
+              .replace(/%/g, "%25")
+              .replace(/\r/g, "%0D")
+              .replace(/\n/g, "%0A");
+          }
+
+          const rows = [];
+          const envLines = [];
+
+          for (let slot = 1; slot <= 15; slot += 1) {
+            const selected = [];
+            for (let origin = 1; origin <= MAX_ORIGIN; origin += 1) {
+              const name = `SOURCE_URL${origin}_${slot}`;
+              const value = String(process.env[name] || "").trim();
+              if (value) selected.push({ name, value });
+            }
+
+            const plainName = `SOURCE_URL_${slot}`;
+            const plainValue = String(process.env[`SOURCE_URL_PLAIN_${slot}`] || "").trim();
+            if (plainValue) selected.push({ name: plainName, value: plainValue });
+
+            if (selected.length > 1) {
+              throw new Error(
+                `Logical slot ${slot} has ${selected.length} configured secrets (${selected.map(x => x.name).join(", ")}). ` +
+                `Exactly one source secret must be set for each slot.`
+              );
+            }
+
+            const entry = selected[0] || null;
+            const label = entry?.name || `SOURCE_SLOT_${slot}`;
+            const value = entry?.value || "";
+
+            rows.push({
+              slot,
+              label,
+              configured: Boolean(value),
+              secret: entry?.name || null,
+            });
+
+            envLines.push(`SOURCE_SLOT_${slot}=${esc(value)}`);
+            envLines.push(`SOURCE_SLOT_LABEL_${slot}=${esc(label)}`);
+
+            console.log(`${label}: ${value ? "SET" : "EMPTY"}`);
+          }
+
+          fs.appendFileSync(process.env.GITHUB_ENV, envLines.join("\n") + "\n");
+          fs.writeFileSync(
+            "config/source-secret-diagnostics.json",
+            JSON.stringify({
+              generatedAt: new Date().toISOString(),
+              configuredSlots: rows.filter(row => row.configured).length,
+              rows,
+            }, null, 2) + "\n"
+          );
+          NODE
+
+      - name: Verify source URL diagnostics
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s "${GITHUB_WORKSPACE}/config/source-secret-diagnostics.json"
+          node - <<'NODE'
+          const fs = require("fs");
+          const path = "config/source-secret-diagnostics.json";
+          const data = JSON.parse(fs.readFileSync(path, "utf8"));
+
+          if (!Array.isArray(data.rows) || data.rows.length !== 15) {
+            throw new Error("source URL diagnostics must contain exactly 15 logical slots");
+          }
+
+          console.log(
+            `Secret diagnostics ready: ${data.configuredSlots}/15 slots`
+          );
+          NODE
+
+      - name: Update VPN configs
+        run: node scripts/update-source.mjs
+
+      - name: Verify config generation
+        id: source_generation
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s "${GITHUB_WORKSPACE}/config/source-update-status.json"
+          node - <<'NODE'
+          const fs = require("fs");
+          const crypto = require("crypto");
+          const status = JSON.parse(fs.readFileSync("config/source-update-status.json", "utf8"));
+          if (status.refreshed !== true) {
+            console.log(`config refresh skipped: ${status.reason || "unknown"}. Health-check will not run.`);
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, "refreshed=false\n");
+            console.log("refreshed=false");
+            process.exit(0);
+          }
+          const text = fs.readFileSync("config/source-health-candidates.json", "utf8");
+          const sha = crypto.createHash("sha256").update(text).digest("hex");
+          if (sha !== status.manifestSha256) throw new Error(`Generation mismatch: ${sha} !== ${status.manifestSha256}`);
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, "refreshed=true\n");
+          console.log(`config generation ${status.generationId}: ${status.totalBeforeHealthCheck} candidates`);
+          console.log("refreshed=true");
+          NODE
+      - name: Verify health candidate manifest
+        if: ${{ steps.source_generation.outputs.refreshed == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ ! -f "${GITHUB_WORKSPACE}/config/source-health-candidates.json" ]]; then
+            echo "ERROR: health candidate manifest is missing."
+            echo "The updater must refresh instead of skipping when this file is absent."
+            exit 1
+          fi
+
+          ls -lh "${GITHUB_WORKSPACE}/config/source-health-candidates.json"
+
+          node - <<'NODE'
+          const fs = require("fs");
+
+          const report = JSON.parse(
+            fs.readFileSync("source-report.json", "utf8")
+          );
+
+          const candidates = JSON.parse(
+            fs.readFileSync("config/source-health-candidates.json", "utf8")
+          );
+
+          const expected = Number(report.totalBeforeHealthCheck) || 0;
+          const actual = Array.isArray(candidates) ? candidates.length : -1;
+
+          console.log(`health candidates: ${actual}`);
+          console.log(`Expected from updater report: ${expected}`);
+
+          if (actual !== expected) {
+            throw new Error(
+              `Candidate manifest mismatch: ${actual} !== ${expected}`
+            );
+          }
+
+          if (actual === 0) {
+            throw new Error("Candidate manifest is empty");
+          }
+          NODE
+
+      - name: Install Xray for health check
+        if: ${{ steps.source_generation.outputs.refreshed == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mkdir -p .xray
+
+          XRAY_URL="https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-64.zip"
+
+          curl -fL --retry 4 --retry-delay 2 --retry-connrefused \
+            "$XRAY_URL" \
+            -o .xray/xray.zip
+
+          unzip -o \
+            .xray/xray.zip \
+            -d .xray
+
+          chmod +x .xray/xray
+
+          .xray/xray version
+
+      - name: Install independent speed-test client
+        if: ${{ steps.source_generation.outputs.refreshed == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m pip install --disable-pip-version-check --no-input "websocket-client==1.9.0" "python-socks>=2.7,<3"
+
+      - name: Verify service endpoint configuration
+        if: ${{ steps.source_generation.outputs.refreshed == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s "${GITHUB_WORKSPACE}/config/service-endpoints.json"
+          node - <<'NODE'
+          const fs = require("fs");
+          const data = JSON.parse(fs.readFileSync("config/service-endpoints.json", "utf8"));
+          const value = String(data.serviceBaseUrl || "").trim();
+          const url = new URL(value);
+          if (!/^https?:$/.test(url.protocol)) throw new Error("serviceBaseUrl must be http(s)");
+          console.log(`Service connectivity URL configured: ${url.origin}`);
+          NODE
+
+      - name: Check VPN server health (TCP + Xray + independent multi-provider speed)
+        if: ${{ steps.source_generation.outputs.refreshed == 'true' }}
+        id: health
+        env:
+          XRAY_BIN: ${{ github.workspace }}/.xray/xray
+          HEALTHCHECK_PYTHON: python3
+          HEALTHCHECK_MLAB_PROBE_SCRIPT: ${{ github.workspace }}/scripts/ndt7-probe.py
+          HEALTHCHECK_MLAB_LOCATE_URL: https://locate.measurementlab.net/v2/nearest/ndt/ndt7
+          HEALTHCHECK_MLAB_LOCATE_TIMEOUT_MS: 8000
+          HEALTHCHECK_SPEED_MIN_PROVIDER_PASSES: 3
+          HEALTHCHECK_REQUIRED_SPEED_PROVIDER_IDS: yandex
+          HEALTHCHECK_SPEED_MIN_MEDIAN_KBPS: 1024
+          HEALTHCHECK_SPEED_TIMEOUT_MS: 12000
+          HEALTHCHECK_CLOUDFLARE_URL: https://speed.cloudflare.com/__down?bytes=4194304
+          HEALTHCHECK_HETZNER_URL: https://fsn1-speed.hetzner.com/100MB.bin
+          HEALTHCHECK_HETZNER_FALLBACK_URL: https://nbg1-speed.hetzner.com/100MB.bin
+          HEALTHCHECK_YANDEX_PROBES_URL: https://yandex.ru/internet/api/v0/get-probes
+          HEALTHCHECK_YANDEX_TIMEOUT_MS: 9000
+          HEALTH_CANDIDATES_FILE: ${{ github.workspace }}/config/source-health-candidates.json
+          UPDATE_CONNECTIVITY_URL: ${{ vars.UPDATE_CONNECTIVITY_URL }}
+          HEALTHCHECK_CONCURRENCY: 16
+          HEALTHCHECK_SPEED_PROVIDER_CONCURRENCY: 4
+          HEALTHCHECK_FAST_TOP_N: 3
+          HEALTHCHECK_GAMING_TOP_N: 4
+          HEALTHCHECK_MAX_COUNTRIES: 20
+          HEALTHCHECK_COUNTRY_POOL_SIZE: 3
+          HEALTHCHECK_GAMING_MIN_KBPS: 512
+          HEALTHCHECK_GAMING_MAX_LATENCY_MS: 90
+          HEALTHCHECK_GAMING_MAX_LATENCY_SPREAD_MS: 25
+          HEALTHCHECK_GAMING_MIN_QUALITY_PASSES: 2
+          HEALTHCHECK_MAX_MEDIAN_CONNECTION_MS: 2500
+          HEALTHCHECK_MAX_SINGLE_CONNECTION_MS: 6000
+          HEALTHCHECK_TARGET_URLS: >-
+            https://www.gstatic.com/generate_204,
+            https://www.google.com/generate_204,
+            https://cp.cloudflare.com/generate_204
+          HEALTHCHECK_WHITE_LIST_TARGET_URLS: >-
+            https://ya.ru/,
+            https://yandex.ru/
+        run: node scripts/check-source-health.mjs
+
+      - name: Verify UPDATE VPN pool
+        if: ${{ steps.health.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node - <<'NODE'
+          const fs = require("fs");
+          const report = JSON.parse(fs.readFileSync("config/source-health-report.json", "utf8"));
+          const pool = JSON.parse(fs.readFileSync("config/source-update-pool.json", "utf8"));
+          const passedLTE = (report.results || []).filter(item => item.whiteList === true && item.ok === true).length;
+          const servers = Array.isArray(pool.servers) ? pool.servers : [];
+          if (servers.length > 10) throw new Error(`UPDATE VPN pool exceeds 10 servers: ${servers.length}`);
+          if (passedLTE > 0 && servers.length === 0) {
+            throw new Error(`UPDATE VPN pool is empty although ${passedLTE} LTE health checks passed`);
+          }
+          if (servers.some(server => server.whiteList !== true)) {
+            throw new Error("UPDATE VPN pool contains a non-LTE server");
+          }
+          console.log(`UPDATE VPN pool verified: ${servers.length} LTE server(s); ${passedLTE} LTE health pass(es).`);
+          NODE
+
+      - name: Remove obsolete updater artifacts
+
+        if: always()
+        run: |
+          rm -rf -- .source-cache
+          rm -f -- SOURCE-UPDATER.md
+          for obsolete in \
+            "update-source.mjs" \
+            "update-source (1).mjs" \
+            "update-source (2).mjs"
+          do
+            rm -f -- "$obsolete"
+            git rm --cached --ignore-unmatch -- "$obsolete" >/dev/null 2>&1 || true
+          done
+          git rm -r --cached --ignore-unmatch -- .source-cache >/dev/null 2>&1 || true
+          git rm --cached --ignore-unmatch -- SOURCE-UPDATER.md >/dev/null 2>&1 || true
+
+      - name: Commit generated VPN configs
+        if: ${{ steps.health.outcome == 'success' }}
+        run: |
+          if git diff --quiet; then
+            echo "No VPN config changes to commit."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A config .source-state.json .gitignore .github/workflows/update-configs.yml scripts
+          git add -u
+          git commit -m "chore: update VPN configs"
+
+          # The repository may receive a manual commit while the health-check is running.
+          # Rebase the generated commit onto the latest remote main before pushing.
+          git fetch origin main
+          git rebase origin/main
+          git push origin HEAD:main
+
+      - name: Upload VPN config diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vpn-config-report-${{ github.run_number }}
+          path: |
+            source-report.json
+            config/source-update-status.json
+            config/source-health-report.json
+            config/source-secret-diagnostics.json
+            config/source-recommendations.json
+            config/source-update-pool.json
+          if-no-files-found: ignore
+          retention-days: 7

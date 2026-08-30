@@ -341,10 +341,10 @@ const MAX_VISIBLE_COUNTRIES =
 
 const COUNTRY_POOL_SIZE =
     Math.max(
-        2,
+        1,
         Math.min(
-            8,
-            Number(process.env.HEALTHCHECK_COUNTRY_POOL_SIZE) || 6
+            3,
+            Number(process.env.HEALTHCHECK_COUNTRY_POOL_SIZE) || 3
         )
     );
 
@@ -2657,7 +2657,7 @@ function buildCountryHealthPool(
                 return aLatency - bLatency;
             });
 
-            // Regular countries keep the existing quality pool size.
+            // Regular countries publish at most the three best healthy members.
             // White List/LTE is intentionally uncapped for now so every
             // server that passes health-check is published and can be tested
             // directly; a future per-country cap can be introduced later.
