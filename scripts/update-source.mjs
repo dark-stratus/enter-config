@@ -2167,6 +2167,16 @@ function buildRetainedEntries(
 }
 
 
+function isManualRegularRebuildRequested() {
+  return process.env.CLEAR_PREVIOUS_REGULAR === "1";
+}
+
+function isProtectedEuropeId(id) {
+  return /^europe-\d+$/i.test(String(id || ""));
+}
+
+
+
 function mergeWithRetainedEntries(
   freshRegular,
   freshWhiteList,
@@ -2174,8 +2184,13 @@ function mergeWithRetainedEntries(
   healthHistory = {},
   previousSourceAttribution = new Map()
 ) {
-  const retained =
-    buildRetainedEntries(currentIndex, healthHistory, previousSourceAttribution);
+  const rebuildRegular = isManualRegularRebuildRequested();
+  const retentionIndex = rebuildRegular
+    ? currentIndex.filter(item => isProtectedEuropeId(item?.id))
+    : currentIndex;
+  const retained = rebuildRegular
+    ? []
+    : buildRetainedEntries(retentionIndex, healthHistory, previousSourceAttribution);
   const seen = new Set(
     [...freshRegular, ...freshWhiteList]
       .map(item => String(item?.link || "").trim())
@@ -2311,13 +2326,13 @@ async function buildStagedLinks(
 
     const id = item.name.replace(/\.(?:link|json)$/i, "");
 
-    if (
-      !isManagedId(id) &&
-      !/^europe-\d+$/i.test(id)
-    ) continue;
+    if (isProtectedEuropeId(id) && isManualRegularRebuildRequested()) {
+      // Europe is protected only for the explicit regular/Fast/Gaming rebuild.
+      continue;
+    }
 
-    // Legacy Europe nodes are no longer persistent/manual. They are rebuilt
-    // dynamically by enter-main from fresh source candidates.
+    if (!isManagedId(id) && !isProtectedEuropeId(id)) continue;
+
     await fs.unlink(path.join(stageDir, item.name));
   }
 
@@ -2325,14 +2340,31 @@ async function buildStagedLinks(
     item &&
     typeof item.id === "string" &&
     !isManagedId(item.id) &&
-    !/^europe-\d+$/i.test(item.id) &&
+    !isProtectedEuropeId(item.id) &&
     !/^whitelist-\d+$/i.test(item.id)
   ));
 
+  const europeEntries = isManualRegularRebuildRequested()
+    ? currentIndex.filter(item => (
+        item &&
+        typeof item.id === "string" &&
+        isProtectedEuropeId(item.id)
+      ))
+    : [];
+
   const nextEntries = [];
 
-  // Permanent/manual non-White-List locations remain first. Legacy Europe
-  // entries are intentionally excluded above and must not be carried forward.
+  if (isManualRegularRebuildRequested()) {
+    // Protected Europe entries are carried forward exactly as they are.
+    for (const item of europeEntries) {
+      const link = await readManagedLinkFromDisk(item.id, item);
+      if (link) {
+        nextEntries.push({ ...item, link });
+      }
+    }
+  }
+
+  // Permanent/manual non-White-List locations remain after protected Europe.
   for (const item of manualEntries) {
     const link = await readManagedLinkFromDisk(item.id, item);
 
@@ -2790,6 +2822,8 @@ async function main() {
       freshRegular: freshRegularCount,
       freshWhiteList: freshWhiteListCount,
       retainedFromPreviousPool: merged.retainedCount,
+      manualRegularRebuild: isManualRegularRebuildRequested(),
+      protectedEurope: true,
       totalBeforeHealthCheck: healthCandidates.length,
       sourceCandidateCounts,
     }, null, 2)}\n`
@@ -2815,6 +2849,8 @@ async function main() {
     freshRegular: freshRegularCount,
     freshWhiteList: freshWhiteListCount,
     retainedFromPreviousPool: merged.retainedCount,
+    manualRegularRebuild: isManualRegularRebuildRequested(),
+    protectedEurope: true,
     regularBeforeHealthCheck: regular.length,
     autoWhiteListBeforeHealthCheck: automaticWhiteList.length,
     totalBeforeHealthCheck: regular.length + automaticWhiteList.length,
