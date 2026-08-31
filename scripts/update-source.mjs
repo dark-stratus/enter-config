@@ -2311,8 +2311,13 @@ async function buildStagedLinks(
 
     const id = item.name.replace(/\.(?:link|json)$/i, "");
 
-    if (!isManagedId(id)) continue;
+    if (
+      !isManagedId(id) &&
+      !/^europe-\d+$/i.test(id)
+    ) continue;
 
+    // Legacy Europe nodes are no longer persistent/manual. They are rebuilt
+    // dynamically by enter-main from fresh source candidates.
     await fs.unlink(path.join(stageDir, item.name));
   }
 
@@ -2320,24 +2325,15 @@ async function buildStagedLinks(
     item &&
     typeof item.id === "string" &&
     !isManagedId(item.id) &&
+    !/^europe-\d+$/i.test(item.id) &&
     !/^whitelist-\d+$/i.test(item.id)
   ));
 
   const nextEntries = [];
-  const manualEuropeFirst = manualEntries.filter(
-    item => /^europe-\d+$/i.test(item.id)
-  );
-  const manualOther = manualEntries.filter(
-    item => !/^europe-\d+$/i.test(item.id)
-  );
 
-  // Permanent/manual non-White-List locations remain first.
-  const manualOrdered = [
-    ...manualEuropeFirst,
-    ...manualOther,
-  ];
-
-  for (const item of manualOrdered) {
+  // Permanent/manual non-White-List locations remain first. Legacy Europe
+  // entries are intentionally excluded above and must not be carried forward.
+  for (const item of manualEntries) {
     const link = await readManagedLinkFromDisk(item.id, item);
 
     nextEntries.push(
