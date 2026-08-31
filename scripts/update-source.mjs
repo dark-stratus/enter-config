@@ -1074,13 +1074,27 @@ async function fetchJsonUrl(url, label, clientIdentity) {
       }
 
       const contentType = response.headers.get("content-type") || "unknown";
+      const fetchedAt = Date.now();
+      const sourceUpdatedAt = [
+        response.headers.get("last-modified"),
+        response.headers.get("x-last-modified"),
+        response.headers.get("x-generated-at"),
+        response.headers.get("x-updated-at"),
+      ]
+        .map(value => String(value || "").trim())
+        .map(value => {
+          const time = value ? Date.parse(value) : NaN;
+          return Number.isFinite(time) ? time : 0;
+        })
+        .find(Boolean) || 0;
+
       const payload = parseSubscriptionPayload(text, contentType, label);
 
-      if (payload.kind === "json") {
-        return payload;
-      }
-
-      return payload;
+      return {
+        ...payload,
+        fetchedAt,
+        sourceUpdatedAt: sourceUpdatedAt || 0,
+      };
     } catch (error) {
       lastError = error;
 
@@ -1106,6 +1120,8 @@ async function fetchOneConfiguredSource(url, label, clientIdentity) {
     data: payload.data,
     payloadKind: payload.kind,
     url,
+    fetchedAt: Number(payload.fetchedAt) || Date.now(),
+    sourceUpdatedAt: Number(payload.sourceUpdatedAt) || 0,
   };
 }
 
@@ -1124,6 +1140,11 @@ function formatSourceOrigin(url = "") {
 
     if (host === "raw.githubusercontent.com" && pathParts.length >= 4) {
       return `${pathParts[0]}/${pathParts[1]} — ${pathParts.slice(3).join("/").split("/").pop()}`;
+    }
+
+    if (host === "keylineservices.top") {
+      const listMatch = parsed.pathname.match(/\/(?:configs\/)?([^/]+)\/?$/i);
+      return listMatch?.[1] ? `keylineservices.top/${listMatch[1]}` : "keylineservices.top";
     }
 
     if (host === "github.com") {
@@ -1288,6 +1309,8 @@ async function fetchSourceSources() {
         urlFingerprint,
         originName: formatSourceOrigin(request.url),
         durationMs: Date.now() - startedAt,
+        fetchedAt: Number(source.fetchedAt) || Date.now(),
+        sourceUpdatedAt: Number(source.sourceUpdatedAt) || 0,
         payloadKind: source.payloadKind,
         rawCount: Array.isArray(source.data)
           ? source.data.length
@@ -1761,6 +1784,9 @@ function normalizeProfileLink(link, index, source, forceWhiteList = false, stats
     sourceIndex: index,
     source,
     sourceKind: "links",
+    sourceFetchedAt: 0,
+    sourceUpdatedAt: 0,
+    fresh: true,
     originalRemarks: remarks,
     flag: effective.flag || "",
     country: effective.country || "",
@@ -1786,7 +1812,14 @@ function normalizeSourceData(source) {
       .map((link, index) => normalizeProfileLink(
         link, index, source.label, source.forceWhiteList, stats
       ))
-      .filter(Boolean);
+      .filter(Boolean)
+      .map(item => ({
+        ...item,
+        sourceFetchedAt: Number(source.fetchedAt) || Date.now(),
+        sourceUpdatedAt: Number(source.sourceUpdatedAt) || 0,
+        fresh: true,
+        retained: false,
+      }));
     return { entries: result, stats };
   }
 
@@ -1811,7 +1844,13 @@ function normalizeSourceData(source) {
     }
     if (!normalized) continue;
     if (source.forceWhiteList) normalized.whiteList = true;
-    result.push(normalized);
+    result.push({
+      ...normalized,
+      sourceFetchedAt: Number(source.fetchedAt) || Date.now(),
+      sourceUpdatedAt: Number(source.sourceUpdatedAt) || 0,
+      fresh: true,
+      retained: false,
+    });
   }
 
   if (autoEntry && result.some(item => item.whiteList)) {
@@ -1973,8 +2012,39 @@ function buildEndpointCloneGroups(entries) {
 }
 
 function dedupe(entries) {
-  const seen = new Set();
+  const positions = new Map();
   const result = [];
+
+  const freshnessOf = item => {
+    const sourceUpdatedAt = Number(item?.sourceUpdatedAt) || 0;
+    const sourceFetchedAt = Number(item?.sourceFetchedAt) || 0;
+    const fresh = item?.fresh !== false && !item?.retained;
+    return {
+      sourceUpdatedAt,
+      sourceFetchedAt,
+      fresh,
+    };
+  };
+
+  const isNewer = (candidate, current) => {
+    const a = freshnessOf(candidate);
+    const b = freshnessOf(current);
+
+    if (a.fresh !== b.fresh) return a.fresh;
+    if (a.sourceUpdatedAt || b.sourceUpdatedAt) {
+      if (!a.sourceUpdatedAt) return false;
+      if (!b.sourceUpdatedAt) return true;
+      if (a.sourceUpdatedAt !== b.sourceUpdatedAt) {
+        return a.sourceUpdatedAt > b.sourceUpdatedAt;
+      }
+    }
+
+    // When neither side carries a trustworthy source publication/update time,
+    // preserve the original source order. Download time is intentionally NOT
+    // used here because requests are fetched sequentially and that would create
+    // an artificial priority for the last source in the queue.
+    return false;
+  };
 
   for (const item of entries) {
     const link = String(item?.link || "").trim();
@@ -1990,11 +2060,6 @@ function dedupe(entries) {
           aValue.localeCompare(bValue)
         );
 
-      // Deduplicate only the same connection tuple. Fragment/remarks are
-      // metadata, while SNI/Host/fingerprint and other transport parameters
-      // remain part of the identity. This intentionally does NOT collapse
-      // multiple White List routes that share a Max/Yandex/etc. SNI but use
-      // different real endpoints or transport settings.
       key = JSON.stringify({
         protocol: url.protocol.toLowerCase(),
         host: url.hostname.toLowerCase(),
@@ -2005,9 +2070,17 @@ function dedupe(entries) {
       });
     } catch {}
 
-    if (seen.has(key)) continue;
-    seen.add(key);
-    result.push(item);
+    const existingPosition = positions.get(key);
+    if (existingPosition === undefined) {
+      positions.set(key, result.length);
+      result.push(item);
+      continue;
+    }
+
+    const existing = result[existingPosition];
+    if (isNewer(item, existing)) {
+      result[existingPosition] = item;
+    }
   }
 
   return result;
@@ -2017,6 +2090,14 @@ function sortEntries(entries) {
   return [...entries].sort((a, b) => {
     const countryCompare = a.country.localeCompare(b.country, "en");
     if (countryCompare !== 0) return countryCompare;
+
+    const aFresh = a.fresh !== false && !a.retained;
+    const bFresh = b.fresh !== false && !b.retained;
+    if (aFresh !== bFresh) return aFresh ? -1 : 1;
+
+    const aUpdatedAt = Number(a.sourceUpdatedAt) || 0;
+    const bUpdatedAt = Number(b.sourceUpdatedAt) || 0;
+    if (aUpdatedAt !== bUpdatedAt) return bUpdatedAt - aUpdatedAt;
 
     return (a.sourceIndex ?? 0) - (b.sourceIndex ?? 0);
   });
@@ -2075,6 +2156,9 @@ function buildRetainedEntries(
       country,
       whiteList: isWhiteList,
       source,
+      sourceFetchedAt: 0,
+      sourceUpdatedAt: 0,
+      fresh: false,
       retained: true,
     });
   }
@@ -2098,8 +2182,24 @@ function mergeWithRetainedEntries(
       .filter(Boolean)
   );
 
+  const freshRegularCountries = new Set(
+    freshRegular
+      .map(item => String(item?.country || "").trim().toLowerCase())
+      .filter(Boolean)
+  );
+  const freshWhiteListCountries = new Set(
+    freshWhiteList
+      .filter(item => !item?.isAutoWhiteListCandidate)
+      .map(item => String(item?.country || "").trim().toLowerCase())
+      .filter(Boolean)
+  );
+
   for (const item of retained) {
     if (seen.has(item.link)) continue;
+
+    const countryKey = String(item?.country || "").trim().toLowerCase();
+    if (item.whiteList && freshWhiteListCountries.has(countryKey)) continue;
+    if (!item.whiteList && freshRegularCountries.has(countryKey)) continue;
 
     seen.add(item.link);
 
@@ -2726,7 +2826,7 @@ async function main() {
       path: "source-health-candidates.json",
       count: healthCandidates.length,
     },
-    retainedPolicy: "previous managed links are retained unless temporarily quarantined by a failed health check; quarantine is not a permanent blacklist",
+    retainedPolicy: "previous managed links are retained only for countries absent from the fresh source set; fresh source entries always take precedence",
   };
   await writeAtomic(
     path.join(ROOT, "source-report.json"),

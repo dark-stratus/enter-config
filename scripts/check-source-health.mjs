@@ -3263,34 +3263,17 @@ async function main() {
             // path is special, so a failure of all three ordinary public HTTPS
             // probes must not prevent the actual speed test from determining
             // whether the node can carry real traffic.
+            // Regular nodes no longer fail solely because the three synthetic
+            // HTTPS probes are unreachable. Those probes are diagnostics; the
+            // independent real-download test below is a stronger signal that
+            // the Xray route actually carries traffic.
             if (
                 !isWhiteListCandidate &&
                 passedTargets.length >= HEALTH_MIN_TARGET_PASSES &&
                 !connection.eligible
             ) {
-                return {
-                    item,
-                    ok: false,
-                    reason:
-                        `TCP + Xray + HTTPS passed, but effective connection time is too slow ` +
-                        `(median ${connection.medianMs} ms, max ${connection.maxMs} ms; ` +
-                        `limits ${CONNECTION_TIME_MAX_MEDIAN_MS}/${CONNECTION_TIME_MAX_SINGLE_MS} ms)`,
-                    quality: null,
-                    connection,
-                    remote,
-                };
-            }
-
-            if (passedTargets.length === 0) {
-                return {
-                    item,
-                    ok: false,
-                    reason:
-                        `TCP + Xray started; no ${isWhiteListCandidate ? "whitelist" : "HTTPS"} connectivity target passed; ` +
-                        `independent speed check skipped`,
-                    quality: null,
-                    remote,
-                };
+                // Do not return yet: an otherwise working route may have slow
+                // synthetic endpoints while still passing the real speed test.
             }
 
             if (
@@ -3315,26 +3298,32 @@ async function main() {
                     xray.socksPort
                 );
 
-            if (!quality.ok && !isWhiteListCandidate) {
+            if (!isWhiteListCandidate) {
                 const details = failedTargets
                     .map(result =>
                         `${result.targetUrl}: ${result.error || "proxy request failed"}`
                     )
                     .join(" | ");
 
-                return {
-                    item,
-                    ok: false,
-                    reason:
-                        `TCP + Xray started; independent speed check failed ` +
-                        `(${quality.passedCount}/${quality.providerCount} providers, ` +
-                        `median ${quality.medianKbps} KB/s). ` +
-                        `Synthetic HTTPS diagnostics: ${passedTargets.length}/${targets.length} passed` +
-                        `${details ? `; ${details}` : ""}`,
-                    quality,
-                    connection,
-                    remote,
-                };
+                if (!quality.ok) {
+                    return {
+                        item,
+                        ok: false,
+                        reason:
+                            `TCP + Xray + real speed check failed ` +
+                            `(${quality.passedCount}/${quality.providerCount} providers, ` +
+                            `median ${quality.medianKbps} KB/s). ` +
+                            `Synthetic HTTPS diagnostics: ${passedTargets.length}/${targets.length} passed` +
+                            `${details ? `; ${details}` : ""}`,
+                        quality,
+                        connection,
+                        remote,
+                    };
+                }
+
+                // A passing real speed test is authoritative even when the
+                // synthetic HTTPS endpoints are blocked/reset from the CI
+                // runner. Record the diagnostics, but do not reject the node.
             }
 
             const gamingLatency = await measureGamingLatency(
