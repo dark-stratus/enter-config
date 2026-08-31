@@ -2389,7 +2389,7 @@ function directTcpLatencyProbe(
     });
 }
 
-async function measureGamingLatency(link) {
+async function measureGamingLatency(link, connectionFallback = null) {
     let server;
 
     try {
@@ -2423,17 +2423,43 @@ async function measureGamingLatency(link) {
         };
     }
 
-    // Hysteria is UDP/QUIC-oriented, while this probe measures TCP handshake
-    // time. Do not incorrectly label a Hysteria endpoint as Gaming-eligible.
+    // Hysteria/Hysteria2 are UDP/QUIC transports, so a direct TCP handshake
+    // to the endpoint is not a valid gaming metric. For these protocols use the
+    // already measured effective connection latency through the running Xray
+    // tunnel instead. This keeps Hysteria eligible without pretending its UDP
+    // endpoint speaks TCP.
     if (protocol === "hysteria2" || protocol === "hysteria") {
+        const samples = Array.isArray(connectionFallback?.samples)
+            ? connectionFallback.samples
+                .map(value => Number(value))
+                .filter(Number.isFinite)
+            : [];
+
+        if (!samples.length) {
+            return {
+                ok: false,
+                samples: [],
+                medianLatencyMs: 0,
+                maxLatencyMs: Infinity,
+                latencySpreadMs: Infinity,
+                latencyStdDevMs: Infinity,
+                error: "no effective connection latency samples available for Hysteria",
+            };
+        }
+
+        const medianLatencyMs = median(samples);
+        const maxLatencyMs = Math.max(...samples);
+        const minLatencyMs = Math.min(...samples);
+
         return {
-            ok: false,
-            samples: [],
-            medianLatencyMs: 0,
-            maxLatencyMs: Infinity,
-            latencySpreadMs: Infinity,
-            latencyStdDevMs: Infinity,
-            error: "direct TCP latency metric is not valid for Hysteria",
+            ok: true,
+            samples,
+            medianLatencyMs: Math.round(medianLatencyMs),
+            maxLatencyMs: Math.round(maxLatencyMs),
+            latencySpreadMs: Math.round(maxLatencyMs - minLatencyMs),
+            latencyStdDevMs: standardDeviation(samples),
+            error: "",
+            source: "effective-xray-connection",
         };
     }
 
@@ -3311,7 +3337,10 @@ async function main() {
                 };
             }
 
-            const gamingLatency = await measureGamingLatency(item.link);
+            const gamingLatency = await measureGamingLatency(
+                item.link,
+                connection
+            );
             const gaming = getGamingMetrics(remote, quality, gamingLatency);
 
             return {
