@@ -1,6 +1,6 @@
 # VPN source report
 
-Последнее обновление: 2026-08-30T23:12:04.260Z
+Последнее обновление: 2026-08-31T01:56:34.451Z
 
 Статистика **по каждому источнику отдельно**: **взяли → живы → в итоговом пуле**.
 
@@ -10,16 +10,16 @@
 
 | Секрет | Источник | Слот | Взяли | Живы | В итоговом пуле | Состояние |
 |---|---|---:|---:|---:|---:|---|
-| **SOURCE_URL_1** | rtwo2/FastNodes — verified.txt | 1 | 346 | 206 | 31 | ✅ |
-| **SOURCE_URL2_2** | keylineservices.top | 2 | 207 | 16 | 3 | ✅ |
-| **SOURCE_URL4_4** | keylineservices.top | 4 | 88 | 0 | 0 | ⚠️ |
-| **SOURCE_URL_5** | VovaplusEXP/p-configs — vless.txt | 5 | 269 | 198 | 20 | ✅ |
-| **SOURCE_URL5_6** | keylineservices.top | 6 | 19 | 4 | 0 | ✅ |
-| **SOURCE_URL_7** | wlunlocker/vpn-configs — blacklist_vpn1.txt | 7 | 63 | 9 | 4 | ✅ |
-| **SOURCE_URL_8** | igareck/vpn-configs-for-russia — BLACK_VLESS_RUS_mobile.txt | 8 | 139 | 0 | 0 | ⚠️ |
-| **SOURCE_URL_9** | zieng2/wl — vless_universal.txt | 9 | 203 | 84 | 84 | ✅ |
-| **SOURCE_URL_10** | igareck/vpn-configs-for-russia — WHITE-CIDR-RU-all.txt | 10 | 62 | 29 | 29 | ✅ |
-| **SOURCE_URL_11** | igareck/vpn-configs-for-russia — WHITE-SNI-RU-all.txt | 11 | 32 | 32 | 32 | ✅ |
+| **SOURCE_URL_1** | rtwo2/FastNodes — verified.txt | 1 | 388 | 204 | 25 | ✅ |
+| **SOURCE_URL2_2** | keylineservices.top | 2 | 207 | 15 | 3 | ✅ |
+| **SOURCE_URL4_4** | keylineservices.top | 4 | 88 | 9 | 2 | ✅ |
+| **SOURCE_URL_5** | VovaplusEXP/p-configs — vless.txt | 5 | 269 | 179 | 21 | ✅ |
+| **SOURCE_URL5_6** | keylineservices.top | 6 | 19 | 9 | 1 | ✅ |
+| **SOURCE_URL_7** | wlunlocker/vpn-configs — blacklist_vpn1.txt | 7 | 63 | 11 | 4 | ✅ |
+| **SOURCE_URL_8** | igareck/vpn-configs-for-russia — BLACK_VLESS_RUS_mobile.txt | 8 | 130 | 15 | 3 | ✅ |
+| **SOURCE_URL_9** | zieng2/wl — vless_universal.txt | 9 | 256 | 119 | 119 | ✅ |
+| **SOURCE_URL_10** | igareck/vpn-configs-for-russia — WHITE-CIDR-RU-all.txt | 10 | 95 | 53 | 53 | ✅ |
+| **SOURCE_URL_11** | igareck/vpn-configs-for-russia — WHITE-SNI-RU-all.txt | 11 | 18 | 29 | 29 | ✅ |
 
 ## Правила слотов
 
