@@ -694,13 +694,33 @@ async function requestJson(url, options = {}, timeoutMs = REQUEST_TIMEOUT_MS) {
     }
 }
 
-function parseCheckHostNode(raw, node) {
+async function requestJsonWithRetries(url, options = {}, timeoutMs = REQUEST_TIMEOUT_MS, retries = REQUEST_RETRIES) {
+    let lastError;
+    for (let attempt = 0; attempt <= retries; attempt += 1) {
+        try {
+            return await requestJson(url, options, timeoutMs);
+        } catch (error) {
+            lastError = error;
+            const status = Number(error?.status || 0);
+            const retryable = status === 429 || status === 408 || status >= 500 || /aborted|timeout/i.test(String(error?.message || ""));
+            if (!retryable || attempt >= retries) throw error;
+            const retryAfter = Number(error?.retryAfterMs || 0);
+            await sleep(Math.min(5000, retryAfter || 500 * (attempt + 1)));
+        }
+    }
+    throw lastError || new Error("request failed");
+}
+
+function parseCheckHostNode(raw, node, transport = "tcp") {
     if (Array.isArray(raw) && raw.length) {
         const first = raw[0];
         if (first && typeof first === "object" && Number.isFinite(Number(first.time))) {
             return { node, reachable: true, inconclusive: false, latencyMs: Number(first.time) * 1000, error: "" };
         }
         const error = String(first?.error || first?.message || "").trim();
+        if (transport === "udp" && /open or filtered|filtered|timeout|timed? out/i.test(error)) {
+            return { node, reachable: false, inconclusive: true, latencyMs: 0, error: error || "open or filtered" };
+        }
         return { node, reachable: false, inconclusive: false, latencyMs: 0, error: error || "unreachable" };
     }
     return { node, reachable: false, inconclusive: true, latencyMs: 0, error: "no result" };
@@ -713,17 +733,18 @@ async function checkHostRussia(url, protocol) {
         try {
             const params = new URLSearchParams({ host: `${url.hostname}:${Number(url.port || 443)}`, max_nodes: String(CHECK_HOST_RUSSIA_NODES.length) });
             for (const node of CHECK_HOST_RUSSIA_NODES) params.append("node", node);
-            const created = await requestJson(`${CHECK_HOST_API_BASE}/check-${checkType}?${params}`, { headers: { "user-agent": "enter-config-russia-health/1.0" } }, CHECK_HOST_TIMEOUT_MS);
+            const created = await requestJsonWithRetries(`${CHECK_HOST_API_BASE}/check-${checkType}?${params}`, { headers: { "user-agent": "enter-config-russia-health/1.0" } }, CHECK_HOST_TIMEOUT_MS);
             const requestId = String(created?.request_id || "").trim();
             if (!requestId) throw new Error("missing Check-Host request_id");
             const started = Date.now();
             while (Date.now() - started <= CHECK_HOST_MAX_POLL_MS) {
                 await sleep(CHECK_HOST_POLL_MS);
-                const payload = await requestJson(`${CHECK_HOST_API_BASE}/check-result/${encodeURIComponent(requestId)}`, { headers: { "user-agent": "enter-config-russia-health/1.0" } }, CHECK_HOST_TIMEOUT_MS);
-                const parsed = CHECK_HOST_RUSSIA_NODES.map(node => parseCheckHostNode(payload?.[node] ?? null, node));
-                if (parsed.some(x => !x.inconclusive)) {
-                    const reachable = parsed.filter(x => x.reachable);
-                    const inconclusive = parsed.filter(x => x.inconclusive).length;
+                const payload = await requestJsonWithRetries(`${CHECK_HOST_API_BASE}/check-result/${encodeURIComponent(requestId)}`, { headers: { "user-agent": "enter-config-russia-health/1.0" } }, CHECK_HOST_TIMEOUT_MS);
+                const parsed = CHECK_HOST_RUSSIA_NODES.map(node => parseCheckHostNode(payload?.[node] ?? null, node, transport));
+                const reachable = parsed.filter(x => x.reachable);
+                const inconclusive = parsed.filter(x => x.inconclusive).length;
+                const allResolved = parsed.length > 0 && inconclusive === 0;
+                if (reachable.length > 0 || allResolved) {
                     return { provider: "check-host", ok: reachable.length > 0, unavailable: false, inconclusive: reachable.length === 0 && inconclusive > 0, transport, checkType, nodesTested: parsed.length, nodesReachable: reachable.length, nodesInconclusive: inconclusive, minLatencyMs: reachable.length ? Math.min(...reachable.map(x => x.latencyMs)) : 0, results: parsed };
                 }
             }
@@ -737,11 +758,14 @@ async function checkHostRussia(url, protocol) {
 async function globalpingRussia(url, protocol) {
     const transport = getTransportType(protocol);
     const tcp = transport === "tcp";
+    if (!tcp) {
+        return { provider: "globalping", ok: false, unavailable: false, inconclusive: true, skipped: true, transport, protocol: "UDP", error: "Globalping free TCP probe is not a UDP service test" };
+    }
     return globalpingLimiter(async () => {
         try {
             const headers = { "content-type": "application/json", "user-agent": "enter-config-russia-health/1.0" };
             if (GLOBALPING_TOKEN) headers.authorization = `Bearer ${GLOBALPING_TOKEN}`;
-            const created = await requestJson(`${GLOBALPING_API_BASE}/measurements`, { method: "POST", headers, body: JSON.stringify({
+            const created = await requestJsonWithRetries(`${GLOBALPING_API_BASE}/measurements`, { method: "POST", headers, body: JSON.stringify({
                 type: "ping", target: url.hostname, locations: [{ country: "RU", limit: GLOBALPING_PROBE_LIMIT }],
                 measurementOptions: { packets: 2, protocol: tcp ? "TCP" : "ICMP", ...(tcp ? { port: Number(url.port || 443) } : {}) }
             }) }, GLOBALPING_TIMEOUT_MS);
@@ -750,13 +774,15 @@ async function globalpingRussia(url, protocol) {
             const started = Date.now();
             while (Date.now() - started <= GLOBALPING_TIMEOUT_MS) {
                 await sleep(700);
-                const data = await requestJson(`${GLOBALPING_API_BASE}/measurements/${encodeURIComponent(measurementId)}`, { headers: { "user-agent": "enter-config-russia-health/1.0", ...(GLOBALPING_TOKEN ? { authorization: `Bearer ${GLOBALPING_TOKEN}` } : {}) } }, GLOBALPING_TIMEOUT_MS);
+                const data = await requestJsonWithRetries(`${GLOBALPING_API_BASE}/measurements/${encodeURIComponent(measurementId)}`, { headers: { "user-agent": "enter-config-russia-health/1.0", ...(GLOBALPING_TOKEN ? { authorization: `Bearer ${GLOBALPING_TOKEN}` } : {}) } }, GLOBALPING_TIMEOUT_MS);
                 if (String(data?.status || "").toLowerCase() === "in-progress") continue;
                 const rows = Array.isArray(data?.results) ? data.results : [];
                 const successful = rows.filter(row => {
                     const status = String(row?.result?.status || "").toLowerCase();
                     const stats = row?.result?.stats || {};
-                    return status === "finished" && (Number.isFinite(Number(stats.avg)) || Number(stats.loss) === 0);
+                    const avg = Number(stats.avg);
+                    const loss = Number(stats.loss);
+                    return status === "finished" && Number.isFinite(avg) && loss === 0;
                 });
                 const latencyValues = successful.map(r => Number(r?.result?.stats?.avg)).filter(Number.isFinite);
                 return { provider: "globalping", ok: successful.length > 0, unavailable: false, inconclusive: false, transport, protocol: tcp ? "TCP" : "ICMP", probesTested: rows.length, probesReachable: successful.length, minLatencyMs: latencyValues.length ? Math.min(...latencyValues) : 0, results: rows.map(row => ({ status: row?.result?.status || "", probeCountry: row?.probe?.country || "", probeCity: row?.probe?.city || "", probeNetwork: row?.probe?.network || "", avgMs: Number(row?.result?.stats?.avg), loss: Number(row?.result?.stats?.loss) })) };
@@ -786,7 +812,12 @@ async function checkRussiaReachability(item, url, protocol, sourceMeta) {
 function buildGlobalpingSelection(managedItems, candidateMap, state) {
     const now = Date.now();
     return new Set(managedItems
-        .filter(item => { const fp = fingerprintLink(item?.link || ""); return fp && !isLteCandidate(item, candidateMap[fp] || null); })
+        .filter(item => {
+            const fp = fingerprintLink(item?.link || "");
+            const candidate = candidateMap[fp] || null;
+            const protocol = getProtocol(String(item?.link || ""));
+            return fp && !isLteCandidate(item, candidate) && getTransportType(protocol) === "tcp";
+        })
         .map(item => { const fp = fingerprintLink(item?.link || ""); const row = state[fp] || {}; const last = Number(row.checkedAt) || 0; return { fp, last, stale: !last || now - last >= GLOBALPING_STATE_MAX_AGE_MS, featured: /(?:🔥|🎮)/u.test(String(item?.remarks || "")) }; })
         .sort((a, b) => Number(b.stale) - Number(a.stale) || Number(b.featured) - Number(a.featured) || a.last - b.last)
         .slice(0, GLOBALPING_MAX_CANDIDATES_PER_CYCLE)
@@ -810,7 +841,7 @@ async function updateHealthHistory(results) {
     const WINDOW = 10;
 
     for (const result of results) {
-        const link = String(result?.item?.link || "").trim();
+        const link = String(result?.link || result?.item?.link || "").trim();
         if (!link) continue;
 
         const fingerprint = fingerprintLink(link);
@@ -3153,6 +3184,9 @@ async function buildGamingAssignments(
             id: `gaming-${index + 1}`,
             country: item.country,
             flag,
+            featured: "gaming",
+            featuredRank: Math.floor(index / GAMING_SERVERS_PER_COUNTRY) + 1,
+            gamingMemberRank: (index % GAMING_SERVERS_PER_COUNTRY) + 1,
             remarks: `${flag} 🎮 ${item.country}`.replace(/\s+/g, ' ').trim(),
             linkFingerprint: item.linkFingerprint,
             link: selectedLink,
@@ -3314,16 +3348,7 @@ async function main() {
     globalpingState = (persistentState?.russiaGlobalping && typeof persistentState.russiaGlobalping === "object")
         ? persistentState.russiaGlobalping
         : {};
-    globalpingSelection = buildGlobalpingSelection(
-        managedItems,
-        candidateMap,
-        globalpingState
-    );
-
-    console.log(
-        `RUSSIA PROBES: Check-Host=${CHECK_HOST_RUSSIA_NODES.length} nodes; ` +
-        `Globalping=${globalpingSelection.size}/${GLOBALPING_MAX_CANDIDATES_PER_CYCLE} candidates this cycle`
-    );
+    globalpingSelection = new Set();
 
     let cursor =
         0;
@@ -3391,24 +3416,7 @@ async function main() {
             );
 
         const sourceMeta = candidateMap[linkFingerprint] || null;
-        const russiaProbe = await checkRussiaReachability(
-            item,
-            url,
-            protocol,
-            sourceMeta
-        );
-
-        if (russiaProbe.required && !russiaProbe.gatePassed) {
-            return {
-                item,
-                ok: false,
-                protocol,
-                russiaProbe,
-                reason:
-                    `Russia reachability failed: Check-Host ${russiaProbe.checkHost?.nodesReachable || 0}/${russiaProbe.checkHost?.nodesTested || 0}; ` +
-                    `Globalping ${russiaProbe.globalping?.probesReachable || 0}/${russiaProbe.globalping?.probesTested || 0}`
-            };
-        }
+        const russiaProbe = null;
 
         const stage1 =
             await tcpProbe(
@@ -3760,9 +3768,83 @@ async function main() {
         )
     );
 
+    // Russian reachability is a second-stage gate: only nodes that already
+    // passed the full CI health/speed test are sent to external Russian probes.
+    // Check-Host evaluates every surviving non-LTE candidate; Globalping is
+    // additionally used for a rotating, free-budget subset. LTE is never gated.
+    globalpingSelection = buildGlobalpingSelection(
+        healthResults
+            .filter(result => result.ok && !result.whiteList)
+            .map(result => ({ id: result.id, link: result.link, remarks: result.remarks })),
+        candidateMap,
+        globalpingState
+    );
+
+    console.log(
+        `RUSSIA PROBES AFTER HEALTH: Check-Host=${CHECK_HOST_RUSSIA_NODES.length} nodes for all non-LTE survivors; ` +
+        `Globalping=${globalpingSelection.size}/${GLOBALPING_MAX_CANDIDATES_PER_CYCLE} TCP candidates this cycle`
+    );
+
+    let russiaGateFailures = 0;
+    let russiaGatePassed = 0;
+    let russiaGatePending = 0;
+
+    await Promise.all(healthResults.map(async result => {
+        const sourceMeta = candidateMap[result.linkFingerprint] || null;
+        let url;
+        try {
+            url = new URL(result.link);
+        } catch {
+            result.ok = false;
+            result.reason = "Russia reachability skipped: invalid endpoint URL";
+            russiaGateFailures += 1;
+            return;
+        }
+
+        const probe = await checkRussiaReachability(
+            { id: result.id, link: result.link, remarks: result.remarks, whiteList: result.whiteList },
+            url,
+            result.protocol || getProtocol(result.link),
+            sourceMeta
+        );
+        result.russiaProbe = probe;
+
+        if (probe.globalping && !probe.globalping.skipped) {
+            globalpingState[result.linkFingerprint] = {
+                checkedAt: Number(probe.checkedAt) || Date.now(),
+                ok: Boolean(probe.globalping.ok),
+                minLatencyMs: Number(probe.globalping.minLatencyMs) || 0,
+                unavailable: Boolean(probe.globalping.unavailable),
+                rateLimited: Boolean(probe.globalping.rateLimited)
+            };
+        }
+
+        if (!probe.required) return;
+
+        if (probe.gatePassed) {
+            russiaGatePassed += 1;
+            return;
+        }
+
+        if (probe.providersUnavailable) {
+            russiaGatePending += 1;
+            return;
+        }
+
+        result.ok = false;
+        result.reason =
+            `Russia reachability failed: Check-Host ${probe.checkHost?.nodesReachable || 0}/${probe.checkHost?.nodesTested || 0}; ` +
+            `Globalping ${probe.globalping?.probesReachable || 0}/${probe.globalping?.probesTested || 0}`;
+        russiaGateFailures += 1;
+    }));
+
+    passed = healthResults.filter(result => result.ok).length;
+    failed = healthResults.filter(result => !result.ok).length;
+
     if (
         checked > 0 &&
-        passed === 0
+        managedItems.some(item => !MANAGED_WHITE_LIST_RE.test(String(item.id || ""))) &&
+        healthResults.filter(result => result.ok && !result.whiteList).length === 0
     ) {
         throw new Error(
             "All Source servers failed health checks; " +
@@ -4094,7 +4176,10 @@ async function main() {
             globalpingProbeLimit: GLOBALPING_PROBE_LIMIT,
             globalpingStateMaxAgeMs: GLOBALPING_STATE_MAX_AGE_MS,
             globalpingSelectionCount: globalpingSelection.size,
-            policy: "Non-LTE: at least one Russian external reachability provider must confirm TCP reachability. UDP/Hysteria results may be inconclusive; provider outage/rate-limit never mass-fails the pool. LTE is diagnostic only. Xray/speed remains the final health gate."
+            russiaGatePassed,
+            russiaGateFailures,
+            russiaGatePending,
+            policy: "Non-LTE survivors: Check-Host runs across the full post-health pool; Globalping runs on a rotating free-budget subset. TCP requires a positive Russian reachability result from at least one available provider. UDP/Hysteria may be inconclusive and is not rejected solely for lack of a UDP probe. Provider outage/rate-limit never mass-fails healthy nodes. LTE is diagnostic only and never gated by Russian probes."
         },
         gamingCriteria: {
             minKbps:
