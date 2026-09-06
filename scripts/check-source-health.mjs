@@ -366,7 +366,28 @@ const GAMING_MAX_LATENCY_SPREAD_MS =
         Number(process.env.HEALTHCHECK_GAMING_MAX_LATENCY_SPREAD_MS) || 25
     );
 
+const GAMING_BACKUP_MAX_LATENCY_MS =
+    Math.max(
+        GAMING_MAX_LATENCY_MS,
+        Number(process.env.HEALTHCHECK_GAMING_BACKUP_MAX_LATENCY_MS) || 180
+    );
+
+const GAMING_BACKUP_MAX_LATENCY_SPREAD_MS =
+    Math.max(
+        GAMING_MAX_LATENCY_SPREAD_MS,
+        Number(process.env.HEALTHCHECK_GAMING_BACKUP_MAX_LATENCY_SPREAD_MS) || 50
+    );
+
 const GAMING_BASE_SPEED_PROVIDER_COUNT = 3;
+
+const GAMING_BACKUP_MIN_QUALITY_PASSES =
+    Math.max(
+        1,
+        Math.min(
+            GAMING_BASE_SPEED_PROVIDER_COUNT,
+            Number(process.env.HEALTHCHECK_GAMING_BACKUP_MIN_QUALITY_PASSES) || 1
+        )
+    );
 
 const SPEED_PROVIDER_CONCURRENCY =
     Math.max(
@@ -2556,12 +2577,31 @@ function getGamingMetrics(
         qualityPassed >= GAMING_MIN_QUALITY_PASSES &&
         Number(quality?.kbps) >= GAMING_MIN_KBPS;
 
+    const enoughBackupSpeedProviders =
+        qualityPassed >= GAMING_BACKUP_MIN_QUALITY_PASSES &&
+        Number(quality?.kbps) >= GAMING_MIN_KBPS;
+
+    const validLatency =
+        gamingLatency?.ok === true &&
+        latencies.length === 3;
+
     const eligible =
         enoughIndependentSpeedProviders &&
-        gamingLatency?.ok === true &&
-        latencies.length === 3 &&
+        validLatency &&
         maxLatencyMs <= GAMING_MAX_LATENCY_MS &&
         latencySpreadMs <= GAMING_MAX_LATENCY_SPREAD_MS;
+
+    const backupEligible =
+        enoughBackupSpeedProviders &&
+        validLatency &&
+        maxLatencyMs <= GAMING_BACKUP_MAX_LATENCY_MS &&
+        latencySpreadMs <= GAMING_BACKUP_MAX_LATENCY_SPREAD_MS;
+
+    const tier = eligible
+        ? 1
+        : backupEligible
+            ? 2
+            : 0;
 
     const speedScore =
         Math.min(
@@ -2596,6 +2636,8 @@ function getGamingMetrics(
 
     return {
         eligible,
+        backupEligible,
+        tier,
         medianLatencyMs:
             Number.isFinite(medianLatencyMs)
                 ? Math.round(medianLatencyMs)
@@ -2802,24 +2844,8 @@ function selectFeaturedGamingServers(
                 result.ok &&
                 !result.whiteList &&
                 result.country &&
-                result.gaming?.eligible
-        )
-        .sort((a, b) => {
-            const score =
-                Number(b.gaming?.score || 0) -
-                Number(a.gaming?.score || 0);
-
-            if (score !== 0) return score;
-
-            const speed =
-                resultSpeed(b) -
-                resultSpeed(a);
-
-            return speed !== 0
-                ? speed
-                : resultLatency(a) -
-                    resultLatency(b);
-        });
+                Number(result.gaming?.tier || 0) > 0
+        );
 
     const excluded = new Set(
         [...excludedCountries].map(country =>
@@ -2827,45 +2853,50 @@ function selectFeaturedGamingServers(
         )
     );
 
-    // Gaming locations remain country-based: first choose the best countries,
-    // then publish up to two best eligible servers inside each selected country.
     const groups = new Map();
-
     for (const result of candidates) {
         const country = String(result.country || "").trim();
-        const countryKey = country.toLowerCase();
+        const key = country.toLowerCase();
+        if (!country || excluded.has(key)) continue;
 
-        if (!country || excluded.has(countryKey)) continue;
-
-        const bucket = groups.get(countryKey) || {
-            country,
-            members: [],
-        };
-
-        if (bucket.members.length < GAMING_SERVERS_PER_COUNTRY) {
-            bucket.members.push(result);
-        }
-
-        groups.set(countryKey, bucket);
+        const bucket = groups.get(key) || { country, members: [] };
+        bucket.members.push(result);
+        groups.set(key, bucket);
     }
 
     const rankedCountries = [...groups.values()]
+        .map(group => {
+            const sorted = group.members.slice().sort((a, b) => {
+                const tierDiff = (Number(a.gaming?.tier) || 9) - (Number(b.gaming?.tier) || 9);
+                if (tierDiff) return tierDiff;
+                const scoreDiff = (Number(b.gaming?.score) || 0) - (Number(a.gaming?.score) || 0);
+                if (scoreDiff) return scoreDiff;
+                return resultSpeed(b) - resultSpeed(a);
+            });
+
+            const primary = sorted.find(item => Number(item.gaming?.tier) === 1);
+            if (!primary) return null;
+
+            const backup = sorted.find(item =>
+                item.linkFingerprint !== primary.linkFingerprint &&
+                Number(item.gaming?.tier) > 0 &&
+                Number(item.gaming?.tier) <= 2
+            );
+
+            return {
+                country: group.country,
+                members: backup ? [primary, backup] : [primary]
+            };
+        })
+        .filter(Boolean)
         .sort((a, b) => {
-            const aBest = Number(a.members[0]?.gaming?.score || 0);
-            const bBest = Number(b.members[0]?.gaming?.score || 0);
-
-            if (aBest !== bBest) return bBest - aBest;
-
-            const aSpeed = resultSpeed(a.members[0]);
-            const bSpeed = resultSpeed(b.members[0]);
-
-            return bSpeed - aSpeed;
+            const scoreDiff = (Number(b.members[0]?.gaming?.score) || 0) - (Number(a.members[0]?.gaming?.score) || 0);
+            if (scoreDiff) return scoreDiff;
+            return resultSpeed(b.members[0]) - resultSpeed(a.members[0]);
         })
         .slice(0, Math.max(1, limit));
 
-    return rankedCountries.flatMap(country =>
-        country.members
-    );
+    return rankedCountries.flatMap(country => country.members);
 }
 
 function applyFeaturedRegularBadges(indexEntries, healthResults) {
@@ -2948,6 +2979,7 @@ async function buildGamingAssignments(
             link: selectedLink,
             quality: item.quality,
             gaming: item.gaming,
+            gamingTier: Number(item.gaming?.tier) || 0,
         };
     }).filter(Boolean);
 }
@@ -3822,6 +3854,12 @@ async function main() {
                 GAMING_MIN_QUALITY_PASSES,
             maxServersPerCountry:
                 GAMING_SERVERS_PER_COUNTRY,
+            backupMaxLatencyMs:
+                GAMING_BACKUP_MAX_LATENCY_MS,
+            backupMaxLatencySpreadMs:
+                GAMING_BACKUP_MAX_LATENCY_SPREAD_MS,
+            backupMinQualityPasses:
+                GAMING_BACKUP_MIN_QUALITY_PASSES,
         },
         quarantine: {
             durationMinutes: 90,
