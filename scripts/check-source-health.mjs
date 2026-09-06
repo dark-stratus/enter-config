@@ -220,9 +220,14 @@ const CHECK_HOST_RUSSIA_NODES = String(
     process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_NODES ||
     "ru1.node.check-host.net,ru2.node.check-host.net,ru3.node.check-host.net"
 ).split(/[,\r\n;]+/).map(v => v.trim()).filter(Boolean);
-const CHECK_HOST_TIMEOUT_MS = Math.max(5000, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_TIMEOUT_MS) || 12000);
-const CHECK_HOST_POLL_MS = Math.max(500, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_POLL_MS) || 1000);
-const CHECK_HOST_MAX_POLL_MS = Math.max(CHECK_HOST_POLL_MS, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_MAX_POLL_MS) || 10000);
+const CHECK_HOST_TIMEOUT_MS = Math.max(5000, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_TIMEOUT_MS) || 10000);
+const CHECK_HOST_POLL_MS = Math.max(750, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_POLL_MS) || 1500);
+const CHECK_HOST_MAX_POLL_MS = Math.max(CHECK_HOST_POLL_MS, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_MAX_POLL_MS) || 7500);
+// Check-Host is asynchronous, but the public API can still throttle bursts.
+// Pace *all* create/result requests through one queue instead of sleeping
+// serially between servers. This keeps the workflow bounded while avoiding
+// a burst of hundreds of concurrent HTTP calls.
+const CHECK_HOST_API_MIN_INTERVAL_MS = Math.max(100, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_MIN_INTERVAL_MS) || 180);
 
 const GLOBALPING_API_BASE =
     process.env.HEALTHCHECK_GLOBALPING_API_BASE ||
@@ -682,10 +687,24 @@ async function requestJson(url, options = {}, timeoutMs = REQUEST_TIMEOUT_MS) {
         });
         const text = await response.text();
         let data = null;
-        try { data = text ? JSON.parse(text) : null; } catch { throw new Error(`non-JSON response (${response.status})`); }
+        try {
+            data = text ? JSON.parse(text) : null;
+        } catch {
+            const error = new Error(`non-JSON response (${response.status})`);
+            error.status = response.status;
+            const retryAfter = Number(response.headers.get("retry-after"));
+            if (Number.isFinite(retryAfter) && retryAfter >= 0) {
+                error.retryAfterMs = retryAfter * 1000;
+            }
+            throw error;
+        }
         if (!response.ok) {
             const error = new Error(String(data?.error?.message || data?.message || text || `HTTP ${response.status}`));
             error.status = response.status;
+            const retryAfter = Number(response.headers.get("retry-after"));
+            if (Number.isFinite(retryAfter) && retryAfter >= 0) {
+                error.retryAfterMs = retryAfter * 1000;
+            }
             throw error;
         }
         return data;
@@ -702,58 +721,196 @@ async function requestJsonWithRetries(url, options = {}, timeoutMs = REQUEST_TIM
         } catch (error) {
             lastError = error;
             const status = Number(error?.status || 0);
-            const retryable = status === 429 || status === 408 || status >= 500 || /aborted|timeout/i.test(String(error?.message || ""));
+            const retryable =
+                status === 429 ||
+                status === 408 ||
+                status >= 500 ||
+                /aborted|timeout/i.test(String(error?.message || ""));
             if (!retryable || attempt >= retries) throw error;
-            const retryAfter = Number(error?.retryAfterMs || 0);
-            await sleep(Math.min(5000, retryAfter || 500 * (attempt + 1)));
+
+            const serverDelay = Number(error?.retryAfterMs);
+            const exponential = status === 429
+                ? 1500 * (2 ** attempt)
+                : 500 * (attempt + 1);
+            const jitter = Math.floor(Math.random() * 250);
+            const delay = Number.isFinite(serverDelay)
+                ? Math.max(serverDelay, exponential)
+                : exponential;
+
+            await sleep(Math.min(8000, delay + jitter));
         }
     }
     throw lastError || new Error("request failed");
 }
 
+let checkHostApiQueue = Promise.resolve();
+let checkHostLastRequestAt = 0;
+
+function scheduleCheckHostApiRequest(fn) {
+    const run = checkHostApiQueue.then(async () => {
+        const elapsed = Date.now() - checkHostLastRequestAt;
+        const wait = Math.max(0, CHECK_HOST_API_MIN_INTERVAL_MS - elapsed);
+        if (wait > 0) await sleep(wait);
+        checkHostLastRequestAt = Date.now();
+        return fn();
+    });
+
+    // Keep the queue alive after an individual request fails.
+    checkHostApiQueue = run.catch(() => undefined);
+    return run;
+}
+
 function parseCheckHostNode(raw, node, transport = "tcp") {
-    if (Array.isArray(raw) && raw.length) {
-        const first = raw[0];
-        if (first && typeof first === "object" && Number.isFinite(Number(first.time))) {
-            return { node, reachable: true, inconclusive: false, latencyMs: Number(first.time) * 1000, error: "" };
-        }
-        const error = String(first?.error || first?.message || "").trim();
-        if (transport === "udp" && /open or filtered|filtered|timeout|timed? out/i.test(error)) {
-            return { node, reachable: false, inconclusive: true, latencyMs: 0, error: error || "open or filtered" };
-        }
-        return { node, reachable: false, inconclusive: false, latencyMs: 0, error: error || "unreachable" };
+    if (raw == null) {
+        return { node, reachable: false, inconclusive: true, latencyMs: 0, error: "still performing" };
     }
-    return { node, reachable: false, inconclusive: true, latencyMs: 0, error: "no result" };
+
+    const first = Array.isArray(raw) ? raw[0] : raw;
+    if (first && typeof first === "object") {
+        if (Number.isFinite(Number(first.time))) {
+            return {
+                node,
+                reachable: true,
+                inconclusive: false,
+                latencyMs: Number(first.time) * 1000,
+                error: ""
+            };
+        }
+
+        const error = String(first.error || first.message || "").trim();
+        if (transport === "udp" && /open or filtered|filtered|timeout|timed? out/i.test(error)) {
+            return {
+                node,
+                reachable: false,
+                inconclusive: true,
+                latencyMs: 0,
+                error: error || "open or filtered"
+            };
+        }
+
+        return {
+            node,
+            reachable: false,
+            inconclusive: false,
+            latencyMs: 0,
+            error: error || "unreachable"
+        };
+    }
+
+    return {
+        node,
+        reachable: false,
+        inconclusive: transport === "udp",
+        latencyMs: 0,
+        error: String(first || "unreachable")
+    };
 }
 
 async function checkHostRussia(url, protocol) {
     const transport = getTransportType(protocol);
     const checkType = transport === "udp" ? "udp" : "tcp";
+
     return checkHostLimiter(async () => {
         try {
-            const params = new URLSearchParams({ host: `${url.hostname}:${Number(url.port || 443)}`, max_nodes: String(CHECK_HOST_RUSSIA_NODES.length) });
+            const params = new URLSearchParams({
+                host: `${url.hostname}:${Number(url.port || 443)}`,
+                max_nodes: String(CHECK_HOST_RUSSIA_NODES.length)
+            });
             for (const node of CHECK_HOST_RUSSIA_NODES) params.append("node", node);
-            const created = await requestJsonWithRetries(`${CHECK_HOST_API_BASE}/check-${checkType}?${params}`, { headers: { "user-agent": "enter-config-russia-health/1.0" } }, CHECK_HOST_TIMEOUT_MS);
+
+            const createUrl = `${CHECK_HOST_API_BASE}/check-${checkType}?${params}`;
+            const created = await scheduleCheckHostApiRequest(() =>
+                requestJsonWithRetries(
+                    createUrl,
+                    { headers: { "user-agent": "enter-config-russia-health/1.0" } },
+                    CHECK_HOST_TIMEOUT_MS
+                )
+            );
+
             const requestId = String(created?.request_id || "").trim();
             if (!requestId) throw new Error("missing Check-Host request_id");
+
+            const selectedNodes = Object.keys(created?.nodes || {});
+            if (!selectedNodes.length) {
+                throw new Error("Check-Host returned no selected nodes");
+            }
+
             const started = Date.now();
             while (Date.now() - started <= CHECK_HOST_MAX_POLL_MS) {
                 await sleep(CHECK_HOST_POLL_MS);
-                const payload = await requestJsonWithRetries(`${CHECK_HOST_API_BASE}/check-result/${encodeURIComponent(requestId)}`, { headers: { "user-agent": "enter-config-russia-health/1.0" } }, CHECK_HOST_TIMEOUT_MS);
-                const parsed = CHECK_HOST_RUSSIA_NODES.map(node => parseCheckHostNode(payload?.[node] ?? null, node, transport));
+
+                const payload = await scheduleCheckHostApiRequest(() =>
+                    requestJsonWithRetries(
+                        `${CHECK_HOST_API_BASE}/check-result/${encodeURIComponent(requestId)}`,
+                        { headers: { "user-agent": "enter-config-russia-health/1.0" } },
+                        CHECK_HOST_TIMEOUT_MS
+                    )
+                );
+
+                const parsed = selectedNodes.map(node =>
+                    parseCheckHostNode(payload?.[node] ?? null, node, transport)
+                );
                 const reachable = parsed.filter(x => x.reachable);
-                const inconclusive = parsed.filter(x => x.inconclusive).length;
-                const allResolved = parsed.length > 0 && inconclusive === 0;
-                if (reachable.length > 0 || allResolved) {
-                    return { provider: "check-host", ok: reachable.length > 0, unavailable: false, inconclusive: reachable.length === 0 && inconclusive > 0, transport, checkType, nodesTested: parsed.length, nodesReachable: reachable.length, nodesInconclusive: inconclusive, minLatencyMs: reachable.length ? Math.min(...reachable.map(x => x.latencyMs)) : 0, results: parsed };
+                const pending = parsed.filter(x => x.inconclusive && /still performing/i.test(x.error));
+                const hasUnresolved = parsed.some(x => x.inconclusive && /still performing/i.test(x.error));
+
+                if (reachable.length > 0) {
+                    return {
+                        provider: "check-host",
+                        ok: true,
+                        unavailable: false,
+                        inconclusive: false,
+                        transport,
+                        checkType,
+                        nodesTested: parsed.length,
+                        nodesReachable: reachable.length,
+                        nodesInconclusive: parsed.filter(x => x.inconclusive).length,
+                        minLatencyMs: Math.min(...reachable.map(x => x.latencyMs)),
+                        results: parsed
+                    };
+                }
+
+                if (!hasUnresolved && pending.length === 0) {
+                    return {
+                        provider: "check-host",
+                        ok: false,
+                        unavailable: false,
+                        inconclusive: transport === "udp",
+                        transport,
+                        checkType,
+                        nodesTested: parsed.length,
+                        nodesReachable: 0,
+                        nodesInconclusive: parsed.filter(x => x.inconclusive).length,
+                        minLatencyMs: 0,
+                        results: parsed
+                    };
                 }
             }
-            throw new Error("Check-Host polling timeout");
+
+            return {
+                provider: "check-host",
+                ok: false,
+                unavailable: true,
+                inconclusive: transport === "udp",
+                transport,
+                checkType,
+                error: "Check-Host polling timeout"
+            };
         } catch (error) {
-            return { provider: "check-host", ok: false, unavailable: true, inconclusive: false, transport, checkType, error: error?.message || String(error) };
+            return {
+                provider: "check-host",
+                ok: false,
+                unavailable: true,
+                inconclusive: false,
+                transport,
+                checkType,
+                rateLimited: Number(error?.status || 0) === 429,
+                error: error?.message || String(error)
+            };
         }
     });
 }
+
 
 async function globalpingRussia(url, protocol) {
     const transport = getTransportType(protocol);
@@ -795,19 +952,64 @@ async function globalpingRussia(url, protocol) {
 }
 
 async function checkRussiaReachability(item, url, protocol, sourceMeta) {
-    if (isLteCandidate(item, sourceMeta)) return { required: false, skipped: true, gatePassed: true, reason: "LTE/white-list diagnostic only" };
+    if (isLteCandidate(item, sourceMeta)) {
+        return {
+            required: false,
+            skipped: true,
+            gatePassed: true,
+            reason: "LTE/white-list diagnostic only"
+        };
+    }
+
     const useGlobalping = globalpingSelection.has(fingerprintLink(item?.link || ""));
     const [checkHost, globalping] = await Promise.all([
         checkHostRussia(url, protocol),
-        useGlobalping ? globalpingRussia(url, protocol) : Promise.resolve({ provider: "globalping", ok: false, unavailable: false, inconclusive: true, skipped: true, error: "deferred by free hourly budget" })
+        useGlobalping
+            ? globalpingRussia(url, protocol)
+            : Promise.resolve({
+                provider: "globalping",
+                ok: false,
+                unavailable: false,
+                inconclusive: true,
+                skipped: true,
+                error: "deferred by free hourly budget"
+            })
     ]);
+
     const transport = getTransportType(protocol);
     const anyReachable = Boolean(checkHost.ok || globalping.ok);
-    const providerOutage = Boolean(checkHost.unavailable && (globalping.unavailable || globalping.skipped));
-    const udpInconclusive = transport === "udp" && (checkHost.inconclusive || globalping.inconclusive || globalping.unavailable || globalping.skipped);
-    const values = [checkHost.minLatencyMs, globalping.minLatencyMs].map(Number).filter(value => Number.isFinite(value) && value > 0);
-    return { required: true, skipped: false, gatePassed: anyReachable || providerOutage || udpInconclusive, anyReachable, providersUnavailable: providerOutage, transport, checkHost, globalping, minLatencyMs: values.length ? Math.min(...values) : 0, checkedAt: Date.now() };
+    const providerOutage = Boolean(
+        checkHost.unavailable &&
+        (globalping.unavailable || globalping.skipped)
+    );
+    const udpInconclusive =
+        transport === "udp" &&
+        !anyReachable &&
+        (checkHost.inconclusive || globalping.inconclusive || globalping.unavailable || globalping.skipped);
+
+    const values = [checkHost.minLatencyMs, globalping.minLatencyMs]
+        .map(Number)
+        .filter(value => Number.isFinite(value) && value > 0);
+
+    return {
+        required: true,
+        skipped: false,
+        // UNKNOWN stays UNKNOWN. It never becomes a false PASS merely because
+        // an external checker was rate-limited or temporarily unavailable.
+        // For UDP we intentionally allow an inconclusive result because a
+        // generic remote UDP probe cannot prove the absence of a response.
+        gatePassed: anyReachable || udpInconclusive,
+        gatePending: !anyReachable && !udpInconclusive && providerOutage,
+        anyReachable,
+        providersUnavailable: providerOutage,
+        transport,
+        checkHost,
+        globalping,
+        minLatencyMs: values.length ? Math.min(...values) : 0,
+        checkedAt: Date.now()
+    };
 }
+
 
 function buildGlobalpingSelection(managedItems, candidateMap, state) {
     const now = Date.now();
@@ -4170,6 +4372,9 @@ async function main() {
             checkHostNodes: CHECK_HOST_RUSSIA_NODES,
             checkHostTimeoutMs: CHECK_HOST_TIMEOUT_MS,
             checkHostPollingMs: CHECK_HOST_POLL_MS,
+            checkHostMaxPollingMs: CHECK_HOST_MAX_POLL_MS,
+            checkHostApiMinIntervalMs: CHECK_HOST_API_MIN_INTERVAL_MS,
+            checkHostConcurrency: CHECK_HOST_CONCURRENCY,
             globalpingTokenConfigured: Boolean(GLOBALPING_TOKEN),
             globalpingFreeTestBudget: GLOBALPING_FREE_TEST_BUDGET,
             globalpingMaxCandidatesPerCycle: GLOBALPING_MAX_CANDIDATES_PER_CYCLE,
@@ -4179,7 +4384,7 @@ async function main() {
             russiaGatePassed,
             russiaGateFailures,
             russiaGatePending,
-            policy: "Non-LTE survivors: Check-Host runs across the full post-health pool; Globalping runs on a rotating free-budget subset. TCP requires a positive Russian reachability result from at least one available provider. UDP/Hysteria may be inconclusive and is not rejected solely for lack of a UDP probe. Provider outage/rate-limit never mass-fails healthy nodes. LTE is diagnostic only and never gated by Russian probes."
+            policy: "Non-LTE survivors: Check-Host runs across the full post-health pool after primary health/speed checks, through a globally paced API queue. TCP requires a positive Russian reachability result. UDP/Hysteria may remain inconclusive and is not rejected solely because generic UDP probing cannot prove openness. Check-Host 429/5xx/timeout is UNKNOWN/PENDING, never an automatic PASS. LTE is diagnostic only and never gated by Russian probes."
         },
         gamingCriteria: {
             minKbps:
