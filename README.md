@@ -1,25 +1,25 @@
 # VPN source report
 
-Последнее обновление: 2026-09-06T17:41:21.540Z
+Последнее обновление: 2026-09-06T18:49:33.259Z
 
 Статистика **по каждому источнику отдельно**: **взяли → живы → в итоговом пуле**.
 
-🧠 Из памяти предыдущего пула сохранено: **84** серверов.
+🧠 Из памяти предыдущего пула сохранено: **83** серверов.
 
 ## Источники
 
 | Секрет | Источник | Слот | Взяли | Живы | В итоговом пуле | Состояние |
 |---|---|---:|---:|---:|---:|---|
-| **SOURCE_URL_1** | rtwo2/FastNodes — verified.txt | 1 | 446 | 336 | 33 | ✅ |
+| **SOURCE_URL_1** | rtwo2/FastNodes — verified.txt | 1 | 442 | 351 | 30 | ✅ |
 | **SOURCE_URL2_2** | keylineservices.top/QXUDAX9FdsKyV_plyYL0g8SNrrE5d-U4 | 2 | 207 | 11 | 3 | ✅ |
-| **SOURCE_URL4_4** | keylineservices.top/kNIF5Xx9nGBKSCnSqBAJL6rqvkQrZKu7 | 4 | 88 | 0 | 0 | ⚠️ |
-| **SOURCE_URL_5** | VovaplusEXP/p-configs — vless.txt | 5 | 219 | 181 | 15 | ✅ |
-| **SOURCE_URL5_6** | keylineservices.top/Fzo26Xemako8Zyb3PLRKMNDBSP8LPsEj | 6 | 32 | 25 | 4 | ✅ |
-| **SOURCE_URL_7** | wlunlocker/vpn-configs — blacklist_vpn1.txt | 7 | 97 | 23 | 1 | ✅ |
-| **SOURCE_URL_8** | igareck/vpn-configs-for-russia — BLACK_VLESS_RUS_mobile.txt | 8 | 91 | 17 | 4 | ✅ |
-| **SOURCE_URL_9** | zieng2/wl — vless_universal.txt | 9 | 166 | 19 | 19 | ✅ |
-| **SOURCE_URL_10** | igareck/vpn-configs-for-russia — WHITE-CIDR-RU-all.txt | 10 | 15 | 0 | 0 | ⚠️ |
-| **SOURCE_URL_11** | igareck/vpn-configs-for-russia — WHITE-SNI-RU-all.txt | 11 | 5 | 4 | 4 | ✅ |
+| **SOURCE_URL4_4** | keylineservices.top/kNIF5Xx9nGBKSCnSqBAJL6rqvkQrZKu7 | 4 | 88 | 1 | 0 | ✅ |
+| **SOURCE_URL_5** | VovaplusEXP/p-configs — vless.txt | 5 | 219 | 188 | 17 | ✅ |
+| **SOURCE_URL5_6** | keylineservices.top/Fzo26Xemako8Zyb3PLRKMNDBSP8LPsEj | 6 | 32 | 22 | 4 | ✅ |
+| **SOURCE_URL_7** | wlunlocker/vpn-configs — blacklist_vpn1.txt | 7 | 97 | 21 | 2 | ✅ |
+| **SOURCE_URL_8** | igareck/vpn-configs-for-russia — BLACK_VLESS_RUS_mobile.txt | 8 | 121 | 33 | 4 | ✅ |
+| **SOURCE_URL_9** | zieng2/wl — vless_universal.txt | 9 | 161 | 15 | 15 | ✅ |
+| **SOURCE_URL_10** | igareck/vpn-configs-for-russia — WHITE-CIDR-RU-all.txt | 10 | 12 | 2 | 2 | ✅ |
+| **SOURCE_URL_11** | igareck/vpn-configs-for-russia — WHITE-SNI-RU-all.txt | 11 | 0 | 4 | 4 | ⚠️ |
 
 ## Правила слотов
 
