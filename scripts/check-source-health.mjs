@@ -244,6 +244,13 @@ const GLOBALPING_STATE_MAX_AGE_MS = Math.max(15 * 60 * 1000, Number(process.env.
 const CHECK_HOST_CONCURRENCY = Math.max(1, Math.min(8, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_CONCURRENCY) || 6));
 const GLOBALPING_CONCURRENCY = Math.max(1, Math.min(4, Number(process.env.HEALTHCHECK_GLOBALPING_CONCURRENCY) || 4));
 
+// Speed providers are called from many candidate workers. Keep their concurrency
+// bounded globally, not per candidate, so 16 health workers cannot fan out into
+// dozens of simultaneous upstream measurements and trigger provider throttling.
+const SPEED_PROVIDER_GLOBAL_CONCURRENCY = Math.max(2, Math.min(12, Number(process.env.HEALTHCHECK_SPEED_PROVIDER_GLOBAL_CONCURRENCY) || 12));
+const MLAB_LOCATE_CONCURRENCY = Math.max(1, Math.min(6, Number(process.env.HEALTHCHECK_MLAB_LOCATE_CONCURRENCY) || 3));
+const YANDEX_PROBE_CONCURRENCY = Math.max(1, Math.min(6, Number(process.env.HEALTHCHECK_YANDEX_PROBE_CONCURRENCY) || 3));
+
 const CONNECTION_TIME_MAX_MEDIAN_MS =
     Math.max(500, Number(process.env.HEALTHCHECK_MAX_MEDIAN_CONNECTION_MS) || 2500);
 
@@ -667,6 +674,9 @@ function createLimiter(limit) {
 
 const checkHostLimiter = createLimiter(CHECK_HOST_CONCURRENCY);
 const globalpingLimiter = createLimiter(GLOBALPING_CONCURRENCY);
+const speedProviderLimiter = createLimiter(SPEED_PROVIDER_GLOBAL_CONCURRENCY);
+const mlabLocateLimiter = createLimiter(MLAB_LOCATE_CONCURRENCY);
+const yandexProbeLimiter = createLimiter(YANDEX_PROBE_CONCURRENCY);
 
 function isLteCandidate(item, sourceMeta = null) {
     return Boolean(sourceMeta?.whiteList || item?.whiteList === true || MANAGED_WHITE_LIST_RE.test(String(item?.id || "")));
@@ -1859,6 +1869,12 @@ async function runIndependentCurlSpeedProvider(
 async function resolveMlabServiceUrlsViaSocks(
     socksPort
 ) {
+    return mlabLocateLimiter(() => resolveMlabServiceUrlsViaSocksUnbounded(socksPort));
+}
+
+async function resolveMlabServiceUrlsViaSocksUnbounded(
+    socksPort
+) {
     const maxAttempts = 3;
     let lastError = "M-Lab Locate failed";
 
@@ -2174,6 +2190,12 @@ async function runMlabSpeedProvider(
 
 
 async function resolveYandexDownloadProbesViaSocks(
+    socksPort
+) {
+    return yandexProbeLimiter(() => resolveYandexDownloadProbesViaSocksUnbounded(socksPort));
+}
+
+async function resolveYandexDownloadProbesViaSocksUnbounded(
     socksPort
 ) {
     const maxAttempts = 2;
@@ -2608,13 +2630,14 @@ async function runIndependentSpeedCheck(
             const provider = INDEPENDENT_SPEED_PROVIDERS[index];
             try {
                 let result;
-                if (provider.type === "ndt7") {
-                    result = await runMlabSpeedProvider(socksPort);
-                } else if (provider.type === "yandex") {
-                    result = await runYandexSpeedProvider(socksPort);
-                } else {
-                    result = await runIndependentCurlSpeedProvider(socksPort, provider);
-                }
+                result = await speedProviderLimiter(async () => {
+                    if (provider.type === "ndt7") {
+                        return runMlabSpeedProvider(socksPort);
+                    } else if (provider.type === "yandex") {
+                        return runYandexSpeedProvider(socksPort);
+                    }
+                    return runIndependentCurlSpeedProvider(socksPort, provider);
+                });
                 providers[index] = result;
             } catch (error) {
                 providers[index] = {
