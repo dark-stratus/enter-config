@@ -220,26 +220,29 @@ const CHECK_HOST_RUSSIA_NODES = String(
     process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_NODES ||
     "ru1.node.check-host.net,ru2.node.check-host.net,ru3.node.check-host.net"
 ).split(/[,\r\n;]+/).map(v => v.trim()).filter(Boolean);
-const CHECK_HOST_TIMEOUT_MS = Math.max(5000, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_TIMEOUT_MS) || 10000);
+const CHECK_HOST_TIMEOUT_MS = Math.max(5000, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_TIMEOUT_MS) || 9000);
 const CHECK_HOST_POLL_MS = Math.max(750, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_POLL_MS) || 1500);
-const CHECK_HOST_MAX_POLL_MS = Math.max(CHECK_HOST_POLL_MS, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_MAX_POLL_MS) || 7500);
+const CHECK_HOST_MAX_POLL_MS = Math.max(CHECK_HOST_POLL_MS, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_MAX_POLL_MS) || 7000);
 // Check-Host is asynchronous, but the public API can still throttle bursts.
 // Pace *all* create/result requests through one queue instead of sleeping
 // serially between servers. This keeps the workflow bounded while avoiding
 // a burst of hundreds of concurrent HTTP calls.
-const CHECK_HOST_API_MIN_INTERVAL_MS = Math.max(100, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_MIN_INTERVAL_MS) || 180);
+const CHECK_HOST_API_MIN_INTERVAL_MS = Math.max(100, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_MIN_INTERVAL_MS) || 120);
 
 const GLOBALPING_API_BASE =
     process.env.HEALTHCHECK_GLOBALPING_API_BASE ||
     "https://api.globalping.io/v1";
 const GLOBALPING_TOKEN = String(process.env.GLOBALPING_API_TOKEN || "").trim();
-const GLOBALPING_TIMEOUT_MS = Math.max(5000, Number(process.env.HEALTHCHECK_GLOBALPING_TIMEOUT_MS) || 15000);
+const GLOBALPING_TIMEOUT_MS = Math.max(5000, Number(process.env.HEALTHCHECK_GLOBALPING_TIMEOUT_MS) || 8000);
 const GLOBALPING_FREE_TEST_BUDGET = GLOBALPING_TOKEN ? 450 : 220;
 const GLOBALPING_PROBE_LIMIT = 1;
-const GLOBALPING_MAX_CANDIDATES_PER_CYCLE = Math.floor(GLOBALPING_FREE_TEST_BUDGET / GLOBALPING_PROBE_LIMIT);
-const GLOBALPING_STATE_MAX_AGE_MS = Math.max(15 * 60 * 1000, Number(process.env.HEALTHCHECK_RUSSIA_PROBE_STATE_MAX_AGE_MS) || 3 * 60 * 60 * 1000);
+const GLOBALPING_MAX_CANDIDATES_PER_CYCLE = Math.min(
+    Math.floor(GLOBALPING_FREE_TEST_BUDGET / GLOBALPING_PROBE_LIMIT),
+    Math.max(1, Number(process.env.HEALTHCHECK_GLOBALPING_MAX_CANDIDATES_PER_CYCLE) || 240)
+);
+const GLOBALPING_STATE_MAX_AGE_MS = Math.max(15 * 60 * 1000, Number(process.env.HEALTHCHECK_RUSSIA_PROBE_STATE_MAX_AGE_MS) || 6 * 60 * 60 * 1000);
 const CHECK_HOST_CONCURRENCY = Math.max(1, Math.min(8, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_CONCURRENCY) || 6));
-const GLOBALPING_CONCURRENCY = Math.max(1, Math.min(4, Number(process.env.HEALTHCHECK_GLOBALPING_CONCURRENCY) || 2));
+const GLOBALPING_CONCURRENCY = Math.max(1, Math.min(4, Number(process.env.HEALTHCHECK_GLOBALPING_CONCURRENCY) || 4));
 
 const CONNECTION_TIME_MAX_MEDIAN_MS =
     Math.max(500, Number(process.env.HEALTHCHECK_MAX_MEDIAN_CONNECTION_MS) || 2500);
@@ -278,13 +281,13 @@ const INDEPENDENT_SPEED_MIN_MEDIAN_KBPS =
 const INDEPENDENT_SPEED_TIMEOUT_MS =
     Math.max(
         5000,
-        Number(process.env.HEALTHCHECK_SPEED_TIMEOUT_MS) || 12000
+        Number(process.env.HEALTHCHECK_SPEED_TIMEOUT_MS) || 9000
     );
 
 const MLAB_LOCATE_TIMEOUT_MS =
     Math.max(
         3000,
-        Number(process.env.HEALTHCHECK_MLAB_LOCATE_TIMEOUT_MS) || 8000
+        Number(process.env.HEALTHCHECK_MLAB_LOCATE_TIMEOUT_MS) || 6000
     );
 
 const MLAB_LOCATE_URL =
@@ -298,7 +301,7 @@ const YANDEX_PROBES_URL =
 const YANDEX_PROBE_TIMEOUT_MS =
     Math.max(
         5000,
-        Number(process.env.HEALTHCHECK_YANDEX_TIMEOUT_MS) || 9000
+        Number(process.env.HEALTHCHECK_YANDEX_TIMEOUT_MS) || 7000
     );
 
 const REQUIRED_SPEED_PROVIDER_IDS = new Set(
@@ -585,13 +588,10 @@ function countryFlag(country = "") {
     return direct?.[0] || "";
 }
 
-function setLinkRemark(link, remark) {
+function stripLinkRemark(link) {
     const raw = String(link || "").trim();
     if (!raw) return raw;
 
-    // White List display names belong exclusively to index.json.
-    // Strip any upstream fragment from the published .link URI so HAPP
-    // cannot mistake an upstream remark for the location name/flag.
     const hashIndex = raw.indexOf("#");
     return hashIndex >= 0 ? raw.slice(0, hashIndex) : raw;
 }
@@ -4257,29 +4257,22 @@ async function main() {
     await fs.rm(backupDir, { recursive: true, force: true });
     await fs.cp(LINKS_DIR, stageDir, { recursive: true });
 
-    // HAPP receives the location label from index.json. Keep the individual
-    // .link URI purely technical: strip the upstream fragment/remark so it
-    // cannot override or confuse the display name stored in index.json.
+    // HAPP receives the display label from index.json. Keep generated managed
+    // .link URIs purely technical by removing upstream URL fragments;
+    // source remarks remain available only as metadata.
     for (const item of normalizedIndex) {
-        if (
-            !item ||
-            !item.whiteList ||
-            !MANAGED_WHITE_LIST_RE.test(String(item.id || "")) ||
-            !String(item.remarks || "").trim()
-        ) {
-            continue;
-        }
+        if (!item || !isManagedSourceId(String(item.id || ""))) continue;
 
-        const displayLink = setLinkRemark(item.link, item.remarks);
-        if (!displayLink) continue;
+        const technicalLink = stripLinkRemark(item.link);
+        if (!technicalLink) continue;
 
-        item.link = displayLink;
+        item.link = technicalLink;
 
         const linkPath = path.join(stageDir, `${item.id}.link`);
         try {
             await fs.writeFile(
                 linkPath,
-                `${displayLink}\\n`,
+                `${technicalLink}\n`,
                 "utf8"
             );
         } catch (error) {
