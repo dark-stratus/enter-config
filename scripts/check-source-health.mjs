@@ -228,8 +228,8 @@ const CHECK_HOST_RUSSIA_NODES = String(
     "ru1.node.check-host.net,ru2.node.check-host.net,ru3.node.check-host.net"
 ).split(/[,\r\n;]+/).map(v => v.trim()).filter(Boolean);
 const CHECK_HOST_TIMEOUT_MS = Math.max(5000, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_TIMEOUT_MS) || 9000);
-const CHECK_HOST_POLL_MS = Math.max(750, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_POLL_MS) || 1500);
-const CHECK_HOST_MAX_POLL_MS = Math.max(CHECK_HOST_POLL_MS, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_MAX_POLL_MS) || 9000);
+const CHECK_HOST_POLL_MS = Math.max(750, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_POLL_MS) || 1000);
+const CHECK_HOST_MAX_POLL_MS = Math.max(CHECK_HOST_POLL_MS, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_MAX_POLL_MS) || 6000);
 // Check-Host is asynchronous, but the public API can still throttle bursts.
 // Pace *all* create/result requests through one queue instead of sleeping
 // serially between servers. This keeps the workflow bounded while avoiding
@@ -249,7 +249,10 @@ const GLOBALPING_MAX_CANDIDATES_PER_CYCLE = Math.min(
 );
 const GLOBALPING_STATE_MAX_AGE_MS = Math.max(15 * 60 * 1000, Number(process.env.HEALTHCHECK_RUSSIA_PROBE_STATE_MAX_AGE_MS) || 6 * 60 * 60 * 1000);
 const RUSSIA_GATE_STATE_MAX_AGE_MS = Math.max(5 * 60 * 1000, Number(process.env.HEALTHCHECK_RUSSIA_GATE_STATE_MAX_AGE_MS) || 6 * 60 * 60 * 1000);
-const CHECK_HOST_CONCURRENCY = Math.max(1, Math.min(8, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_CONCURRENCY) || 6));
+// Bump whenever the gate semantics change so old cached verdicts cannot be
+// reused after changing providers or reachability rules.
+const RUSSIA_GATE_ALGORITHM_VERSION = 2;
+const CHECK_HOST_CONCURRENCY = Math.max(1, Math.min(16, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_CONCURRENCY) || 12));
 const GLOBALPING_CONCURRENCY = Math.max(1, Math.min(4, Number(process.env.HEALTHCHECK_GLOBALPING_CONCURRENCY) || 4));
 
 // Speed providers are called from many candidate workers. Keep their concurrency
@@ -979,20 +982,19 @@ async function checkRussiaReachability(item, url, protocol, sourceMeta) {
         };
     }
 
-    const useGlobalping = globalpingSelection.has(fingerprintLink(item?.link || ""));
-    const [checkHost, globalping] = await Promise.all([
-        checkHostRussia(url, protocol),
-        useGlobalping
-            ? globalpingRussia(url, protocol)
-            : Promise.resolve({
-                provider: "globalping",
-                ok: false,
-                unavailable: false,
-                inconclusive: true,
-                skipped: true,
-                error: "deferred by free hourly budget"
-            })
-    ]);
+    // The Russia gate intentionally uses Check-Host only. Globalping is an
+    // optional secondary diagnostic, but running it for hundreds of candidates
+    // makes the gate itself the bottleneck. The gate's contract is simply:
+    // "reachable from at least one Russian Check-Host node".
+    const checkHost = await checkHostRussia(url, protocol);
+    const globalping = {
+        provider: "globalping",
+        ok: false,
+        unavailable: false,
+        inconclusive: true,
+        skipped: true,
+        error: "deferred outside Russia gate"
+    };
 
     const transport = getTransportType(protocol);
     const anyReachable = Boolean(checkHost.ok || globalping.ok);
@@ -4019,19 +4021,11 @@ async function main() {
             : {};
 
     if (HEALTHCHECK_MODE === "russia-gate") {
-        globalpingSelection = buildGlobalpingSelection(
-            managedItems.map(item => ({
-                id: item.id,
-                link: String(item.link || ""),
-                remarks: item.remarks || ""
-            })),
-            candidateMap,
-            globalpingState
-        );
+        globalpingSelection = new Set();
 
         console.log(
             `RUSSIA GATE START: Check-Host=${CHECK_HOST_RUSSIA_NODES.length} nodes for all non-LTE candidates; ` +
-            `Globalping=${globalpingSelection.size}/${GLOBALPING_MAX_CANDIDATES_PER_CYCLE} TCP candidates when budget permits`
+            `Globalping deferred to keep the reachability gate bounded`
         );
 
         const russiaCursor = { value: 0 };
@@ -4058,7 +4052,13 @@ async function main() {
 
                 const cached = cachedRussiaGate[fp];
                 const cachedAt = Number(cached?.checkedAt) || 0;
-                if (cached && cachedAt > 0 && now - cachedAt < RUSSIA_GATE_STATE_MAX_AGE_MS) {
+                if (
+                    cached &&
+                    cachedAt > 0 &&
+                    Number(cached?.gateAlgorithmVersion) === RUSSIA_GATE_ALGORITHM_VERSION &&
+                    cachedAt <= now &&
+                    now - cachedAt < RUSSIA_GATE_STATE_MAX_AGE_MS
+                ) {
                     russiaProbeByFingerprint.set(fp, cached);
                     russiaGateChecked += 1;
                     if (cached.gatePassed) russiaGatePassed += 1;
@@ -4088,6 +4088,7 @@ async function main() {
                 russiaProbeByFingerprint.set(fp, probe);
                 cachedRussiaGate[fp] = {
                     ...probe,
+                    gateAlgorithmVersion: RUSSIA_GATE_ALGORITHM_VERSION,
                     checkHost: probe.checkHost
                         ? {
                             provider: probe.checkHost.provider,
@@ -4147,6 +4148,7 @@ async function main() {
             if (!cachedRussiaGate[fp] && probe?.checkedAt) {
                 cachedRussiaGate[fp] = {
                     ...probe,
+                    gateAlgorithmVersion: RUSSIA_GATE_ALGORITHM_VERSION,
                     checkHost: probe.checkHost
                         ? {
                             provider: probe.checkHost.provider,
@@ -4225,6 +4227,7 @@ async function main() {
                 checkHostNodes: CHECK_HOST_RUSSIA_NODES,
                 globalpingSelectionCount: globalpingSelection.size,
                 stateMaxAgeMs: RUSSIA_GATE_STATE_MAX_AGE_MS,
+                gateAlgorithmVersion: RUSSIA_GATE_ALGORITHM_VERSION,
                 results: gateResults,
             }, null, 2)}\n`, "utf8"
         );
