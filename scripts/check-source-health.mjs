@@ -184,6 +184,13 @@ const HEALTH_CANDIDATES_FILE =
     process.env.HEALTH_CANDIDATES_FILE ||
     path.join(ROOT, "config", "source-health-candidates.json");
 
+const HEALTHCHECK_MODE =
+    String(process.env.HEALTHCHECK_MODE || "health").trim().toLowerCase();
+
+const RUSSIA_GATE_FILE =
+    process.env.RUSSIA_GATE_FILE ||
+    path.join(ROOT, "config", "source-russia-gate.json");
+
 const UPDATE_STATUS_FILE =
     path.join(ROOT, "config", "source-update-status.json");
 
@@ -241,6 +248,7 @@ const GLOBALPING_MAX_CANDIDATES_PER_CYCLE = Math.min(
     Math.max(1, Number(process.env.HEALTHCHECK_GLOBALPING_MAX_CANDIDATES_PER_CYCLE) || 240)
 );
 const GLOBALPING_STATE_MAX_AGE_MS = Math.max(15 * 60 * 1000, Number(process.env.HEALTHCHECK_RUSSIA_PROBE_STATE_MAX_AGE_MS) || 6 * 60 * 60 * 1000);
+const RUSSIA_GATE_STATE_MAX_AGE_MS = Math.max(5 * 60 * 1000, Number(process.env.HEALTHCHECK_RUSSIA_GATE_STATE_MAX_AGE_MS) || 6 * 60 * 60 * 1000);
 const CHECK_HOST_CONCURRENCY = Math.max(1, Math.min(8, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_CONCURRENCY) || 6));
 const GLOBALPING_CONCURRENCY = Math.max(1, Math.min(4, Number(process.env.HEALTHCHECK_GLOBALPING_CONCURRENCY) || 4));
 
@@ -3423,9 +3431,11 @@ async function buildGamingAssignments(
 }
 
 async function main() {
-    await fs.access(
-        XRAY_BIN
-    );
+    if (HEALTHCHECK_MODE !== "russia-gate") {
+        await fs.access(
+            XRAY_BIN
+        );
+    }
 
     let index = [];
 
@@ -3993,99 +4003,266 @@ async function main() {
         }
     }
 
-    // Russia reachability is the inexpensive pre-gate for all non-LTE candidates.
-    // This runs before Xray and independent speed tests so unreachable-from-Russia
-    // servers cannot consume the heavy health-check budget.
-    globalpingSelection = buildGlobalpingSelection(
-        managedItems.map(item => ({
-            id: item.id,
-            link: String(item.link || ""),
-            remarks: item.remarks || ""
-        })),
-        candidateMap,
-        globalpingState
-    );
-
-    console.log(
-        `RUSSIA PROBES BEFORE HEALTH: Check-Host=${CHECK_HOST_RUSSIA_NODES.length} nodes for all non-LTE candidates; ` +
-        `Globalping=${globalpingSelection.size}/${GLOBALPING_MAX_CANDIDATES_PER_CYCLE} TCP candidates this cycle`
-    );
-
+    // Russia reachability is a dedicated pipeline stage. In `russia-gate` mode
+    // every non-LTE candidate is checked (or reused from a recent cached result),
+    // then the full gate is persisted for the next job. The normal health mode
+    // only consumes that immutable gate output and never calls Check-Host again.
     const russiaProbeByFingerprint = new Map();
     let russiaGateFailures = 0;
     let russiaGatePassed = 0;
     let russiaGatePending = 0;
     let russiaGateChecked = 0;
 
-    const russiaCursor = { value: 0 };
-    const russiaWorkerCount = Math.min(
-        Math.max(CHECK_HOST_CONCURRENCY, GLOBALPING_CONCURRENCY),
-        managedItems.length || 1
-    );
+    const cachedRussiaGate =
+        persistentState?.russiaGate && typeof persistentState.russiaGate === "object"
+            ? persistentState.russiaGate
+            : {};
 
-    async function russiaWorker() {
-        while (true) {
-            const item = managedItems[russiaCursor.value++];
-            if (!item) return;
+    if (HEALTHCHECK_MODE === "russia-gate") {
+        globalpingSelection = buildGlobalpingSelection(
+            managedItems.map(item => ({
+                id: item.id,
+                link: String(item.link || ""),
+                remarks: item.remarks || ""
+            })),
+            candidateMap,
+            globalpingState
+        );
 
-            const fp = fingerprintLink(item.link || "");
-            const sourceMeta = candidateMap[fp] || null;
+        console.log(
+            `RUSSIA GATE START: Check-Host=${CHECK_HOST_RUSSIA_NODES.length} nodes for all non-LTE candidates; ` +
+            `Globalping=${globalpingSelection.size}/${GLOBALPING_MAX_CANDIDATES_PER_CYCLE} TCP candidates when budget permits`
+        );
 
-            if (isLteCandidate(item, sourceMeta)) {
-                const probe = { required: false, skipped: true, gatePassed: true, reason: "LTE/white-list diagnostic only" };
+        const russiaCursor = { value: 0 };
+        const russiaWorkerCount = Math.min(
+            Math.max(CHECK_HOST_CONCURRENCY, GLOBALPING_CONCURRENCY),
+            managedItems.length || 1
+        );
+
+        async function russiaWorker() {
+            while (true) {
+                const item = managedItems[russiaCursor.value++];
+                if (!item) return;
+
+                const fp = fingerprintLink(item.link || "");
+                const sourceMeta = candidateMap[fp] || null;
+                const now = Date.now();
+
+                if (isLteCandidate(item, sourceMeta)) {
+                    const probe = { required: false, skipped: true, gatePassed: true, gatePending: false, reason: "LTE/white-list diagnostic only", checkedAt: now };
+                    russiaProbeByFingerprint.set(fp, probe);
+                    russiaGateChecked += 1;
+                    continue;
+                }
+
+                const cached = cachedRussiaGate[fp];
+                const cachedAt = Number(cached?.checkedAt) || 0;
+                if (cached && cachedAt > 0 && now - cachedAt < RUSSIA_GATE_STATE_MAX_AGE_MS) {
+                    russiaProbeByFingerprint.set(fp, cached);
+                    russiaGateChecked += 1;
+                    if (cached.gatePassed) russiaGatePassed += 1;
+                    else if (cached.gatePending) russiaGatePending += 1;
+                    else russiaGateFailures += 1;
+                    continue;
+                }
+
+                let url;
+                try {
+                    url = new URL(String(item.link || "").trim());
+                } catch {
+                    const probe = {
+                        required: true, skipped: false, gatePassed: false, gatePending: false, providersUnavailable: false,
+                        transport: getTransportType(getProtocol(item.link || "")),
+                        checkHost: { provider: "check-host", ok: false, unavailable: false, error: "invalid endpoint URL" },
+                        globalping: { provider: "globalping", ok: false, unavailable: false, skipped: true, inconclusive: true, error: "invalid endpoint URL" },
+                        checkedAt: now
+                    };
+                    russiaProbeByFingerprint.set(fp, probe);
+                    russiaGateChecked += 1;
+                    russiaGateFailures += 1;
+                    continue;
+                }
+
+                const probe = await checkRussiaReachability(item, url, getProtocol(item.link || ""), sourceMeta);
                 russiaProbeByFingerprint.set(fp, probe);
-                russiaGateChecked += 1;
-                continue;
-            }
-
-            let url;
-            try {
-                url = new URL(String(item.link || "").trim());
-            } catch {
-                const probe = {
-                    required: true, skipped: false, gatePassed: false, gatePending: false, providersUnavailable: false,
-                    transport: getTransportType(getProtocol(item.link || "")),
-                    checkHost: { provider: "check-host", ok: false, unavailable: false, error: "invalid endpoint URL" },
-                    globalping: { provider: "globalping", ok: false, unavailable: false, skipped: true, inconclusive: true, error: "invalid endpoint URL" },
-                    checkedAt: Date.now()
+                cachedRussiaGate[fp] = {
+                    ...probe,
+                    checkHost: probe.checkHost
+                        ? {
+                            provider: probe.checkHost.provider,
+                            ok: Boolean(probe.checkHost.ok),
+                            unavailable: Boolean(probe.checkHost.unavailable),
+                            inconclusive: Boolean(probe.checkHost.inconclusive),
+                            transport: probe.checkHost.transport,
+                            checkType: probe.checkHost.checkType,
+                            nodesTested: Number(probe.checkHost.nodesTested) || 0,
+                            nodesReachable: Number(probe.checkHost.nodesReachable) || 0,
+                            nodesInconclusive: Number(probe.checkHost.nodesInconclusive) || 0,
+                            minLatencyMs: Number(probe.checkHost.minLatencyMs) || 0,
+                            rateLimited: Boolean(probe.checkHost.rateLimited),
+                            error: probe.checkHost.error || "",
+                        }
+                        : probe.checkHost,
+                    globalping: probe.globalping
+                        ? {
+                            provider: probe.globalping.provider,
+                            ok: Boolean(probe.globalping.ok),
+                            unavailable: Boolean(probe.globalping.unavailable),
+                            inconclusive: Boolean(probe.globalping.inconclusive),
+                            skipped: Boolean(probe.globalping.skipped),
+                            probesTested: Number(probe.globalping.probesTested) || 0,
+                            probesReachable: Number(probe.globalping.probesReachable) || 0,
+                            minLatencyMs: Number(probe.globalping.minLatencyMs) || 0,
+                            rateLimited: Boolean(probe.globalping.rateLimited),
+                            error: probe.globalping.error || "",
+                        }
+                        : probe.globalping,
                 };
-                russiaProbeByFingerprint.set(fp, probe);
+
+                if (probe.globalping && !probe.globalping.skipped) {
+                    globalpingState[fp] = {
+                        checkedAt: Number(probe.checkedAt) || Date.now(),
+                        ok: Boolean(probe.globalping.ok),
+                        minLatencyMs: Number(probe.globalping.minLatencyMs) || 0,
+                        unavailable: Boolean(probe.globalping.unavailable),
+                        rateLimited: Boolean(probe.globalping.rateLimited)
+                    };
+                }
+
                 russiaGateChecked += 1;
-                russiaGateFailures += 1;
-                continue;
-            }
+                if (probe.gatePassed) russiaGatePassed += 1;
+                else if (probe.gatePending) russiaGatePending += 1;
+                else russiaGateFailures += 1;
 
-            const probe = await checkRussiaReachability(item, url, getProtocol(item.link || ""), sourceMeta);
-            russiaProbeByFingerprint.set(fp, probe);
-
-            if (probe.globalping && !probe.globalping.skipped) {
-                globalpingState[fp] = {
-                    checkedAt: Number(probe.checkedAt) || Date.now(),
-                    ok: Boolean(probe.globalping.ok),
-                    minLatencyMs: Number(probe.globalping.minLatencyMs) || 0,
-                    unavailable: Boolean(probe.globalping.unavailable),
-                    rateLimited: Boolean(probe.globalping.rateLimited)
-                };
-            }
-
-            russiaGateChecked += 1;
-            if (!probe.required || probe.gatePassed) russiaGatePassed += 1;
-            else if (probe.gatePending) russiaGatePending += 1;
-            else russiaGateFailures += 1;
-
-            if (russiaGateChecked % 100 === 0 || russiaGateChecked === checked) {
-                console.log(`RUSSIA PROGRESS ${russiaGateChecked}/${checked}: ${russiaGatePassed} pass, ${russiaGateFailures} fail, ${russiaGatePending} pending`);
+                if (russiaGateChecked % 100 === 0 || russiaGateChecked === checked) {
+                    console.log(`RUSSIA PROGRESS ${russiaGateChecked}/${checked}: ${russiaGatePassed} pass, ${russiaGateFailures} fail, ${russiaGatePending} pending`);
+                }
             }
         }
+
+        await Promise.all(Array.from({ length: russiaWorkerCount }, () => russiaWorker()));
+
+        for (const [fp, probe] of russiaProbeByFingerprint) {
+            if (!cachedRussiaGate[fp] && probe?.checkedAt) {
+                cachedRussiaGate[fp] = {
+                    ...probe,
+                    checkHost: probe.checkHost
+                        ? {
+                            provider: probe.checkHost.provider,
+                            ok: Boolean(probe.checkHost.ok),
+                            unavailable: Boolean(probe.checkHost.unavailable),
+                            inconclusive: Boolean(probe.checkHost.inconclusive),
+                            nodesTested: Number(probe.checkHost.nodesTested) || 0,
+                            nodesReachable: Number(probe.checkHost.nodesReachable) || 0,
+                            minLatencyMs: Number(probe.checkHost.minLatencyMs) || 0,
+                            rateLimited: Boolean(probe.checkHost.rateLimited),
+                            error: probe.checkHost.error || "",
+                        }
+                        : probe.checkHost,
+                    globalping: probe.globalping
+                        ? {
+                            provider: probe.globalping.provider,
+                            ok: Boolean(probe.globalping.ok),
+                            unavailable: Boolean(probe.globalping.unavailable),
+                            inconclusive: Boolean(probe.globalping.inconclusive),
+                            skipped: Boolean(probe.globalping.skipped),
+                            probesTested: Number(probe.globalping.probesTested) || 0,
+                            probesReachable: Number(probe.globalping.probesReachable) || 0,
+                            minLatencyMs: Number(probe.globalping.minLatencyMs) || 0,
+                            rateLimited: Boolean(probe.globalping.rateLimited),
+                            error: probe.globalping.error || "",
+                        }
+                        : probe.globalping,
+                };
+            }
+        }
+
+        const nextState = {
+            ...persistentState,
+            russiaGlobalping: globalpingState,
+            russiaGate: cachedRussiaGate,
+        };
+        await fs.writeFile(HEALTH_STATE_FILE, `${JSON.stringify(nextState, null, 2)}\n`, "utf8");
+
+        const gateResults = managedItems.map(item => {
+            const fp = fingerprintLink(item.link || "");
+            const probe = russiaProbeByFingerprint.get(fp) || {
+                required: true,
+                gatePassed: false,
+                gatePending: false,
+                checkedAt: Date.now(),
+                reason: "Russia gate result missing"
+            };
+            const sourceMeta = candidateMap[fp] || null;
+            return {
+                id: item.id,
+                link: String(item.link || "").trim(),
+                source: sourceMeta?.source || item.source || "retained/manual",
+                country: sourceMeta?.country || "",
+                required: Boolean(probe.required),
+                gatePassed: Boolean(probe.gatePassed),
+                gatePending: Boolean(probe.gatePending),
+                checkedAt: Number(probe.checkedAt) || Date.now(),
+                probe,
+            };
+        });
+
+        await fs.writeFile(
+            RUSSIA_GATE_FILE,
+            `${JSON.stringify({
+                generatedAt: new Date().toISOString(),
+                generationId: updateStatus.generationId || null,
+                manifestSha256,
+                candidates: checked,
+                requiredCandidates: gateResults.filter(item => item.required).length,
+                allowedCandidates: gateResults.filter(item => item.required && (item.gatePassed || item.gatePending)).length,
+                failedCandidates: gateResults.filter(item => item.required && !item.gatePassed && !item.gatePending).length,
+                cachedResults: gateResults.filter(item => {
+                    const age = Date.now() - (Number(item.checkedAt) || 0);
+                    return age >= 0 && age < RUSSIA_GATE_STATE_MAX_AGE_MS;
+                }).length,
+                checkHostNodes: CHECK_HOST_RUSSIA_NODES,
+                globalpingSelectionCount: globalpingSelection.size,
+                stateMaxAgeMs: RUSSIA_GATE_STATE_MAX_AGE_MS,
+                results: gateResults,
+            }, null, 2)}\n`, "utf8"
+        );
+
+        console.log(
+            `RUSSIA GATE COMPLETE: ${russiaGatePassed} pass, ${russiaGatePending} pending, ${russiaGateFailures} fail; ` +
+            `results written to ${path.relative(ROOT, RUSSIA_GATE_FILE)}`
+        );
+        return;
     }
 
-    await Promise.all(Array.from({ length: russiaWorkerCount }, () => russiaWorker()));
+    let gateReport;
+    try {
+        gateReport = JSON.parse(await fs.readFile(RUSSIA_GATE_FILE, "utf8"));
+    } catch (error) {
+        throw new Error(`Russia gate report is missing or unreadable: ${error?.message || error}`);
+    }
 
-    await fs.writeFile(
-        HEALTH_STATE_FILE,
-        `${JSON.stringify({ ...persistentState, russiaGlobalping: globalpingState }, null, 2)}\n`,
-        "utf8"
-    );
+    if (gateReport?.manifestSha256 !== manifestSha256) {
+        throw new Error(
+            `Russia gate manifest mismatch: gate=${gateReport?.manifestSha256 || "missing"}, manifest=${manifestSha256}`
+        );
+    }
+
+    if (Number(gateReport?.candidates) !== checked) {
+        throw new Error(
+            `Russia gate candidate mismatch: gate=${gateReport?.candidates || 0}, candidates=${checked}`
+        );
+    }
+
+    for (const row of Array.isArray(gateReport.results) ? gateReport.results : []) {
+        russiaProbeByFingerprint.set(String(row?.link || "") ? fingerprintLink(row.link) : String(row.id || ""), row.probe || row);
+    }
+
+    russiaGateChecked = checked;
+    russiaGatePassed = Number(gateReport?.allowedCandidates) || 0;
+    russiaGateFailures = Number(gateReport?.failedCandidates) || 0;
+    russiaGatePending = Math.max(0, Number(gateReport?.requiredCandidates) - russiaGatePassed - russiaGateFailures);
 
     // Only Russia-passing/pending regular nodes and all LTE/whitelist nodes
     // proceed to the expensive local/Xray/speed health-check.
