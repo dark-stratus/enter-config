@@ -234,7 +234,7 @@ const CHECK_HOST_MAX_POLL_MS = Math.max(CHECK_HOST_POLL_MS, Number(process.env.H
 // Pace *all* create/result requests through one queue instead of sleeping
 // serially between servers. This keeps the workflow bounded while avoiding
 // a burst of hundreds of concurrent HTTP calls.
-const CHECK_HOST_API_MIN_INTERVAL_MS = Math.max(80, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_MIN_INTERVAL_MS) || 100);
+const CHECK_HOST_API_MIN_INTERVAL_MS = Math.max(100, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_MIN_INTERVAL_MS) || 250);
 
 const GLOBALPING_API_BASE =
     process.env.HEALTHCHECK_GLOBALPING_API_BASE ||
@@ -251,8 +251,8 @@ const GLOBALPING_STATE_MAX_AGE_MS = Math.max(15 * 60 * 1000, Number(process.env.
 const RUSSIA_GATE_STATE_MAX_AGE_MS = Math.max(5 * 60 * 1000, Number(process.env.HEALTHCHECK_RUSSIA_GATE_STATE_MAX_AGE_MS) || 6 * 60 * 60 * 1000);
 // Bump whenever the gate semantics change so old cached verdicts cannot be
 // reused after changing providers or reachability rules.
-const RUSSIA_GATE_ALGORITHM_VERSION = 3;
-const CHECK_HOST_CONCURRENCY = Math.max(1, Math.min(96, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_CONCURRENCY) || 64));
+const RUSSIA_GATE_ALGORITHM_VERSION = 4;
+const CHECK_HOST_CONCURRENCY = Math.max(1, Math.min(48, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_CONCURRENCY) || 32));
 const GLOBALPING_CONCURRENCY = Math.max(1, Math.min(4, Number(process.env.HEALTHCHECK_GLOBALPING_CONCURRENCY) || 4));
 
 // Speed providers are called from many candidate workers. Keep their concurrency
@@ -764,21 +764,21 @@ async function requestJsonWithRetries(url, options = {}, timeoutMs = REQUEST_TIM
     throw lastError || new Error("request failed");
 }
 
-let checkHostApiQueue = Promise.resolve();
-let checkHostLastRequestAt = 0;
+let checkHostNextSlotAt = 0;
 
-function scheduleCheckHostApiRequest(fn) {
-    const run = checkHostApiQueue.then(async () => {
-        const elapsed = Date.now() - checkHostLastRequestAt;
-        const wait = Math.max(0, CHECK_HOST_API_MIN_INTERVAL_MS - elapsed);
-        if (wait > 0) await sleep(wait);
-        checkHostLastRequestAt = Date.now();
-        return fn();
-    });
+async function scheduleCheckHostApiRequest(fn) {
+    // Reserve a start slot immediately. The previous implementation chained
+    // requests through one Promise, which accidentally serialized the whole
+    // HTTP round-trip: a slow response blocked every subsequent request.
+    // Here we pace only request *starts* while allowing the actual fetches to
+    // overlap under CHECK_HOST_CONCURRENCY.
+    const now = Date.now();
+    const slot = Math.max(now, checkHostNextSlotAt);
+    checkHostNextSlotAt = slot + CHECK_HOST_API_MIN_INTERVAL_MS;
 
-    // Keep the queue alive after an individual request fails.
-    checkHostApiQueue = run.catch(() => undefined);
-    return run;
+    const wait = slot - now;
+    if (wait > 0) await sleep(wait);
+    return fn();
 }
 
 function parseCheckHostNode(raw, node, transport = "tcp") {
