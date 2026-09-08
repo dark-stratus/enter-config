@@ -251,8 +251,8 @@ const GLOBALPING_STATE_MAX_AGE_MS = Math.max(15 * 60 * 1000, Number(process.env.
 const RUSSIA_GATE_STATE_MAX_AGE_MS = Math.max(5 * 60 * 1000, Number(process.env.HEALTHCHECK_RUSSIA_GATE_STATE_MAX_AGE_MS) || 6 * 60 * 60 * 1000);
 // Bump whenever the gate semantics change so old cached verdicts cannot be
 // reused after changing providers or reachability rules.
-const RUSSIA_GATE_ALGORITHM_VERSION = 2;
-const CHECK_HOST_CONCURRENCY = Math.max(1, Math.min(16, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_CONCURRENCY) || 12));
+const RUSSIA_GATE_ALGORITHM_VERSION = 3;
+const CHECK_HOST_CONCURRENCY = Math.max(1, Math.min(96, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_CONCURRENCY) || 64));
 const GLOBALPING_CONCURRENCY = Math.max(1, Math.min(4, Number(process.env.HEALTHCHECK_GLOBALPING_CONCURRENCY) || 4));
 
 // Speed providers are called from many candidate workers. Keep their concurrency
