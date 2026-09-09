@@ -249,9 +249,13 @@ const GLOBALPING_MAX_CANDIDATES_PER_CYCLE = Math.min(
 );
 const GLOBALPING_STATE_MAX_AGE_MS = Math.max(15 * 60 * 1000, Number(process.env.HEALTHCHECK_RUSSIA_PROBE_STATE_MAX_AGE_MS) || 6 * 60 * 60 * 1000);
 const RUSSIA_GATE_STATE_MAX_AGE_MS = Math.max(5 * 60 * 1000, Number(process.env.HEALTHCHECK_RUSSIA_GATE_STATE_MAX_AGE_MS) || 6 * 60 * 60 * 1000);
+const RUSSIA_GATE_USE_CACHE =
+    /^(1|true|yes)$/i.test(
+        String(process.env.HEALTHCHECK_RUSSIA_GATE_USE_CACHE || "0").trim()
+    );
 // Bump whenever the gate semantics change so old cached verdicts cannot be
 // reused after changing providers or reachability rules.
-const RUSSIA_GATE_ALGORITHM_VERSION = 4;
+const RUSSIA_GATE_ALGORITHM_VERSION = 5;
 const CHECK_HOST_CONCURRENCY = Math.max(1, Math.min(48, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_CONCURRENCY) || 32));
 const GLOBALPING_CONCURRENCY = Math.max(1, Math.min(4, Number(process.env.HEALTHCHECK_GLOBALPING_CONCURRENCY) || 4));
 
@@ -4025,10 +4029,13 @@ async function main() {
 
         console.log(
             `RUSSIA GATE START: Check-Host=${CHECK_HOST_RUSSIA_NODES.length} nodes for all non-LTE candidates; ` +
+            `cache=${RUSSIA_GATE_USE_CACHE ? "enabled" : "disabled"}; ` +
             `Globalping deferred to keep the reachability gate bounded`
         );
 
         const russiaCursor = { value: 0 };
+        let russiaFreshChecks = 0;
+        let russiaCacheHits = 0;
         const russiaWorkerCount = Math.min(
             Math.max(CHECK_HOST_CONCURRENCY, GLOBALPING_CONCURRENCY),
             managedItems.length || 1
@@ -4053,6 +4060,7 @@ async function main() {
                 const cached = cachedRussiaGate[fp];
                 const cachedAt = Number(cached?.checkedAt) || 0;
                 if (
+                    RUSSIA_GATE_USE_CACHE &&
                     cached &&
                     cachedAt > 0 &&
                     Number(cached?.gateAlgorithmVersion) === RUSSIA_GATE_ALGORITHM_VERSION &&
@@ -4060,6 +4068,7 @@ async function main() {
                     now - cachedAt < RUSSIA_GATE_STATE_MAX_AGE_MS
                 ) {
                     russiaProbeByFingerprint.set(fp, cached);
+                    russiaCacheHits += 1;
                     russiaGateChecked += 1;
                     if (cached.gatePassed) russiaGatePassed += 1;
                     else if (cached.gatePending) russiaGatePending += 1;
@@ -4084,6 +4093,7 @@ async function main() {
                     continue;
                 }
 
+                russiaFreshChecks += 1;
                 const probe = await checkRussiaReachability(item, url, getProtocol(item.link || ""), sourceMeta);
                 russiaProbeByFingerprint.set(fp, probe);
                 cachedRussiaGate[fp] = {
@@ -4143,6 +4153,22 @@ async function main() {
         }
 
         await Promise.all(Array.from({ length: russiaWorkerCount }, () => russiaWorker()));
+
+        const requiredRussiaCandidates = managedItems.filter(
+            (item) => !isLteCandidate(item, candidateMap[fingerprintLink(item.link || "")] || null)
+        ).length;
+
+        console.log(
+            `RUSSIA GATE CHECKS: fresh=${russiaFreshChecks}, cacheHits=${russiaCacheHits}, ` +
+            `required=${requiredRussiaCandidates}, checked=${russiaGateChecked}`
+        );
+
+        if (!RUSSIA_GATE_USE_CACHE && russiaFreshChecks !== requiredRussiaCandidates) {
+            throw new Error(
+                `Russia gate did not freshly check every required candidate: ` +
+                `${russiaFreshChecks}/${requiredRussiaCandidates}`
+            );
+        }
 
         for (const [fp, probe] of russiaProbeByFingerprint) {
             if (!cachedRussiaGate[fp] && probe?.checkedAt) {
