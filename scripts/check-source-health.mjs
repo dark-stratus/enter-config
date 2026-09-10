@@ -240,14 +240,14 @@ const CHECK_HOST_RUSSIA_NODES = String(
     "ru2.node.check-host.net,ru3.node.check-host.net"
 ).split(/[,\r\n;]+/).map(v => v.trim()).filter(Boolean);
 let ACTIVE_CHECK_HOST_RUSSIA_NODES = [...CHECK_HOST_RUSSIA_NODES];
-const CHECK_HOST_TIMEOUT_MS = Math.max(5000, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_TIMEOUT_MS) || 9000);
-const CHECK_HOST_POLL_MS = Math.max(750, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_POLL_MS) || 1000);
-const CHECK_HOST_MAX_POLL_MS = Math.max(CHECK_HOST_POLL_MS, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_MAX_POLL_MS) || 45000);
+const CHECK_HOST_TIMEOUT_MS = Math.max(8000, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_TIMEOUT_MS) || 12000);
+const CHECK_HOST_POLL_MS = Math.max(1000, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_POLL_MS) || 1500);
+const CHECK_HOST_MAX_POLL_MS = Math.max(CHECK_HOST_POLL_MS, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_MAX_POLL_MS) || 60000);
 // Check-Host is asynchronous, but the public API can still throttle bursts.
 // Pace *all* create/result requests through one queue instead of sleeping
 // serially between servers. This keeps the workflow bounded while avoiding
 // a burst of hundreds of concurrent HTTP calls.
-const CHECK_HOST_API_MIN_INTERVAL_MS = Math.max(100, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_MIN_INTERVAL_MS) || 150);
+const CHECK_HOST_API_MIN_INTERVAL_MS = Math.max(250, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_MIN_INTERVAL_MS) || 500);
 
 const GLOBALPING_API_BASE =
     process.env.HEALTHCHECK_GLOBALPING_API_BASE ||
@@ -273,8 +273,8 @@ const RUSSIA_GATE_USE_CACHE =
     );
 // Bump whenever the gate semantics change so old cached verdicts cannot be
 // reused after changing providers or reachability rules.
-const RUSSIA_GATE_ALGORITHM_VERSION = 7;
-const CHECK_HOST_CONCURRENCY = Math.max(1, Math.min(48, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_CONCURRENCY) || 32));
+const RUSSIA_GATE_ALGORITHM_VERSION = 8;
+const CHECK_HOST_CONCURRENCY = Math.max(1, Math.min(12, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_CONCURRENCY) || 8));
 const GLOBALPING_CONCURRENCY = Math.max(1, Math.min(4, Number(process.env.HEALTHCHECK_GLOBALPING_CONCURRENCY) || 4));
 
 // Speed providers are called from many candidate workers. Keep their concurrency
@@ -891,6 +891,19 @@ async function resolveRussianCheckHostNodes() {
     }
 }
 
+async function checkHostProviderPreflight() {
+    const nodes = ACTIVE_CHECK_HOST_RUSSIA_NODES;
+    const probe = await checkHostRussia(
+        new URL("https://check-host.net:443"),
+        "https",
+        nodes
+    );
+    if (probe.ok) return probe;
+    throw new Error(
+        `Check-Host Russia preflight failed: ${probe.error || "no Russian node completed a TCP result"}`
+    );
+}
+
 async function checkHostRussia(url, protocol, nodes = ACTIVE_CHECK_HOST_RUSSIA_NODES) {
     const transport = getTransportType(protocol);
     const checkType = transport === "udp" ? "udp" : "tcp";
@@ -921,8 +934,11 @@ async function checkHostRussia(url, protocol, nodes = ACTIVE_CHECK_HOST_RUSSIA_N
             }
 
             const started = Date.now();
+            let pollDelayMs = CHECK_HOST_POLL_MS;
+            let firstPoll = true;
             while (Date.now() - started <= CHECK_HOST_MAX_POLL_MS) {
-                await sleep(CHECK_HOST_POLL_MS);
+                await sleep(firstPoll ? Math.min(1200, CHECK_HOST_POLL_MS) : pollDelayMs);
+                firstPoll = false;
 
                 const payload = await scheduleCheckHostApiRequest(() =>
                     requestJsonWithRetries(
@@ -936,8 +952,7 @@ async function checkHostRussia(url, protocol, nodes = ACTIVE_CHECK_HOST_RUSSIA_N
                     parseCheckHostNode(payload?.[node] ?? null, node, transport)
                 );
                 const reachable = parsed.filter(x => x.reachable);
-                const pending = parsed.filter(x => x.inconclusive && /still performing/i.test(x.error));
-                const hasUnresolved = parsed.some(x => x.inconclusive && /still performing/i.test(x.error));
+                const hasUnresolved = parsed.some(x => x.inconclusive);
 
                 if (reachable.length > 0) {
                     return {
@@ -955,7 +970,9 @@ async function checkHostRussia(url, protocol, nodes = ACTIVE_CHECK_HOST_RUSSIA_N
                     };
                 }
 
-                if (!hasUnresolved && pending.length === 0) {
+                // The API documents null as "still performing". Do not turn a
+                // transient null into a permanent candidate failure; keep polling.
+                if (!hasUnresolved) {
                     return {
                         provider: "check-host",
                         ok: false,
@@ -970,6 +987,10 @@ async function checkHostRussia(url, protocol, nodes = ACTIVE_CHECK_HOST_RUSSIA_N
                         results: parsed
                     };
                 }
+
+                // Back off polling so hundreds of in-flight checks do not hammer
+                // the result endpoint while the asynchronous node work finishes.
+                pollDelayMs = Math.min(5000, Math.round(pollDelayMs * 1.5));
             }
 
             return {
@@ -4158,6 +4179,8 @@ async function main() {
     let russiaGatePassed = 0;
     let russiaGatePending = 0;
     let russiaGateChecked = 0;
+    let russiaCheckHostUnavailable = 0;
+    let russiaCheckHostRateLimited = 0;
 
     const cachedRussiaGate =
         persistentState?.russiaGate && typeof persistentState.russiaGate === "object"
@@ -4166,6 +4189,16 @@ async function main() {
 
     if (HEALTHCHECK_MODE === "russia-gate") {
         ACTIVE_CHECK_HOST_RUSSIA_NODES = await resolveRussianCheckHostNodes();
+
+        // Verify the checker itself before spending hundreds of checks. This
+        // separates "Check-Host is unavailable/throttling" from "this target is
+        // unreachable". If the provider is down, fail the gate before any
+        // publication step; no unverified candidate is admitted.
+        const russiaPreflight = await checkHostProviderPreflight();
+        console.log(
+            `RUSSIA CHECKER PREFLIGHT: ${russiaPreflight.nodesReachable}/${russiaPreflight.nodesTested} ` +
+            `Russian node(s) reached the control target`
+        );
 
         console.log(
             `RUSSIA GATE START: Check-Host=${ACTIVE_CHECK_HOST_RUSSIA_NODES.length} live Russian nodes for all non-LTE candidates; ` +
@@ -4277,6 +4310,9 @@ async function main() {
                 else if (probe.gatePending) russiaGatePending += 1;
                 else russiaGateFailures += 1;
 
+                if (probe.checkHost?.unavailable) russiaCheckHostUnavailable += 1;
+                if (probe.checkHost?.rateLimited) russiaCheckHostRateLimited += 1;
+
                 if (russiaGateChecked % 100 === 0 || russiaGateChecked === checked) {
                     console.log(`RUSSIA PROGRESS ${russiaGateChecked}/${checked}: ${russiaGatePassed} pass, ${russiaGateFailures} fail, ${russiaGatePending} pending`);
                 }
@@ -4291,7 +4327,8 @@ async function main() {
 
         console.log(
             `RUSSIA GATE CHECKS: fresh=${russiaFreshChecks}, cacheHits=${russiaCacheHits}, ` +
-            `required=${requiredRussiaCandidates}, checked=${russiaGateChecked}`
+            `required=${requiredRussiaCandidates}, checked=${russiaGateChecked}, ` +
+            `checkerUnavailable=${russiaCheckHostUnavailable}, rateLimited=${russiaCheckHostRateLimited}`
         );
 
         if (russiaGatePending > 0) {
@@ -4445,7 +4482,7 @@ async function main() {
         }
 
         const probe = russiaProbeByFingerprint.get(fp);
-        if (!probe || probe.gatePassed) {
+        if (probe?.gatePassed) {
             healthEligibleItems.push(item);
             continue;
         }
