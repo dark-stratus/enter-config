@@ -240,14 +240,14 @@ const CHECK_HOST_RUSSIA_NODES = String(
     "ru2.node.check-host.net,ru3.node.check-host.net"
 ).split(/[,\r\n;]+/).map(v => v.trim()).filter(Boolean);
 let ACTIVE_CHECK_HOST_RUSSIA_NODES = [...CHECK_HOST_RUSSIA_NODES];
-const CHECK_HOST_TIMEOUT_MS = Math.max(8000, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_TIMEOUT_MS) || 12000);
+const CHECK_HOST_TIMEOUT_MS = Math.max(10000, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_TIMEOUT_MS) || 15000);
 const CHECK_HOST_POLL_MS = Math.max(1000, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_POLL_MS) || 1500);
-const CHECK_HOST_MAX_POLL_MS = Math.max(CHECK_HOST_POLL_MS, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_MAX_POLL_MS) || 60000);
+const CHECK_HOST_MAX_POLL_MS = Math.max(CHECK_HOST_POLL_MS, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_MAX_POLL_MS) || 45000);
 // Check-Host is asynchronous, but the public API can still throttle bursts.
 // Pace *all* create/result requests through one queue instead of sleeping
 // serially between servers. This keeps the workflow bounded while avoiding
 // a burst of hundreds of concurrent HTTP calls.
-const CHECK_HOST_API_MIN_INTERVAL_MS = Math.max(250, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_MIN_INTERVAL_MS) || 500);
+const CHECK_HOST_API_MIN_INTERVAL_MS = Math.max(1000, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_MIN_INTERVAL_MS) || 2200);
 
 const GLOBALPING_API_BASE =
     process.env.HEALTHCHECK_GLOBALPING_API_BASE ||
@@ -274,7 +274,8 @@ const RUSSIA_GATE_USE_CACHE =
 // Bump whenever the gate semantics change so old cached verdicts cannot be
 // reused after changing providers or reachability rules.
 const RUSSIA_GATE_ALGORITHM_VERSION = 8;
-const CHECK_HOST_CONCURRENCY = Math.max(1, Math.min(12, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_CONCURRENCY) || 8));
+const CHECK_HOST_CONCURRENCY = Math.max(1, Math.min(4, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_CONCURRENCY) || 2));
+const CHECK_HOST_REQUEST_RETRIES = Math.max(3, Math.min(6, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_REQUEST_RETRIES) || 5));
 const GLOBALPING_CONCURRENCY = Math.max(1, Math.min(4, Number(process.env.HEALTHCHECK_GLOBALPING_CONCURRENCY) || 4));
 
 // Speed providers are called from many candidate workers. Keep their concurrency
@@ -921,7 +922,8 @@ async function checkHostRussia(url, protocol, nodes = ACTIVE_CHECK_HOST_RUSSIA_N
                 requestJsonWithRetries(
                     createUrl,
                     { headers: { "user-agent": "enter-config-russia-health/1.0" } },
-                    CHECK_HOST_TIMEOUT_MS
+                    CHECK_HOST_TIMEOUT_MS,
+                    CHECK_HOST_REQUEST_RETRIES
                 )
             );
 
@@ -944,7 +946,8 @@ async function checkHostRussia(url, protocol, nodes = ACTIVE_CHECK_HOST_RUSSIA_N
                     requestJsonWithRetries(
                         `${CHECK_HOST_API_BASE}/check-result/${encodeURIComponent(requestId)}`,
                         { headers: { "user-agent": "enter-config-russia-health/1.0" } },
-                        CHECK_HOST_TIMEOUT_MS
+                        CHECK_HOST_TIMEOUT_MS,
+                        CHECK_HOST_REQUEST_RETRIES
                     )
                 );
 
