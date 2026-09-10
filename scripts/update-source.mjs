@@ -398,25 +398,10 @@ function countryFromRemark(
   remarks = "",
   metadata = {}
 ) {
-  const flag = extractFlag(
-    remarks,
-    metadata
-  );
-
-  if (flag) {
-    const country =
-      FLAG_TO_COUNTRY[flag] ||
-      countryFromFlagValue(
-        flag
-      );
-
-    if (country) {
-      return {
-        flag,
-        country,
-      };
-    }
-  }
+  // Prefer an explicit country name/alias over a possibly stale or generic
+  // leading flag. Some feeds prepend 🇪🇺 while the actual profile name says
+  // "UAE"/"United Arab Emirates"; the country text is the stronger signal.
+  const remarkText = String(remarks);
 
   const metadataCountry =
     metadata?.country ||
@@ -443,17 +428,36 @@ function countryFromRemark(
     }
   }
 
-  // Fallback for sources that spell the country name but omit the flag.
+  // Explicit country text wins over the flag when both are present.
   for (const entry of COUNTRY_NAME_PATTERNS) {
-    if (entry.pattern.test(String(remarks))) {
+    if (entry.pattern.test(remarkText)) {
       return { flag: entry.flag, country: entry.country };
     }
   }
 
-  // Source may put the country only in the profile name/remark, often in Russian.
   for (const entry of COUNTRY_ALIAS_PATTERNS) {
-    if (entry.pattern.test(String(remarks))) {
+    if (entry.pattern.test(remarkText)) {
       return { flag: entry.flag, country: entry.country };
+    }
+  }
+
+  const flag = extractFlag(
+    remarks,
+    metadata
+  );
+
+  if (flag) {
+    const country =
+      FLAG_TO_COUNTRY[flag] ||
+      countryFromFlagValue(
+        flag
+      );
+
+    if (country) {
+      return {
+        flag,
+        country,
+      };
     }
   }
 

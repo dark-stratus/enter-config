@@ -240,7 +240,7 @@ const CHECK_HOST_RUSSIA_NODES = String(
 ).split(/[,\r\n;]+/).map(v => v.trim()).filter(Boolean);
 const CHECK_HOST_TIMEOUT_MS = Math.max(5000, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_TIMEOUT_MS) || 9000);
 const CHECK_HOST_POLL_MS = Math.max(750, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_POLL_MS) || 1000);
-const CHECK_HOST_MAX_POLL_MS = Math.max(CHECK_HOST_POLL_MS, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_MAX_POLL_MS) || 6000);
+const CHECK_HOST_MAX_POLL_MS = Math.max(CHECK_HOST_POLL_MS, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_MAX_POLL_MS) || 30000);
 // Check-Host is asynchronous, but the public API can still throttle bursts.
 // Pace *all* create/result requests through one queue instead of sleeping
 // serially between servers. This keeps the workflow bounded while avoiding
@@ -250,7 +250,11 @@ const CHECK_HOST_API_MIN_INTERVAL_MS = Math.max(100, Number(process.env.HEALTHCH
 const GLOBALPING_API_BASE =
     process.env.HEALTHCHECK_GLOBALPING_API_BASE ||
     "https://api.globalping.io/v1";
-const GLOBALPING_TOKEN = String(process.env.GLOBALPING_API_TOKEN || "").trim();
+const GLOBALPING_TOKEN = String(
+    process.env.HEALTHCHECK_GLOBALPING_API_TOKEN ||
+    process.env.GLOBALPING_API_TOKEN ||
+    ""
+).trim();
 const GLOBALPING_TIMEOUT_MS = Math.max(5000, Number(process.env.HEALTHCHECK_GLOBALPING_TIMEOUT_MS) || 8000);
 const GLOBALPING_FREE_TEST_BUDGET = GLOBALPING_TOKEN ? 450 : 220;
 const GLOBALPING_PROBE_LIMIT = 1;
@@ -267,7 +271,7 @@ const RUSSIA_GATE_USE_CACHE =
     );
 // Bump whenever the gate semantics change so old cached verdicts cannot be
 // reused after changing providers or reachability rules.
-const RUSSIA_GATE_ALGORITHM_VERSION = 5;
+const RUSSIA_GATE_ALGORITHM_VERSION = 6;
 const CHECK_HOST_CONCURRENCY = Math.max(1, Math.min(48, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_CONCURRENCY) || 32));
 const GLOBALPING_CONCURRENCY = Math.max(1, Math.min(4, Number(process.env.HEALTHCHECK_GLOBALPING_CONCURRENCY) || 4));
 
@@ -464,6 +468,10 @@ const SPEED_PROVIDER_CONCURRENCY =
     );
 
 const FAST_TOP_N = Math.max(1, Number(process.env.HEALTHCHECK_FAST_TOP_N) || 3);
+const FAST_SERVERS_PER_COUNTRY = Math.max(
+    1,
+    Math.min(3, Number(process.env.HEALTHCHECK_FAST_SERVERS_PER_COUNTRY) || 3)
+);
 const GAMING_TOP_N = Math.max(1, Number(process.env.HEALTHCHECK_GAMING_TOP_N) || 3);
 const GAMING_SERVERS_PER_COUNTRY = Math.max(
     1,
@@ -3278,47 +3286,53 @@ function resultLatency(result) {
     return Number(result?.gaming?.medianLatencyMs) || Infinity;
 }
 
-function fastSelectionScore(result) {
-    const speed = Math.max(resultSpeed(result), 0);
-    const medianConnection = Number(result?.connection?.medianMs) || Infinity;
-    const qualityPassed = Number(result?.quality?.passedCount) || 0;
-
-    const speedScore = Math.min(1, Math.log1p(speed) / Math.log1p(50000));
-    const connectionScore = Number.isFinite(medianConnection)
-        ? Math.max(0, 1 - Math.min(medianConnection / CONNECTION_TIME_MAX_SINGLE_MS, 1))
-        : 0;
-    const stabilityScore = Math.min(1, qualityPassed / Math.max(INDEPENDENT_SPEED_PROVIDERS.length, 1));
-
-    return speedScore * 0.55 + connectionScore * 0.35 + stabilityScore * 0.10;
-}
-
 function selectFeaturedFastServers(results, limit = FAST_TOP_N) {
     const candidates = results
         .filter(result =>
             result.ok &&
             !result.whiteList &&
             result.country &&
-            result.connection?.eligible === true
+            result.connection?.eligible === true &&
+            Number.isFinite(resultSpeed(result)) &&
+            resultSpeed(result) > 0
         )
         .sort((a, b) => {
-            const score = fastSelectionScore(b) - fastSelectionScore(a);
-            if (Math.abs(score) > 0.0001) return score;
-
+            // Fast is intentionally a pure speed ranking. Connection/stability
+            // are already gates; they must not make a slower server outrank a
+            // faster healthy server. Latency is only a deterministic tie-breaker.
             const speed = resultSpeed(b) - resultSpeed(a);
-            return speed !== 0
-                ? speed
-                : resultLatency(a) - resultLatency(b);
+            if (speed !== 0) return speed;
+
+            const aLatency = resultLatency(a);
+            const bLatency = resultLatency(b);
+            if (aLatency !== bLatency) return aLatency - bLatency;
+
+            return String(a.linkFingerprint || a.link || '')
+                .localeCompare(String(b.linkFingerprint || b.link || ''));
         });
 
-    const seenCountries = new Set();
     const selected = [];
+    const selectedKeys = new Set();
+    const countryCounts = new Map();
+
+    // Pick strictly by speed, with a maximum of FAST_SERVERS_PER_COUNTRY
+    // servers from any one country. With the default of 3 and FAST_TOP_N=3,
+    // this means the three fastest healthy servers are selected regardless of
+    // whether they come from one, two, or three countries.
     for (const result of candidates) {
+        const key = String(result.linkFingerprint || result.link || '');
+        if (!key || selectedKeys.has(key)) continue;
+
         const country = String(result.country || '').trim().toLowerCase();
-        if (!country || seenCountries.has(country)) continue;
-        seenCountries.add(country);
+        const count = countryCounts.get(country) || 0;
+        if (count >= FAST_SERVERS_PER_COUNTRY) continue;
+
+        selectedKeys.add(key);
+        countryCounts.set(country, count + 1);
         selected.push(result);
         if (selected.length >= limit) break;
     }
+
     return selected;
 }
 
@@ -4069,7 +4083,9 @@ async function main() {
         console.log(
             `RUSSIA GATE START: Check-Host=${CHECK_HOST_RUSSIA_NODES.length} nodes for all non-LTE candidates; ` +
             `cache=${RUSSIA_GATE_USE_CACHE ? "enabled" : "disabled"}; ` +
-            `Globalping=secondary fallback for inconclusive/unavailable Check-Host results`
+            `Globalping=secondary fallback for inconclusive/unavailable Check-Host results; ` +
+            `globalpingBudget=${GLOBALPING_MAX_CANDIDATES_PER_CYCLE}; ` +
+            `nodes=${CHECK_HOST_RUSSIA_NODES.join(",")}`
         );
 
         const russiaCursor = { value: 0 };
@@ -4201,6 +4217,13 @@ async function main() {
             `RUSSIA GATE CHECKS: fresh=${russiaFreshChecks}, cacheHits=${russiaCacheHits}, ` +
             `required=${requiredRussiaCandidates}, checked=${russiaGateChecked}`
         );
+
+        if (russiaGatePending > 0) {
+            throw new Error(
+                `Russia gate produced ${russiaGatePending} unresolved candidate(s). ` +
+                `No unresolved candidate may enter publication; increase checker capacity or retry.`
+            );
+        }
 
         if (!RUSSIA_GATE_USE_CACHE && russiaFreshChecks !== requiredRussiaCandidates) {
             throw new Error(
@@ -4718,6 +4741,7 @@ async function main() {
                 GAMING_MIN_QUALITY_PASSES,
             maxServersPerCountry:
                 GAMING_SERVERS_PER_COUNTRY,
+                FAST_SERVERS_PER_COUNTRY,
             backupMaxLatencyMs:
                 GAMING_BACKUP_MAX_LATENCY_MS,
             backupMaxLatencySpreadMs:
