@@ -176,6 +176,7 @@ function isManagedId(id) {
 const FLAG_TO_COUNTRY = {
   "🇦🇱": "Albania",
   "🇦🇹": "Austria",
+  "🇦🇪": "United Arab Emirates",
   "🇧🇾": "Belarus",
   "🇧🇪": "Belgium",
   "🇧🇷": "Brazil",
@@ -258,6 +259,7 @@ function flagToIso(flag) {
 
 const COUNTRY_ALIAS_PATTERNS = [
   ["Albania", ["албания"]], ["Austria", ["австрия"]],
+  ["United Arab Emirates", ["united arab emirates", "uae", "оаэ", "объединенные арабские эмираты", "объединённые арабские эмираты", "эмираты"]],
   ["Belarus", ["беларусь", "белоруссия"]], ["Belgium", ["бельгия"]], ["Brazil", ["бразилия"]],
   ["Switzerland", ["швейцария"]], ["China", ["китай"]],
   ["Czech Republic", ["чехия", "чешская республика"]],
