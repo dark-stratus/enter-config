@@ -38,6 +38,7 @@ const COUNTRY_BY_FLAG = {
     "🇬🇪": "Georgia",
     "🇰🇿": "Kazakhstan",
     "🇷🇺": "Russia",
+    "🇦🇪": "United Arab Emirates",
 };
 
 const COUNTRY_ALIASES = {
@@ -236,16 +237,17 @@ const CHECK_HOST_API_BASE =
     "https://check-host.net";
 const CHECK_HOST_RUSSIA_NODES = String(
     process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_NODES ||
-    "ru1.node.check-host.net,ru2.node.check-host.net,ru3.node.check-host.net"
+    "ru2.node.check-host.net,ru3.node.check-host.net"
 ).split(/[,\r\n;]+/).map(v => v.trim()).filter(Boolean);
+let ACTIVE_CHECK_HOST_RUSSIA_NODES = [...CHECK_HOST_RUSSIA_NODES];
 const CHECK_HOST_TIMEOUT_MS = Math.max(5000, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_TIMEOUT_MS) || 9000);
 const CHECK_HOST_POLL_MS = Math.max(750, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_POLL_MS) || 1000);
-const CHECK_HOST_MAX_POLL_MS = Math.max(CHECK_HOST_POLL_MS, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_MAX_POLL_MS) || 30000);
+const CHECK_HOST_MAX_POLL_MS = Math.max(CHECK_HOST_POLL_MS, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_MAX_POLL_MS) || 45000);
 // Check-Host is asynchronous, but the public API can still throttle bursts.
 // Pace *all* create/result requests through one queue instead of sleeping
 // serially between servers. This keeps the workflow bounded while avoiding
 // a burst of hundreds of concurrent HTTP calls.
-const CHECK_HOST_API_MIN_INTERVAL_MS = Math.max(100, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_MIN_INTERVAL_MS) || 250);
+const CHECK_HOST_API_MIN_INTERVAL_MS = Math.max(100, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_MIN_INTERVAL_MS) || 150);
 
 const GLOBALPING_API_BASE =
     process.env.HEALTHCHECK_GLOBALPING_API_BASE ||
@@ -255,15 +257,15 @@ const GLOBALPING_TOKEN = String(
     process.env.GLOBALPING_API_TOKEN ||
     ""
 ).trim();
-const GLOBALPING_TIMEOUT_MS = Math.max(5000, Number(process.env.HEALTHCHECK_GLOBALPING_TIMEOUT_MS) || 8000);
-const GLOBALPING_FREE_TEST_BUDGET = GLOBALPING_TOKEN ? 450 : 220;
+const GLOBALPING_TIMEOUT_MS = Math.max(5000, Number(process.env.HEALTHCHECK_GLOBALPING_TIMEOUT_MS) || 10000);
 const GLOBALPING_PROBE_LIMIT = 1;
+// Globalping is diagnostics only. One probe/measurement consumes one free test.
+// Keep this hard-capped at the anonymous free allowance so it can never become
+// a hidden dependency of the Russia reachability gate.
 const GLOBALPING_MAX_CANDIDATES_PER_CYCLE = Math.min(
-    Math.floor(GLOBALPING_FREE_TEST_BUDGET / GLOBALPING_PROBE_LIMIT),
-    Math.max(1, Number(process.env.HEALTHCHECK_GLOBALPING_MAX_CANDIDATES_PER_CYCLE) || 450)
+    250,
+    Math.max(1, Number(process.env.HEALTHCHECK_GLOBALPING_MAX_CANDIDATES_PER_CYCLE) || 250)
 );
-const GLOBALPING_STATE_MAX_AGE_MS = Math.max(15 * 60 * 1000, Number(process.env.HEALTHCHECK_RUSSIA_PROBE_STATE_MAX_AGE_MS) || 6 * 60 * 60 * 1000);
-let globalpingRussiaBudgetUsed = 0;
 const RUSSIA_GATE_STATE_MAX_AGE_MS = Math.max(5 * 60 * 1000, Number(process.env.HEALTHCHECK_RUSSIA_GATE_STATE_MAX_AGE_MS) || 6 * 60 * 60 * 1000);
 const RUSSIA_GATE_USE_CACHE =
     /^(1|true|yes)$/i.test(
@@ -271,7 +273,7 @@ const RUSSIA_GATE_USE_CACHE =
     );
 // Bump whenever the gate semantics change so old cached verdicts cannot be
 // reused after changing providers or reachability rules.
-const RUSSIA_GATE_ALGORITHM_VERSION = 6;
+const RUSSIA_GATE_ALGORITHM_VERSION = 7;
 const CHECK_HOST_CONCURRENCY = Math.max(1, Math.min(48, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_CONCURRENCY) || 32));
 const GLOBALPING_CONCURRENCY = Math.max(1, Math.min(4, Number(process.env.HEALTHCHECK_GLOBALPING_CONCURRENCY) || 4));
 
@@ -852,7 +854,44 @@ function parseCheckHostNode(raw, node, transport = "tcp") {
     };
 }
 
-async function checkHostRussia(url, protocol) {
+async function resolveRussianCheckHostNodes() {
+    const preferred = new Set(CHECK_HOST_RUSSIA_NODES.map(value => String(value).trim()).filter(Boolean));
+
+    try {
+        const data = await requestJsonWithRetries(
+            `${CHECK_HOST_API_BASE}/nodes/hosts`,
+            { headers: { "user-agent": "enter-config-russia-health/1.0" } },
+            CHECK_HOST_TIMEOUT_MS
+        );
+
+        const liveRussianNodes = Object.entries(data?.nodes || {})
+            .filter(([, info]) => {
+                const location = Array.isArray(info?.location) ? info.location : [];
+                return String(location[0] || "").trim().toLowerCase() === "ru";
+            })
+            .map(([hostname]) => hostname)
+            .filter(Boolean);
+
+        // Use every live Russian node. The configured list only controls
+        // preference/order for known nodes; newly added Russian nodes are picked
+        // up automatically instead of silently being ignored.
+        const selected = liveRussianNodes.slice().sort((a, b) => {
+            const aPreferred = preferred.has(a) ? 0 : 1;
+            const bPreferred = preferred.has(b) ? 0 : 1;
+            return aPreferred - bPreferred || a.localeCompare(b);
+        });
+
+        if (!selected.length) {
+            throw new Error("Check-Host currently exposes no live Russian checking nodes");
+        }
+
+        return selected;
+    } catch (error) {
+        throw new Error(`Unable to resolve live Russian Check-Host nodes: ${error?.message || error}`);
+    }
+}
+
+async function checkHostRussia(url, protocol, nodes = ACTIVE_CHECK_HOST_RUSSIA_NODES) {
     const transport = getTransportType(protocol);
     const checkType = transport === "udp" ? "udp" : "tcp";
 
@@ -860,9 +899,9 @@ async function checkHostRussia(url, protocol) {
         try {
             const params = new URLSearchParams({
                 host: `${url.hostname}:${Number(url.port || 443)}`,
-                max_nodes: String(CHECK_HOST_RUSSIA_NODES.length)
+                max_nodes: String(nodes.length)
             });
-            for (const node of CHECK_HOST_RUSSIA_NODES) params.append("node", node);
+            for (const node of nodes) params.append("node", node);
 
             const createUrl = `${CHECK_HOST_API_BASE}/check-${checkType}?${params}`;
             const created = await scheduleCheckHostApiRequest(() =>
@@ -1003,102 +1042,40 @@ async function checkRussiaReachability(item, url, protocol, sourceMeta) {
             required: false,
             skipped: true,
             gatePassed: true,
+            gatePending: false,
             reason: "LTE/white-list diagnostic only"
         };
     }
 
-    // Check-Host is the primary Russian reachability source. Globalping is a
-    // real secondary provider for TCP candidates when Check-Host cannot produce
-    // a definitive result (for example a remote node is still performing the
-    // check or the provider is temporarily unavailable). A provider outage is
-    // never a PASS.
+    // Check-Host is the sole source of truth for the Russia gate.
+    // Globalping is intentionally NOT consulted here: its free quota,
+    // rate limiting, probe availability, or outage must never change whether
+    // a candidate is accepted or rejected by the publication gate.
     const checkHost = await checkHostRussia(url, protocol);
-    let globalping = {
-        provider: "globalping",
-        ok: false,
-        unavailable: false,
-        inconclusive: true,
-        skipped: true,
-        error: "not needed: Check-Host returned a definitive result"
-    };
-
-    const transport = getTransportType(protocol);
-    const checkHostNeedsFallback = Boolean(
-        !checkHost.ok &&
-        (checkHost.unavailable || checkHost.inconclusive)
-    );
-
-    if (checkHostNeedsFallback && transport === "tcp") {
-        if (globalpingRussiaBudgetUsed < GLOBALPING_MAX_CANDIDATES_PER_CYCLE) {
-            globalpingRussiaBudgetUsed += 1;
-            globalping = await globalpingRussia(url, protocol);
-        } else {
-            globalping = {
-                provider: "globalping",
-                ok: false,
-                unavailable: true,
-                inconclusive: false,
-                skipped: false,
-                rateLimited: true,
-                transport,
-                protocol: "TCP",
-                error: `Globalping fallback budget exhausted (${GLOBALPING_MAX_CANDIDATES_PER_CYCLE} tests/cycle)`
-            };
-        }
-    }
-
-    const anyReachable = Boolean(checkHost.ok || globalping.ok);
-    const providerOutage = Boolean(
-        !anyReachable &&
-        checkHost.unavailable &&
-        (globalping.unavailable || globalping.skipped)
-    );
-    const udpInconclusive =
-        transport === "udp" &&
-        !anyReachable &&
-        (checkHost.inconclusive || globalping.inconclusive || globalping.unavailable || globalping.skipped);
-
-    const values = [checkHost.minLatencyMs, globalping.minLatencyMs]
-        .map(Number)
-        .filter(value => Number.isFinite(value) && value > 0);
 
     return {
         required: true,
         skipped: false,
-        // UNKNOWN stays UNKNOWN. It never becomes a false PASS merely because
-        // an external checker was rate-limited or temporarily unavailable.
-        // An inconclusive UDP probe is UNKNOWN, never PASS. This prevents
-        // unreachable/filtered UDP nodes from bypassing the Russia gate.
-        gatePassed: anyReachable,
-        gatePending: !anyReachable && (providerOutage || checkHost.inconclusive || globalping.inconclusive),
-        anyReachable,
-        providersUnavailable: providerOutage,
-        transport,
+        gatePassed: Boolean(checkHost.ok),
+        // A Check-Host outage / unresolved result is UNKNOWN, not PASS.
+        // The gate will stop publication rather than admit an unverified server.
+        gatePending: !checkHost.ok && Boolean(checkHost.unavailable || checkHost.inconclusive),
+        anyReachable: Boolean(checkHost.ok),
+        providersUnavailable: Boolean(checkHost.unavailable),
+        transport: getTransportType(protocol),
         checkHost,
-        globalping,
-        minLatencyMs: values.length ? Math.min(...values) : 0,
+        globalping: {
+            provider: "globalping",
+            ok: false,
+            unavailable: false,
+            inconclusive: false,
+            skipped: true,
+            error: "diagnostic-only; not part of Russia gate"
+        },
+        minLatencyMs: Number(checkHost.minLatencyMs) > 0 ? Number(checkHost.minLatencyMs) : 0,
         checkedAt: Date.now()
     };
 }
-
-
-function buildGlobalpingSelection(managedItems, candidateMap, state) {
-    const now = Date.now();
-    return new Set(managedItems
-        .filter(item => {
-            const fp = fingerprintLink(item?.link || "");
-            const candidate = candidateMap[fp] || null;
-            const protocol = getProtocol(String(item?.link || ""));
-            return fp && !isLteCandidate(item, candidate) && getTransportType(protocol) === "tcp";
-        })
-        .map(item => { const fp = fingerprintLink(item?.link || ""); const row = state[fp] || {}; const last = Number(row.checkedAt) || 0; return { fp, last, stale: !last || now - last >= GLOBALPING_STATE_MAX_AGE_MS, featured: /(?:🔥|🎮)/u.test(String(item?.remarks || "")) }; })
-        .sort((a, b) => Number(b.stale) - Number(a.stale) || Number(b.featured) - Number(a.featured) || a.last - b.last)
-        .slice(0, GLOBALPING_MAX_CANDIDATES_PER_CYCLE)
-        .map(row => row.fp));
-}
-
-let globalpingSelection = new Set();
-let globalpingState = {};
 
 async function updateHealthHistory(results) {
     let state = {};
@@ -1179,7 +1156,6 @@ async function updateHealthHistory(results) {
     }
 
     state.healthHistory = history;
-    state.russiaGlobalping = globalpingState;
     await fs.writeFile(
         HEALTH_STATE_FILE,
         `${JSON.stringify(state, null, 2)}\n`,
@@ -3282,54 +3258,86 @@ function resultSpeed(result) {
     return Number(result?.quality?.medianKbps ?? result?.quality?.kbps) || 0;
 }
 
-function resultLatency(result) {
-    return Number(result?.gaming?.medianLatencyMs) || Infinity;
+function resultConnectionMs(result) {
+    return Number(result?.connection?.medianMs) || Infinity;
+}
+
+function percentileRank(value, values, { ascending = true } = {}) {
+    const finite = values.filter(Number.isFinite).slice().sort((a, b) => a - b);
+    if (!finite.length || !Number.isFinite(value)) return 0;
+    if (finite.length === 1) return 1;
+    let below = 0;
+    for (const candidate of finite) {
+        if (ascending ? candidate <= value : candidate >= value) below += 1;
+        else break;
+    }
+    return below / finite.length;
 }
 
 function selectFeaturedFastServers(results, limit = FAST_TOP_N) {
-    const candidates = results
-        .filter(result =>
-            result.ok &&
-            !result.whiteList &&
-            result.country &&
-            result.connection?.eligible === true &&
-            Number.isFinite(resultSpeed(result)) &&
-            resultSpeed(result) > 0
-        )
+    const candidates = results.filter(result =>
+        result.ok &&
+        !result.whiteList &&
+        result.country &&
+        result.connection?.eligible === true &&
+        Number.isFinite(resultSpeed(result)) &&
+        resultSpeed(result) > 0 &&
+        Number.isFinite(Number(result?.connection?.medianMs)) &&
+        Number(result.connection.medianMs) > 0
+    );
+
+    const speedValues = candidates.map(result => resultSpeed(result));
+    const connectionValues = candidates.map(result => resultConnectionMs(result));
+
+    const ranked = candidates
+        .map(result => {
+            const speedScore = percentileRank(resultSpeed(result), speedValues, { ascending: false });
+            const connectionScore = percentileRank(resultConnectionMs(result), connectionValues, { ascending: true });
+            // Fast is a balance of throughput and real effective connection time.
+            // Gaming latency is deliberately excluded from this score.
+            const fastScore = (speedScore * 0.65) + (connectionScore * 0.35);
+            return { result, fastScore, speedScore, connectionScore };
+        })
         .sort((a, b) => {
-            // Fast is intentionally a pure speed ranking. Connection/stability
-            // are already gates; they must not make a slower server outrank a
-            // faster healthy server. Latency is only a deterministic tie-breaker.
-            const speed = resultSpeed(b) - resultSpeed(a);
-            if (speed !== 0) return speed;
+            const scoreDiff = b.fastScore - a.fastScore;
+            if (scoreDiff !== 0) return scoreDiff;
 
-            const aLatency = resultLatency(a);
-            const bLatency = resultLatency(b);
-            if (aLatency !== bLatency) return aLatency - bLatency;
+            const speedDiff = resultSpeed(b.result) - resultSpeed(a.result);
+            if (speedDiff !== 0) return speedDiff;
 
-            return String(a.linkFingerprint || a.link || '')
-                .localeCompare(String(b.linkFingerprint || b.link || ''));
+            const connectionDiff = resultConnectionMs(a.result) - resultConnectionMs(b.result);
+            if (connectionDiff !== 0) return connectionDiff;
+
+            return String(a.result.linkFingerprint || a.result.link || '')
+                .localeCompare(String(b.result.linkFingerprint || b.result.link || ''));
         });
 
+    // At most three distinct countries can participate in the Fast trio.
+    // Once a country is admitted, up to FAST_SERVERS_PER_COUNTRY (=3 by default)
+    // servers from that country may be selected.
     const selected = [];
     const selectedKeys = new Set();
+    const selectedCountries = new Set();
     const countryCounts = new Map();
 
-    // Pick strictly by speed, with a maximum of FAST_SERVERS_PER_COUNTRY
-    // servers from any one country. With the default of 3 and FAST_TOP_N=3,
-    // this means the three fastest healthy servers are selected regardless of
-    // whether they come from one, two, or three countries.
-    for (const result of candidates) {
+    for (const row of ranked) {
+        const result = row.result;
         const key = String(result.linkFingerprint || result.link || '');
         if (!key || selectedKeys.has(key)) continue;
 
-        const country = String(result.country || '').trim().toLowerCase();
-        const count = countryCounts.get(country) || 0;
+        const country = String(result.country || '').trim();
+        if (!country) continue;
+        const countryKey = country.toLowerCase();
+        const count = countryCounts.get(countryKey) || 0;
+
+        if (!selectedCountries.has(countryKey) && selectedCountries.size >= 3) continue;
         if (count >= FAST_SERVERS_PER_COUNTRY) continue;
 
+        selectedCountries.add(countryKey);
+        countryCounts.set(countryKey, count + 1);
         selectedKeys.add(key);
-        countryCounts.set(country, count + 1);
         selected.push(result);
+
         if (selected.length >= limit) break;
     }
 
@@ -3489,7 +3497,102 @@ async function buildGamingAssignments(
     }).filter(Boolean);
 }
 
+async function runGlobalpingDiagnostic() {
+    const candidateText = await fs.readFile(HEALTH_CANDIDATES_FILE, "utf8");
+    const candidates = JSON.parse(candidateText);
+    if (!Array.isArray(candidates) || !candidates.length) {
+        throw new Error(`${path.basename(HEALTH_CANDIDATES_FILE)} must contain a non-empty array`);
+    }
+
+    // Deterministic but distributed sample: hash the endpoint fingerprint so the
+    // first 250 are not always the same source slice after refreshes.
+    const sample = candidates
+        .filter(item => {
+            const fp = fingerprintLink(String(item?.link || ""));
+            return isManagedSourceId(item?.id) && !isLteCandidate(item, null) &&
+                getTransportType(getProtocol(String(item?.link || ""))) === "tcp";
+        })
+        .map(item => ({
+            item,
+            fp: fingerprintLink(String(item?.link || ""))
+        }))
+        .sort((a, b) => a.fp.localeCompare(b.fp))
+        .slice(0, GLOBALPING_MAX_CANDIDATES_PER_CYCLE);
+
+    const diagnosticResults = [];
+    let cursor = 0;
+
+    async function worker() {
+        while (true) {
+            const row = sample[cursor++];
+            if (!row) return;
+
+            let url;
+            try {
+                url = new URL(String(row.item?.link || "").trim());
+            } catch {
+                diagnosticResults.push({
+                    id: row.item?.id || "",
+                    fingerprint: row.fp,
+                    ok: false,
+                    skipped: false,
+                    error: "invalid endpoint URL"
+                });
+                continue;
+            }
+
+            const protocol = getProtocol(String(row.item?.link || ""));
+            const result = await globalpingRussia(url, protocol);
+            diagnosticResults.push({
+                id: row.item?.id || "",
+                fingerprint: row.fp,
+                country: row.item?.country || "",
+                source: row.item?.source || "",
+                host: url.hostname,
+                port: Number(url.port || 443),
+                protocol,
+                ...result,
+                checkedAt: Date.now()
+            });
+        }
+    }
+
+    const workerCount = Math.min(GLOBALPING_CONCURRENCY, sample.length || 1);
+    await Promise.all(Array.from({ length: workerCount }, () => worker()));
+
+    const ok = diagnosticResults.filter(item => item.ok).length;
+    const fail = diagnosticResults.filter(item => item.ok === false && !item.unavailable && !item.inconclusive).length;
+    const unavailable = diagnosticResults.filter(item => item.unavailable).length;
+
+    const report = {
+        generatedAt: new Date().toISOString(),
+        provider: "globalping",
+        purpose: "diagnostic-only",
+        affectsRussiaGate: false,
+        freeTestBudget: GLOBALPING_MAX_CANDIDATES_PER_CYCLE,
+        testsRequested: diagnosticResults.length,
+        testsPassed: ok,
+        testsFailed: fail,
+        testsUnavailable: unavailable,
+        results: diagnosticResults
+    };
+
+    const output = path.join(ROOT, "russia-globalping-diagnostic.json");
+    await fs.writeFile(output, `${JSON.stringify(report, null, 2)}\n`, "utf8");
+
+    console.log(
+        `GLOBALPING DIAGNOSTIC COMPLETE: ${diagnosticResults.length} tests; ` +
+        `${ok} pass, ${fail} fail, ${unavailable} unavailable; ` +
+        `gateImpact=none; results=${path.relative(ROOT, output)}`
+    );
+}
+
 async function main() {
+    if (HEALTHCHECK_MODE === "globalping-diagnostic") {
+        await runGlobalpingDiagnostic();
+        return;
+    }
+
     if (HEALTHCHECK_MODE !== "russia-gate") {
         await fs.access(
             XRAY_BIN
@@ -3639,11 +3742,6 @@ async function main() {
     try {
         persistentState = JSON.parse(await fs.readFile(HEALTH_STATE_FILE, "utf8"));
     } catch {}
-    globalpingState = (persistentState?.russiaGlobalping && typeof persistentState.russiaGlobalping === "object")
-        ? persistentState.russiaGlobalping
-        : {};
-    globalpingSelection = new Set();
-
     let cursor =
         0;
 
@@ -4022,17 +4120,6 @@ async function main() {
                 telegram: result.telegram || null
             });
 
-            const resultFingerprint = meta.linkFingerprint || fingerprintLink(item.link || "");
-            if (resultFingerprint && result.russiaProbe?.globalping && !result.russiaProbe.globalping.skipped) {
-                globalpingState[resultFingerprint] = {
-                    checkedAt: Number(result.russiaProbe.checkedAt) || Date.now(),
-                    ok: Boolean(result.russiaProbe.globalping.ok),
-                    minLatencyMs: Number(result.russiaProbe.globalping.minLatencyMs) || 0,
-                    unavailable: Boolean(result.russiaProbe.globalping.unavailable),
-                    rateLimited: Boolean(result.russiaProbe.globalping.rateLimited)
-                };
-            }
-
             const completed = passed + failed;
             if (completed % 50 === 0 || completed === checked) {
                 const elapsed = Math.round((Date.now() - healthStartedAt) / 1000);
@@ -4078,14 +4165,13 @@ async function main() {
             : {};
 
     if (HEALTHCHECK_MODE === "russia-gate") {
-        globalpingSelection = new Set();
+        ACTIVE_CHECK_HOST_RUSSIA_NODES = await resolveRussianCheckHostNodes();
 
         console.log(
-            `RUSSIA GATE START: Check-Host=${CHECK_HOST_RUSSIA_NODES.length} nodes for all non-LTE candidates; ` +
+            `RUSSIA GATE START: Check-Host=${ACTIVE_CHECK_HOST_RUSSIA_NODES.length} live Russian nodes for all non-LTE candidates; ` +
             `cache=${RUSSIA_GATE_USE_CACHE ? "enabled" : "disabled"}; ` +
-            `Globalping=secondary fallback for inconclusive/unavailable Check-Host results; ` +
-            `globalpingBudget=${GLOBALPING_MAX_CANDIDATES_PER_CYCLE}; ` +
-            `nodes=${CHECK_HOST_RUSSIA_NODES.join(",")}`
+            `Globalping=diagnostic-only (never affects gate); ` +
+            `nodes=${ACTIVE_CHECK_HOST_RUSSIA_NODES.join(",")}`
         );
 
         const russiaCursor = { value: 0 };
@@ -4186,16 +4272,6 @@ async function main() {
                         : probe.globalping,
                 };
 
-                if (probe.globalping && !probe.globalping.skipped) {
-                    globalpingState[fp] = {
-                        checkedAt: Number(probe.checkedAt) || Date.now(),
-                        ok: Boolean(probe.globalping.ok),
-                        minLatencyMs: Number(probe.globalping.minLatencyMs) || 0,
-                        unavailable: Boolean(probe.globalping.unavailable),
-                        rateLimited: Boolean(probe.globalping.rateLimited)
-                    };
-                }
-
                 russiaGateChecked += 1;
                 if (probe.gatePassed) russiaGatePassed += 1;
                 else if (probe.gatePending) russiaGatePending += 1;
@@ -4270,7 +4346,6 @@ async function main() {
 
         const nextState = {
             ...persistentState,
-            russiaGlobalping: globalpingState,
             russiaGate: cachedRussiaGate,
         };
         await fs.writeFile(HEALTH_STATE_FILE, `${JSON.stringify(nextState, null, 2)}\n`, "utf8");
@@ -4312,8 +4387,9 @@ async function main() {
                     const age = Date.now() - (Number(item.checkedAt) || 0);
                     return age >= 0 && age < RUSSIA_GATE_STATE_MAX_AGE_MS;
                 }).length,
-                checkHostNodes: CHECK_HOST_RUSSIA_NODES,
-                globalpingSelectionCount: globalpingSelection.size,
+                checkHostNodes: ACTIVE_CHECK_HOST_RUSSIA_NODES,
+                 configuredCheckHostNodes: CHECK_HOST_RUSSIA_NODES,
+                 globalpingSelectionCount: 0,
                 stateMaxAgeMs: RUSSIA_GATE_STATE_MAX_AGE_MS,
                 gateAlgorithmVersion: RUSSIA_GATE_ALGORITHM_VERSION,
                 results: gateResults,
@@ -4713,22 +4789,23 @@ async function main() {
         russiaReachability: {
             gatedNonLte: true,
             lteDiagnosticOnly: true,
-            checkHostNodes: CHECK_HOST_RUSSIA_NODES,
+            checkHostNodes: Array.isArray(gateReport?.checkHostNodes)
+                ? gateReport.checkHostNodes
+                : CHECK_HOST_RUSSIA_NODES,
             checkHostTimeoutMs: CHECK_HOST_TIMEOUT_MS,
             checkHostPollingMs: CHECK_HOST_POLL_MS,
             checkHostMaxPollingMs: CHECK_HOST_MAX_POLL_MS,
             checkHostApiMinIntervalMs: CHECK_HOST_API_MIN_INTERVAL_MS,
             checkHostConcurrency: CHECK_HOST_CONCURRENCY,
             globalpingTokenConfigured: Boolean(GLOBALPING_TOKEN),
-            globalpingFreeTestBudget: GLOBALPING_FREE_TEST_BUDGET,
+            globalpingDiagnosticOnly: true,
+            globalpingFreeTestBudget: GLOBALPING_MAX_CANDIDATES_PER_CYCLE,
             globalpingMaxCandidatesPerCycle: GLOBALPING_MAX_CANDIDATES_PER_CYCLE,
             globalpingProbeLimit: GLOBALPING_PROBE_LIMIT,
-            globalpingStateMaxAgeMs: GLOBALPING_STATE_MAX_AGE_MS,
-            globalpingSelectionCount: globalpingSelection.size,
             russiaGatePassed,
             russiaGateFailures,
             russiaGatePending,
-            policy: "Non-LTE survivors: Check-Host runs across the full post-health pool after primary health/speed checks, through a globally paced API queue. TCP requires a positive Russian reachability result. UDP/Hysteria may remain inconclusive and is not rejected solely because generic UDP probing cannot prove openness. Check-Host 429/5xx/timeout is UNKNOWN/PENDING, never an automatic PASS. LTE is diagnostic only and never gated by Russian probes."
+            policy: "Every managed non-LTE candidate is submitted to Check-Host at all currently live Russian nodes discovered from Check-Host; the configured list only provides ordering preference. A positive result from at least one configured Russian node passes the reachability gate; a definitive negative result rejects the candidate. Check-Host 429/5xx/timeout or unresolved results are UNKNOWN/PENDING and never an automatic PASS. If the checker is unavailable or any required candidate remains unresolved, the run stops before publication so the last known-good subscription remains in service. Globalping is diagnostics-only and cannot affect gate decisions. LTE/whitelist candidates are exempt from the Russia gate."
         },
         gamingCriteria: {
             minKbps:
