@@ -244,23 +244,23 @@ const CHECK_HOST_TIMEOUT_MS = Math.max(5000, Number(process.env.HEALTHCHECK_RUSS
 const CHECK_HOST_POLL_MS = Math.max(500, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_POLL_MS) || 1200);
 const CHECK_HOST_MAX_POLL_MS = Math.max(CHECK_HOST_POLL_MS, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_MAX_POLL_MS) || 20000);
 // Check-Host is asynchronous, but its public API can throttle the client.
-// Use one shared request-start budget for BOTH creation and result polling.
-// This prevents the old "create + result" double-rate burst that produced
-// hundreds of HTTP 429 responses.
+// Use separate request-start budgets for creation and result polling.
+// Candidate workers are intentionally NOT limited here: they may wait on
+// their own asynchronous request_id while unrelated candidates keep flowing.
 const CHECK_HOST_API_MIN_INTERVAL_MS = Math.max(
-    500,
-    Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_API_MIN_INTERVAL_MS) || 1800
+    250,
+    Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_API_MIN_INTERVAL_MS) || 1000
 );
 // Check-Host requests are rate-limited by START time, not by completion time.
 // Keep a global start budget, but allow in-flight HTTP requests to overlap so
 // one slow/timeout response cannot stall the entire Russia gate.
 const CHECK_HOST_CREATE_MIN_INTERVAL_MS = Math.max(
     250,
-    Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_CREATE_MIN_INTERVAL_MS) || 2000
+    Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_CREATE_MIN_INTERVAL_MS) || 1000
 );
 const CHECK_HOST_RESULT_MIN_INTERVAL_MS = Math.max(
     250,
-    Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_RESULT_MIN_INTERVAL_MS) || 1500
+    Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_RESULT_MIN_INTERVAL_MS) || 900
 );
 
 
@@ -288,9 +288,9 @@ const RUSSIA_GATE_USE_CACHE =
     );
 // Bump whenever the gate semantics change so old cached verdicts cannot be
 // reused after changing providers or reachability rules.
-const RUSSIA_GATE_ALGORITHM_VERSION = 12;
-const CHECK_HOST_CONCURRENCY = Math.max(4, Math.min(20, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_CONCURRENCY) || 12));
-const CHECK_HOST_REQUEST_RETRIES = Math.max(2, Math.min(5, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_REQUEST_RETRIES) || 3));
+const RUSSIA_GATE_ALGORITHM_VERSION = 13;
+const CHECK_HOST_CONCURRENCY = Math.max(8, Math.min(32, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_CONCURRENCY) || 24));
+const CHECK_HOST_REQUEST_RETRIES = Math.max(1, Math.min(4, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_REQUEST_RETRIES) || 2));
 const GLOBALPING_CONCURRENCY = Math.max(1, Math.min(4, Number(process.env.HEALTHCHECK_GLOBALPING_CONCURRENCY) || 4));
 
 // Speed providers are called from many candidate workers. Keep their concurrency
@@ -726,7 +726,7 @@ function createLimiter(limit) {
     });
 }
 
-const checkHostLimiter = createLimiter(CHECK_HOST_CONCURRENCY);
+const checkHostHttpLimiter = createLimiter(CHECK_HOST_CONCURRENCY);
 const globalpingLimiter = createLimiter(GLOBALPING_CONCURRENCY);
 const speedProviderLimiter = createLimiter(SPEED_PROVIDER_GLOBAL_CONCURRENCY);
 const mlabLocateLimiter = createLimiter(MLAB_LOCATE_CONCURRENCY);
@@ -841,7 +841,7 @@ async function scheduleCheckHostApiRequest(fn, kind = "result") {
         }
 
         try {
-            return await fn();
+            return await checkHostHttpLimiter(fn);
         } catch (error) {
             const status = Number(error?.status || 0);
             if (status === 429 || status >= 500) {
@@ -1001,10 +1001,9 @@ async function checkHostRussia(url, protocol, nodes = ACTIVE_CHECK_HOST_RUSSIA_N
     const checkType = transport === "udp" ? "udp" : "tcp";
     const pollLimitMs = Math.max(CHECK_HOST_MAX_POLL_MS, Number(options.maxPollMs) || 0);
 
-    return checkHostLimiter(async () => {
-        let lastError = null;
+    let lastError = null;
 
-        try {
+    try {
             const params = new URLSearchParams({
                 host: `${url.hostname}:${Number(url.port || 443)}`,
                 max_nodes: String(nodes.length)
@@ -1180,7 +1179,6 @@ async function checkHostRussia(url, protocol, nodes = ACTIVE_CHECK_HOST_RUSSIA_N
                 error: error?.message || String(error)
             };
         }
-    });
 }
 
 async function globalpingRussia(url, protocol) {
