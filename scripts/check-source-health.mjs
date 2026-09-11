@@ -241,13 +241,13 @@ const CHECK_HOST_RUSSIA_NODES = String(
 ).split(/[,\r\n;]+/).map(v => v.trim()).filter(Boolean);
 let ACTIVE_CHECK_HOST_RUSSIA_NODES = [...CHECK_HOST_RUSSIA_NODES];
 const CHECK_HOST_TIMEOUT_MS = Math.max(10000, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_TIMEOUT_MS) || 15000);
-const CHECK_HOST_POLL_MS = Math.max(1000, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_POLL_MS) || 1500);
-const CHECK_HOST_MAX_POLL_MS = Math.max(CHECK_HOST_POLL_MS, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_MAX_POLL_MS) || 45000);
+const CHECK_HOST_POLL_MS = Math.max(750, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_POLL_MS) || 900);
+const CHECK_HOST_MAX_POLL_MS = Math.max(CHECK_HOST_POLL_MS, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_MAX_POLL_MS) || 30000);
 // Check-Host is asynchronous, but the public API can still throttle bursts.
-// Pace *all* create/result requests through one queue instead of sleeping
-// serially between servers. This keeps the workflow bounded while avoiding
-// a burst of hundreds of concurrent HTTP calls.
-const CHECK_HOST_API_MIN_INTERVAL_MS = Math.max(1000, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_MIN_INTERVAL_MS) || 2200);
+// Pace create and result requests independently so slow result polling does
+// not block new checks, while still keeping request-start pressure bounded.
+const CHECK_HOST_CREATE_MIN_INTERVAL_MS = Math.max(250, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_CREATE_MIN_INTERVAL_MS) || 450);
+const CHECK_HOST_RESULT_MIN_INTERVAL_MS = Math.max(250, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_RESULT_MIN_INTERVAL_MS) || 450);
 
 const GLOBALPING_API_BASE =
     process.env.HEALTHCHECK_GLOBALPING_API_BASE ||
@@ -273,9 +273,9 @@ const RUSSIA_GATE_USE_CACHE =
     );
 // Bump whenever the gate semantics change so old cached verdicts cannot be
 // reused after changing providers or reachability rules.
-const RUSSIA_GATE_ALGORITHM_VERSION = 8;
-const CHECK_HOST_CONCURRENCY = Math.max(1, Math.min(4, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_CONCURRENCY) || 2));
-const CHECK_HOST_REQUEST_RETRIES = Math.max(3, Math.min(6, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_REQUEST_RETRIES) || 5));
+const RUSSIA_GATE_ALGORITHM_VERSION = 9;
+const CHECK_HOST_CONCURRENCY = Math.max(2, Math.min(16, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_CONCURRENCY) || 16));
+const CHECK_HOST_REQUEST_RETRIES = Math.max(1, Math.min(4, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_REQUEST_RETRIES) || 2));
 const GLOBALPING_CONCURRENCY = Math.max(1, Math.min(4, Number(process.env.HEALTHCHECK_GLOBALPING_CONCURRENCY) || 4));
 
 // Speed providers are called from many candidate workers. Keep their concurrency
@@ -792,21 +792,47 @@ async function requestJsonWithRetries(url, options = {}, timeoutMs = REQUEST_TIM
     throw lastError || new Error("request failed");
 }
 
-let checkHostNextSlotAt = 0;
+let checkHostCreateNextSlotAt = 0;
+let checkHostResultNextSlotAt = 0;
+let checkHostCooldownUntil = 0;
 
-async function scheduleCheckHostApiRequest(fn) {
-    // Reserve a start slot immediately. The previous implementation chained
-    // requests through one Promise, which accidentally serialized the whole
-    // HTTP round-trip: a slow response blocked every subsequent request.
-    // Here we pace only request *starts* while allowing the actual fetches to
-    // overlap under CHECK_HOST_CONCURRENCY.
+async function scheduleCheckHostApiRequest(fn, kind = "result") {
+    // Check-Host is asynchronous: creation and result polling are separate
+    // endpoints. Pace their request starts independently so a slow result poll
+    // cannot block new checks from being created. Actual HTTP calls overlap
+    // under CHECK_HOST_CONCURRENCY.
+    const interval = kind === "create"
+        ? CHECK_HOST_CREATE_MIN_INTERVAL_MS
+        : CHECK_HOST_RESULT_MIN_INTERVAL_MS;
     const now = Date.now();
-    const slot = Math.max(now, checkHostNextSlotAt);
-    checkHostNextSlotAt = slot + CHECK_HOST_API_MIN_INTERVAL_MS;
+    const nextSlotRef = kind === "create" ? "create" : "result";
+    const nextSlotAt = nextSlotRef === "create"
+        ? checkHostCreateNextSlotAt
+        : checkHostResultNextSlotAt;
+    const slot = Math.max(now, nextSlotAt, checkHostCooldownUntil);
+
+    if (nextSlotRef === "create") {
+        checkHostCreateNextSlotAt = slot + interval;
+    } else {
+        checkHostResultNextSlotAt = slot + interval;
+    }
 
     const wait = slot - now;
     if (wait > 0) await sleep(wait);
-    return fn();
+
+    try {
+        return await fn();
+    } catch (error) {
+        const status = Number(error?.status || 0);
+        if (status === 429 || status >= 500) {
+            const retryAfterMs = Number(error?.retryAfterMs);
+            const cooldownMs = Number.isFinite(retryAfterMs)
+                ? Math.max(status === 429 ? 5000 : 2000, retryAfterMs)
+                : (status === 429 ? 5000 : 2000);
+            checkHostCooldownUntil = Math.max(checkHostCooldownUntil, Date.now() + cooldownMs);
+        }
+        throw error;
+    }
 }
 
 function parseCheckHostNode(raw, node, transport = "tcp") {
@@ -924,7 +950,8 @@ async function checkHostRussia(url, protocol, nodes = ACTIVE_CHECK_HOST_RUSSIA_N
                     { headers: { "user-agent": "enter-config-russia-health/1.0" } },
                     CHECK_HOST_TIMEOUT_MS,
                     CHECK_HOST_REQUEST_RETRIES
-                )
+                ),
+                "create"
             );
 
             const requestId = String(created?.request_id || "").trim();
@@ -939,7 +966,7 @@ async function checkHostRussia(url, protocol, nodes = ACTIVE_CHECK_HOST_RUSSIA_N
             let pollDelayMs = CHECK_HOST_POLL_MS;
             let firstPoll = true;
             while (Date.now() - started <= CHECK_HOST_MAX_POLL_MS) {
-                await sleep(firstPoll ? Math.min(1200, CHECK_HOST_POLL_MS) : pollDelayMs);
+                await sleep(firstPoll ? Math.min(800, CHECK_HOST_POLL_MS) : pollDelayMs);
                 firstPoll = false;
 
                 const payload = await scheduleCheckHostApiRequest(() =>
@@ -948,7 +975,8 @@ async function checkHostRussia(url, protocol, nodes = ACTIVE_CHECK_HOST_RUSSIA_N
                         { headers: { "user-agent": "enter-config-russia-health/1.0" } },
                         CHECK_HOST_TIMEOUT_MS,
                         CHECK_HOST_REQUEST_RETRIES
-                    )
+                    ),
+                    "result"
                 );
 
                 const parsed = selectedNodes.map(node =>
@@ -993,7 +1021,7 @@ async function checkHostRussia(url, protocol, nodes = ACTIVE_CHECK_HOST_RUSSIA_N
 
                 // Back off polling so hundreds of in-flight checks do not hammer
                 // the result endpoint while the asynchronous node work finishes.
-                pollDelayMs = Math.min(5000, Math.round(pollDelayMs * 1.5));
+                pollDelayMs = Math.min(3500, Math.round(pollDelayMs * 1.45));
             }
 
             return {
@@ -4211,6 +4239,7 @@ async function main() {
         );
 
         const russiaCursor = { value: 0 };
+        const russiaGateStartedAt = Date.now();
         let russiaFreshChecks = 0;
         let russiaCacheHits = 0;
         const russiaWorkerCount = Math.min(
@@ -4317,7 +4346,14 @@ async function main() {
                 if (probe.checkHost?.rateLimited) russiaCheckHostRateLimited += 1;
 
                 if (russiaGateChecked % 100 === 0 || russiaGateChecked === checked) {
-                    console.log(`RUSSIA PROGRESS ${russiaGateChecked}/${checked}: ${russiaGatePassed} pass, ${russiaGateFailures} fail, ${russiaGatePending} pending`);
+                    const elapsedMs = Math.max(1, Date.now() - russiaGateStartedAt);
+                    const checkedPerSecond = russiaGateChecked / (elapsedMs / 1000);
+                    const remaining = Math.max(0, checked - russiaGateChecked);
+                    const etaSeconds = checkedPerSecond > 0 ? Math.round(remaining / checkedPerSecond) : 0;
+                    console.log(
+                        `RUSSIA PROGRESS ${russiaGateChecked}/${checked}: ${russiaGatePassed} pass, ${russiaGateFailures} fail, ${russiaGatePending} pending; ` +
+                        `rate=${checkedPerSecond.toFixed(2)}/s; eta=${etaSeconds}s`
+                    );
                 }
             }
         }
@@ -4835,7 +4871,8 @@ async function main() {
             checkHostTimeoutMs: CHECK_HOST_TIMEOUT_MS,
             checkHostPollingMs: CHECK_HOST_POLL_MS,
             checkHostMaxPollingMs: CHECK_HOST_MAX_POLL_MS,
-            checkHostApiMinIntervalMs: CHECK_HOST_API_MIN_INTERVAL_MS,
+            checkHostCreateMinIntervalMs: CHECK_HOST_CREATE_MIN_INTERVAL_MS,
+            checkHostResultMinIntervalMs: CHECK_HOST_RESULT_MIN_INTERVAL_MS,
             checkHostConcurrency: CHECK_HOST_CONCURRENCY,
             globalpingTokenConfigured: Boolean(GLOBALPING_TOKEN),
             globalpingDiagnosticOnly: true,
