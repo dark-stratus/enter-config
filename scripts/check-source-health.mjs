@@ -248,12 +248,19 @@ const CHECK_HOST_MAX_POLL_MS = Math.max(CHECK_HOST_POLL_MS, Number(process.env.H
 // This prevents the old "create + result" double-rate burst that produced
 // hundreds of HTTP 429 responses.
 const CHECK_HOST_API_MIN_INTERVAL_MS = Math.max(
-    700,
+    500,
     Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_API_MIN_INTERVAL_MS) || 1000
 );
-// Backward-compatible aliases are kept for reporting/config compatibility.
-const CHECK_HOST_CREATE_MIN_INTERVAL_MS = CHECK_HOST_API_MIN_INTERVAL_MS;
-const CHECK_HOST_RESULT_MIN_INTERVAL_MS = CHECK_HOST_API_MIN_INTERVAL_MS;
+// Check-Host requests are rate-limited by START time, not by completion time.
+// Keep a global start budget, but allow in-flight HTTP requests to overlap so
+// one slow/timeout response cannot stall the entire Russia gate.
+const CHECK_HOST_CREATE_MIN_INTERVAL_MS = Math.max(500,
+    Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_CREATE_MIN_INTERVAL_MS) || CHECK_HOST_API_MIN_INTERVAL_MS
+);
+const CHECK_HOST_RESULT_MIN_INTERVAL_MS = Math.max(500,
+    Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_RESULT_MIN_INTERVAL_MS) || CHECK_HOST_API_MIN_INTERVAL_MS
+);
+
 
 const GLOBALPING_API_BASE =
     process.env.HEALTHCHECK_GLOBALPING_API_BASE ||
@@ -279,8 +286,8 @@ const RUSSIA_GATE_USE_CACHE =
     );
 // Bump whenever the gate semantics change so old cached verdicts cannot be
 // reused after changing providers or reachability rules.
-const RUSSIA_GATE_ALGORITHM_VERSION = 9;
-const CHECK_HOST_CONCURRENCY = Math.max(2, Math.min(16, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_CONCURRENCY) || 16));
+const RUSSIA_GATE_ALGORITHM_VERSION = 10;
+const CHECK_HOST_CONCURRENCY = Math.max(4, Math.min(32, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_CONCURRENCY) || 24));
 const CHECK_HOST_REQUEST_RETRIES = Math.max(1, Math.min(4, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_REQUEST_RETRIES) || 2));
 const GLOBALPING_CONCURRENCY = Math.max(1, Math.min(4, Number(process.env.HEALTHCHECK_GLOBALPING_CONCURRENCY) || 4));
 
@@ -798,33 +805,38 @@ async function requestJsonWithRetries(url, options = {}, timeoutMs = REQUEST_TIM
     throw lastError || new Error("request failed");
 }
 
-let checkHostScheduler = Promise.resolve();
-let checkHostNextSlotAt = 0;
+let checkHostNextCreateAt = 0;
+let checkHostNextResultAt = 0;
 let checkHostCooldownUntil = 0;
 
-function scheduleCheckHostApiRequest(fn, kind = "result") {
-    // Check-Host has separate create/result endpoints, but both consume the
-    // same public API budget. A single serialized queue prevents request
-    // bursts, including bursts immediately after a 429 cooldown.
-    const run = async () => {
-        const interval = CHECK_HOST_API_MIN_INTERVAL_MS;
-        const slot = Math.max(
-            Date.now(),
-            checkHostNextSlotAt,
-            checkHostCooldownUntil
-        );
+async function scheduleCheckHostApiRequest(fn, kind = "result") {
+    const interval = kind === "create"
+        ? CHECK_HOST_CREATE_MIN_INTERVAL_MS
+        : CHECK_HOST_RESULT_MIN_INTERVAL_MS;
 
-        const wait = slot - Date.now();
-        if (wait > 0) await sleep(wait);
+    // Rate-limit by request START time while allowing requests that are already
+    // in flight to overlap. A slow 10s HTTP timeout must not block the next
+    // create/result request; that was the direct cause of the previous ~0.13/s
+    // throughput.
+    while (true) {
+        const now = Date.now();
+        const nextAt = kind === "create" ? checkHostNextCreateAt : checkHostNextResultAt;
+        const slot = Math.max(now, nextAt, checkHostCooldownUntil);
 
-        while (Date.now() < checkHostCooldownUntil) {
-            await sleep(checkHostCooldownUntil - Date.now());
+        if (kind === "create") checkHostNextCreateAt = slot + interval;
+        else checkHostNextResultAt = slot + interval;
+
+        const waitMs = slot - now;
+        if (waitMs > 0) await sleep(waitMs);
+
+        const cooldownWait = checkHostCooldownUntil - Date.now();
+        if (cooldownWait > 0) {
+            // A 429 can extend the cooldown after this request reserved its
+            // slot. Re-enter the scheduler after the cooldown so the retry is
+            // assigned a fresh, properly spaced slot rather than joining a burst.
+            await sleep(cooldownWait);
+            continue;
         }
-
-        // Reserve the next start only after the previous API call has actually
-        // completed. This is intentionally serialized to avoid overwhelming
-        // the public endpoint with overlapping HTTP requests.
-        checkHostNextSlotAt = Date.now() + interval;
 
         try {
             return await fn();
@@ -832,10 +844,7 @@ function scheduleCheckHostApiRequest(fn, kind = "result") {
             const status = Number(error?.status || 0);
             if (status === 429 || status >= 500) {
                 const retryAfterMs = Number(error?.retryAfterMs);
-                const baseCooldownMs =
-                    status === 429 ? 10000 :
-                    status >= 500 ? 3000 :
-                    0;
+                const baseCooldownMs = status === 429 ? 8000 : 2500;
                 const cooldownMs = Number.isFinite(retryAfterMs)
                     ? Math.max(baseCooldownMs, retryAfterMs)
                     : baseCooldownMs;
@@ -844,20 +853,10 @@ function scheduleCheckHostApiRequest(fn, kind = "result") {
                     checkHostCooldownUntil,
                     Date.now() + cooldownMs
                 );
-                checkHostNextSlotAt = Math.max(
-                    checkHostNextSlotAt,
-                    checkHostCooldownUntil
-                );
             }
             throw error;
         }
-    };
-
-    const result = checkHostScheduler.then(run, run);
-    // Keep the queue alive after a failed request; the individual caller still
-    // receives the rejection through "result".
-    checkHostScheduler = result.catch(() => undefined);
-    return result;
+    }
 }
 
 
