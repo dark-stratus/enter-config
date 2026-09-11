@@ -241,13 +241,19 @@ const CHECK_HOST_RUSSIA_NODES = String(
 ).split(/[,\r\n;]+/).map(v => v.trim()).filter(Boolean);
 let ACTIVE_CHECK_HOST_RUSSIA_NODES = [...CHECK_HOST_RUSSIA_NODES];
 const CHECK_HOST_TIMEOUT_MS = Math.max(10000, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_TIMEOUT_MS) || 15000);
-const CHECK_HOST_POLL_MS = Math.max(750, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_POLL_MS) || 900);
+const CHECK_HOST_POLL_MS = Math.max(1000, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_POLL_MS) || 1200);
 const CHECK_HOST_MAX_POLL_MS = Math.max(CHECK_HOST_POLL_MS, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_MAX_POLL_MS) || 30000);
-// Check-Host is asynchronous, but the public API can still throttle bursts.
-// Pace create and result requests independently so slow result polling does
-// not block new checks, while still keeping request-start pressure bounded.
-const CHECK_HOST_CREATE_MIN_INTERVAL_MS = Math.max(250, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_CREATE_MIN_INTERVAL_MS) || 450);
-const CHECK_HOST_RESULT_MIN_INTERVAL_MS = Math.max(250, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_RESULT_MIN_INTERVAL_MS) || 450);
+// Check-Host is asynchronous, but its public API can throttle the client.
+// Use one shared request-start budget for BOTH creation and result polling.
+// This prevents the old "create + result" double-rate burst that produced
+// hundreds of HTTP 429 responses.
+const CHECK_HOST_API_MIN_INTERVAL_MS = Math.max(
+    700,
+    Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_API_MIN_INTERVAL_MS) || 1000
+);
+// Backward-compatible aliases are kept for reporting/config compatibility.
+const CHECK_HOST_CREATE_MIN_INTERVAL_MS = CHECK_HOST_API_MIN_INTERVAL_MS;
+const CHECK_HOST_RESULT_MIN_INTERVAL_MS = CHECK_HOST_API_MIN_INTERVAL_MS;
 
 const GLOBALPING_API_BASE =
     process.env.HEALTHCHECK_GLOBALPING_API_BASE ||
@@ -792,48 +798,68 @@ async function requestJsonWithRetries(url, options = {}, timeoutMs = REQUEST_TIM
     throw lastError || new Error("request failed");
 }
 
-let checkHostCreateNextSlotAt = 0;
-let checkHostResultNextSlotAt = 0;
+let checkHostScheduler = Promise.resolve();
+let checkHostNextSlotAt = 0;
 let checkHostCooldownUntil = 0;
 
-async function scheduleCheckHostApiRequest(fn, kind = "result") {
-    // Check-Host is asynchronous: creation and result polling are separate
-    // endpoints. Pace their request starts independently so a slow result poll
-    // cannot block new checks from being created. Actual HTTP calls overlap
-    // under CHECK_HOST_CONCURRENCY.
-    const interval = kind === "create"
-        ? CHECK_HOST_CREATE_MIN_INTERVAL_MS
-        : CHECK_HOST_RESULT_MIN_INTERVAL_MS;
-    const now = Date.now();
-    const nextSlotRef = kind === "create" ? "create" : "result";
-    const nextSlotAt = nextSlotRef === "create"
-        ? checkHostCreateNextSlotAt
-        : checkHostResultNextSlotAt;
-    const slot = Math.max(now, nextSlotAt, checkHostCooldownUntil);
+function scheduleCheckHostApiRequest(fn, kind = "result") {
+    // Check-Host has separate create/result endpoints, but both consume the
+    // same public API budget. A single serialized queue prevents request
+    // bursts, including bursts immediately after a 429 cooldown.
+    const run = async () => {
+        const interval = CHECK_HOST_API_MIN_INTERVAL_MS;
+        const slot = Math.max(
+            Date.now(),
+            checkHostNextSlotAt,
+            checkHostCooldownUntil
+        );
 
-    if (nextSlotRef === "create") {
-        checkHostCreateNextSlotAt = slot + interval;
-    } else {
-        checkHostResultNextSlotAt = slot + interval;
-    }
+        const wait = slot - Date.now();
+        if (wait > 0) await sleep(wait);
 
-    const wait = slot - now;
-    if (wait > 0) await sleep(wait);
-
-    try {
-        return await fn();
-    } catch (error) {
-        const status = Number(error?.status || 0);
-        if (status === 429 || status >= 500) {
-            const retryAfterMs = Number(error?.retryAfterMs);
-            const cooldownMs = Number.isFinite(retryAfterMs)
-                ? Math.max(status === 429 ? 5000 : 2000, retryAfterMs)
-                : (status === 429 ? 5000 : 2000);
-            checkHostCooldownUntil = Math.max(checkHostCooldownUntil, Date.now() + cooldownMs);
+        while (Date.now() < checkHostCooldownUntil) {
+            await sleep(checkHostCooldownUntil - Date.now());
         }
-        throw error;
-    }
+
+        // Reserve the next start only after the previous API call has actually
+        // completed. This is intentionally serialized to avoid overwhelming
+        // the public endpoint with overlapping HTTP requests.
+        checkHostNextSlotAt = Date.now() + interval;
+
+        try {
+            return await fn();
+        } catch (error) {
+            const status = Number(error?.status || 0);
+            if (status === 429 || status >= 500) {
+                const retryAfterMs = Number(error?.retryAfterMs);
+                const baseCooldownMs =
+                    status === 429 ? 10000 :
+                    status >= 500 ? 3000 :
+                    0;
+                const cooldownMs = Number.isFinite(retryAfterMs)
+                    ? Math.max(baseCooldownMs, retryAfterMs)
+                    : baseCooldownMs;
+
+                checkHostCooldownUntil = Math.max(
+                    checkHostCooldownUntil,
+                    Date.now() + cooldownMs
+                );
+                checkHostNextSlotAt = Math.max(
+                    checkHostNextSlotAt,
+                    checkHostCooldownUntil
+                );
+            }
+            throw error;
+        }
+    };
+
+    const result = checkHostScheduler.then(run, run);
+    // Keep the queue alive after a failed request; the individual caller still
+    // receives the rejection through "result".
+    checkHostScheduler = result.catch(() => undefined);
+    return result;
 }
+
 
 function parseCheckHostNode(raw, node, transport = "tcp") {
     if (raw == null) {
@@ -936,6 +962,8 @@ async function checkHostRussia(url, protocol, nodes = ACTIVE_CHECK_HOST_RUSSIA_N
     const checkType = transport === "udp" ? "udp" : "tcp";
 
     return checkHostLimiter(async () => {
+        let lastError = null;
+
         try {
             const params = new URLSearchParams({
                 host: `${url.hostname}:${Number(url.port || 443)}`,
@@ -965,19 +993,57 @@ async function checkHostRussia(url, protocol, nodes = ACTIVE_CHECK_HOST_RUSSIA_N
             const started = Date.now();
             let pollDelayMs = CHECK_HOST_POLL_MS;
             let firstPoll = true;
+            let transientErrors = 0;
+
             while (Date.now() - started <= CHECK_HOST_MAX_POLL_MS) {
-                await sleep(firstPoll ? Math.min(800, CHECK_HOST_POLL_MS) : pollDelayMs);
+                await sleep(firstPoll ? Math.min(1000, CHECK_HOST_POLL_MS) : pollDelayMs);
                 firstPoll = false;
 
-                const payload = await scheduleCheckHostApiRequest(() =>
-                    requestJsonWithRetries(
-                        `${CHECK_HOST_API_BASE}/check-result/${encodeURIComponent(requestId)}`,
-                        { headers: { "user-agent": "enter-config-russia-health/1.0" } },
-                        CHECK_HOST_TIMEOUT_MS,
-                        CHECK_HOST_REQUEST_RETRIES
-                    ),
-                    "result"
-                );
+                let payload;
+                try {
+                    // Do NOT let one temporary 429/timeout terminate the whole
+                    // candidate. The request budget and cooldown are handled by
+                    // scheduleCheckHostApiRequest; the polling loop remains alive.
+                    payload = await scheduleCheckHostApiRequest(() =>
+                        requestJson(
+                            `${CHECK_HOST_API_BASE}/check-result/${encodeURIComponent(requestId)}`,
+                            { headers: { "user-agent": "enter-config-russia-health/1.0" } },
+                            CHECK_HOST_TIMEOUT_MS
+                        ),
+                        "result"
+                    );
+                    transientErrors = 0;
+                } catch (error) {
+                    lastError = error;
+                    const status = Number(error?.status || 0);
+                    const retryable =
+                        status === 429 ||
+                        status === 408 ||
+                        status >= 500 ||
+                        /aborted|timeout|timed out|fetch failed/i.test(
+                            String(error?.message || "")
+                        );
+
+                    if (!retryable) throw error;
+
+                    transientErrors += 1;
+
+                    // 429/temporary network failures are not "checker
+                    // unavailable". Stay on the same request_id and retry after
+                    // a bounded delay. The scheduler has already applied any
+                    // server Retry-After cooldown.
+                    const serverDelay = Number(error?.retryAfterMs);
+                    const backoff = status === 429
+                        ? 3000 * Math.min(4, transientErrors)
+                        : 1200 * Math.min(4, transientErrors);
+                    const delay = Number.isFinite(serverDelay)
+                        ? Math.max(serverDelay, backoff)
+                        : backoff;
+
+                    await sleep(Math.min(10000, delay));
+                    pollDelayMs = Math.min(4000, Math.max(CHECK_HOST_POLL_MS, Math.round(pollDelayMs * 1.35)));
+                    continue;
+                }
 
                 const parsed = selectedNodes.map(node =>
                     parseCheckHostNode(payload?.[node] ?? null, node, transport)
@@ -1019,19 +1085,24 @@ async function checkHostRussia(url, protocol, nodes = ACTIVE_CHECK_HOST_RUSSIA_N
                     };
                 }
 
-                // Back off polling so hundreds of in-flight checks do not hammer
-                // the result endpoint while the asynchronous node work finishes.
-                pollDelayMs = Math.min(3500, Math.round(pollDelayMs * 1.45));
+                // Gradually reduce result-request pressure while allowing the
+                // asynchronous Russian node work to finish.
+                pollDelayMs = Math.min(4000, Math.round(pollDelayMs * 1.35));
             }
 
             return {
                 provider: "check-host",
                 ok: false,
+                // This is genuinely unresolved: the Russian checker did not
+                // return a definitive result inside our bounded polling window.
                 unavailable: true,
                 inconclusive: transport === "udp",
                 transport,
                 checkType,
-                error: "Check-Host polling timeout"
+                rateLimited: Number(lastError?.status || 0) === 429,
+                error: lastError?.message
+                    ? `Check-Host polling timeout after transient errors: ${lastError.message}`
+                    : "Check-Host polling timeout"
             };
         } catch (error) {
             return {
@@ -1047,7 +1118,6 @@ async function checkHostRussia(url, protocol, nodes = ACTIVE_CHECK_HOST_RUSSIA_N
         }
     });
 }
-
 
 async function globalpingRussia(url, protocol) {
     const transport = getTransportType(protocol);
