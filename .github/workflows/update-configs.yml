@@ -536,7 +536,7 @@ jobs:
           path: russia-globalping-diagnostic.json
           retention-days: 7
 
-      - name: Run Russia reachability gate (parallel lanes)
+      - name: Run Russia reachability gate (single global coordinator)
         if: ${{ steps.source_generation.outputs.refreshed == 'true' }}
         id: russia_gate
         timeout-minutes: 44
@@ -546,42 +546,20 @@ jobs:
           HEALTHCHECK_RUSSIA_CHECK_HOST_TIMEOUT_MS: 10000
           HEALTHCHECK_RUSSIA_CHECK_HOST_API_MIN_INTERVAL_MS: 200
           HEALTHCHECK_RUSSIA_CHECK_HOST_CREATE_MIN_INTERVAL_MS: 700
-          HEALTHCHECK_RUSSIA_CHECK_HOST_RESULT_MIN_INTERVAL_MS: 200
-          HEALTHCHECK_RUSSIA_CHECK_HOST_POLL_MS: 250
+          HEALTHCHECK_RUSSIA_CHECK_HOST_RESULT_MIN_INTERVAL_MS: 400
+          HEALTHCHECK_RUSSIA_CHECK_HOST_POLL_MS: 700
           HEALTHCHECK_RUSSIA_CHECK_HOST_MAX_POLL_MS: 20000
           HEALTHCHECK_RUSSIA_CHECK_HOST_CONCURRENCY: 16
           HEALTHCHECK_RUSSIA_GATE_USE_CACHE: 0
           HEALTHCHECK_RUSSIA_GATE_STATE_MAX_AGE_MS: 21600000
           HEALTH_CANDIDATES_FILE: ${{ github.workspace }}/config/source-health-candidates.json
-          HEALTHCHECK_RUSSIA_GATE_SHARD_COUNT: 6
-          HEALTHCHECK_RUSSIA_GATE_ALGORITHM_VERSION: 14
+          HEALTHCHECK_RUSSIA_GATE_SHARD_COUNT: 1
+          HEALTHCHECK_RUSSIA_GATE_ALGORITHM_VERSION: 15
         run: |
           set -euo pipefail
-          rm -rf .russia-gate-shards
-          mkdir -p .russia-gate-shards
-          pids=()
-          for shard in 0 1 2 3 4 5; do
-            HEALTHCHECK_RUSSIA_GATE_SHARD_INDEX="$shard" \
-            HEALTHCHECK_RUSSIA_GATE_SHARD_OUTPUT="$GITHUB_WORKSPACE/.russia-gate-shards/shard-${shard}.json" \
-            node scripts/check-source-health.mjs >".russia-gate-shards/shard-${shard}.log" 2>&1 &
-            pids+=("$!")
-          done
-          status=0
-          for idx in "${!pids[@]}"; do
-            if ! wait "${pids[$idx]}"; then
-              echo "--- Russia gate shard $idx failed ---"
-              cat ".russia-gate-shards/shard-${idx}.log" || true
-              status=1
-            fi
-          done
-          for shard in 0 1 2 3 4 5; do
-            echo "--- Russia gate shard $shard log ---"
-            cat ".russia-gate-shards/shard-${shard}.log"
-          done
-          if [ "$status" -ne 0 ]; then
-            exit "$status"
-          fi
-          node scripts/merge-russia-gate.mjs
+          unset HEALTHCHECK_RUSSIA_GATE_SHARD_INDEX
+          unset HEALTHCHECK_RUSSIA_GATE_SHARD_OUTPUT
+          node scripts/check-source-health.mjs
 
       - name: Verify Russia gate artifact
         if: ${{ steps.russia_gate.outcome == 'success' }}
