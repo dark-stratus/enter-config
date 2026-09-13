@@ -14,6 +14,38 @@ const UPDATE_STATUS_FILE = path.join(ROOT, "config", "source-update-status.json"
 const REGULAR_LIMIT = Number.POSITIVE_INFINITY;
 const AUTO_WHITE_LIST_LIMIT = Number.POSITIVE_INFINITY;
 
+const ALLOWED_REGULAR_COUNTRIES = new Set([
+  "Germany",
+  "Netherlands",
+  "United Kingdom",
+  "United States",
+  "Canada",
+  "France",
+  "Switzerland",
+  "Sweden",
+  "Finland",
+  "Poland",
+  "Russia",
+  "Austria",
+  "Italy",
+  "Hungary",
+  "Bulgaria",
+]);
+
+const REGULAR_COUNTRY_ORDER = [
+  "Germany", "Netherlands", "United Kingdom", "United States", "Canada",
+  "France", "Switzerland", "Sweden", "Finland", "Poland", "Russia",
+  "Austria", "Italy", "Hungary", "Bulgaria",
+];
+const REGULAR_COUNTRY_RANK = new Map(
+  REGULAR_COUNTRY_ORDER.map((country, index) => [country.toLowerCase(), index])
+);
+
+function isAllowedRegularCountry(country) {
+  return ALLOWED_REGULAR_COUNTRIES.has(String(country || "").trim());
+}
+
+
 // 15 logical source slots: 1-8 regular, 9-15 whitelist.
 // External URLs are supplied by GitHub Secrets through the workflow.
 const SOURCE_SLOT_START = 1;
@@ -180,6 +212,7 @@ const FLAG_TO_COUNTRY = {
   "🇧🇾": "Belarus",
   "🇧🇪": "Belgium",
   "🇧🇷": "Brazil",
+  "🇧🇬": "Bulgaria",
   "🇨🇭": "Switzerland",
   "🇨🇳": "China",
   "🇨🇿": "Czech Republic",
@@ -191,6 +224,7 @@ const FLAG_TO_COUNTRY = {
   "🇫🇷": "France",
   "🇬🇧": "United Kingdom",
   "🇬🇷": "Greece",
+  "🇭🇺": "Hungary",
   "🇭🇰": "Hong Kong",
   "🇮🇩": "Indonesia",
   "🇮🇪": "Ireland",
@@ -267,7 +301,7 @@ const COUNTRY_ALIAS_PATTERNS = [
   ["Estonia", ["эстония"]], ["Spain", ["испания"]],
   ["Finland", ["финляндия"]], ["France", ["франция"]],
   ["United Kingdom", ["великобритания", "англия", "ук"]],
-  ["Greece", ["греция"]], ["Hong Kong", ["гонконг"]],
+  ["Greece", ["греция"]], ["Hungary", ["венгрия"]], ["Hong Kong", ["гонконг"]],
   ["Indonesia", ["индонезия"]], ["Ireland", ["ирландия"]],
   ["India", ["индия"]], ["Israel", ["израиль"]],
   ["Italy", ["италия"]], ["Japan", ["япония"]],
@@ -1784,6 +1818,14 @@ function normalizeProfileLink(link, index, source, forceWhiteList = false, stats
     return null;
   }
 
+  if (!forceWhiteList && !effective.whiteList && !isAllowedRegularCountry(effective.country)) {
+    if (stats) {
+      stats.droppedDisallowedCountry += 1;
+      recordDropSample(stats, { index, reason: "country-not-allowed", country: effective.country, remarks });
+    }
+    return null;
+  }
+
   if (stats) stats.parsed += 1;
 
   return {
@@ -1808,6 +1850,7 @@ function normalizeSourceData(source) {
     droppedInvalid: 0,
     droppedUnsupported: 0,
     droppedUnknownCountry: 0,
+    droppedDisallowedCountry: 0,
     droppedAutoSelection: 0,
     autoSelection: 0,
     droppedSamples: [],
@@ -1842,7 +1885,7 @@ function normalizeSourceData(source) {
   stats.raw = sourceEntries.length;
 
   for (let index = 0; index < sourceEntries.length; index += 1) {
-    const normalized = normalizeEntry(sourceEntries[index], index, source.label, stats);
+    const normalized = normalizeEntry(sourceEntries[index], index, source.label, source.forceWhiteList, stats);
     if (normalized === "AUTO_SELECTION") {
       stats.autoSelection += 1;
       if (!autoEntry) autoEntry = extractAutoLink(sourceEntries[index]);
@@ -1884,7 +1927,7 @@ function extractAutoLink(entry) {
   };
 }
 
-function normalizeEntry(entry, index, source, stats = null) {
+function normalizeEntry(entry, index, source, forceWhiteList = false, stats = null) {
   if (!entry || typeof entry !== "object") {
     if (stats) stats.droppedInvalid += 1;
     return null;
@@ -1928,6 +1971,15 @@ function normalizeEntry(entry, index, source, stats = null) {
     }
     return null;
   }
+
+  if (!forceWhiteList && !normalized.whiteList && !isAllowedRegularCountry(normalized.country)) {
+    if (stats) {
+      stats.droppedDisallowedCountry += 1;
+      recordDropSample(stats, { index, reason: "country-not-allowed", country: normalized.country, remarks });
+    }
+    return null;
+  }
+
   if (stats) stats.parsed += 1;
 
   return {
@@ -2094,7 +2146,13 @@ function dedupe(entries) {
 
 function sortEntries(entries) {
   return [...entries].sort((a, b) => {
-    const countryCompare = a.country.localeCompare(b.country, "en");
+    const aCountry = String(a.country || "").trim().toLowerCase();
+    const bCountry = String(b.country || "").trim().toLowerCase();
+    const aRank = REGULAR_COUNTRY_RANK.get(aCountry) ?? Number.MAX_SAFE_INTEGER;
+    const bRank = REGULAR_COUNTRY_RANK.get(bCountry) ?? Number.MAX_SAFE_INTEGER;
+    if (aRank !== bRank) return aRank - bRank;
+
+    const countryCompare = String(a.country || "").localeCompare(String(b.country || ""), "en");
     if (countryCompare !== 0) return countryCompare;
 
     const aFresh = a.fresh !== false && !a.retained;
@@ -2154,6 +2212,8 @@ function buildRetainedEntries(
       String(item?.source || "").trim() ||
       previousSourceAttribution.get(fingerprintUrl(link)) ||
       "retained";
+
+    if (!isWhiteList && !isAllowedRegularCountry(country)) continue;
 
     retained.push({
       link,
@@ -2342,13 +2402,13 @@ async function buildStagedLinks(
     await fs.unlink(path.join(stageDir, item.name));
   }
 
-  const manualEntries = currentIndex.filter(item => (
-    item &&
-    typeof item.id === "string" &&
-    !isManagedId(item.id) &&
-    !isProtectedEuropeId(item.id) &&
-    !/^whitelist-\d+$/i.test(item.id)
-  ));
+  const manualEntries = currentIndex.filter(item => {
+    if (!item || typeof item.id !== "string") return false;
+    if (isManagedId(item.id) || isProtectedEuropeId(item.id) || /^whitelist-\d+$/i.test(item.id)) return false;
+    if (item.whiteList === true) return true;
+    const country = String(item.country || "").trim();
+    return isAllowedRegularCountry(country);
+  });
 
   const europeEntries = isManualRegularRebuildRequested()
     ? currentIndex.filter(item => (

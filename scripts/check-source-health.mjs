@@ -237,7 +237,7 @@ const CHECK_HOST_API_BASE =
     "https://check-host.net";
 const CHECK_HOST_RUSSIA_NODES = String(
     process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_NODES ||
-    "ru2.node.check-host.net,ru3.node.check-host.net"
+    "ru1.node.check-host.net,ru2.node.check-host.net,ru3.node.check-host.net"
 ).split(/[,\r\n;]+/).map(v => v.trim()).filter(Boolean);
 let ACTIVE_CHECK_HOST_RUSSIA_NODES = [...CHECK_HOST_RUSSIA_NODES];
 const CHECK_HOST_TIMEOUT_MS = Math.max(5000, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_TIMEOUT_MS) || 10000);
@@ -285,11 +285,13 @@ const RUSSIA_GATE_USE_CACHE =
     );
 // Bump whenever the gate semantics change so old cached verdicts cannot be
 // reused after changing providers or reachability rules.
-const RUSSIA_GATE_ALGORITHM_VERSION = 15;
-const RUSSIA_GATE_SHARD_INDEX = Math.max(0, Number(process.env.HEALTHCHECK_RUSSIA_GATE_SHARD_INDEX) || 0);
-const RUSSIA_GATE_SHARD_COUNT = Math.max(1, Number(process.env.HEALTHCHECK_RUSSIA_GATE_SHARD_COUNT) || 1);
-const RUSSIA_GATE_SHARD_OUTPUT = String(process.env.HEALTHCHECK_RUSSIA_GATE_SHARD_OUTPUT || "").trim();
-const RUSSIA_GATE_SHARD_MODE = RUSSIA_GATE_SHARD_COUNT > 1 || Boolean(RUSSIA_GATE_SHARD_OUTPUT);
+const RUSSIA_GATE_ALGORITHM_VERSION = 18;
+// Russia Gate is deliberately single-process. A per-shard limiter would create
+// multiple independent API streams and can trigger Check-Host 429 responses.
+const RUSSIA_GATE_SHARD_INDEX = 0;
+const RUSSIA_GATE_SHARD_COUNT = 1;
+const RUSSIA_GATE_SHARD_OUTPUT = "";
+const RUSSIA_GATE_SHARD_MODE = false;
 const CHECK_HOST_CONCURRENCY = Math.max(16, Math.min(96, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_CONCURRENCY) || 64));
 const GLOBALPING_CONCURRENCY = Math.max(1, Math.min(4, Number(process.env.HEALTHCHECK_GLOBALPING_CONCURRENCY) || 4));
 
@@ -1055,9 +1057,9 @@ async function checkHostRussia(url, protocol, nodes = ACTIVE_CHECK_HOST_RUSSIA_N
             const requestId = String(created?.request_id || "").trim();
             if (!requestId) throw new Error("missing Check-Host request_id");
 
-            const selectedNodes = Object.keys(created?.nodes || {});
-            if (!selectedNodes.length) {
-                throw new Error("Check-Host returned no selected nodes");
+            const selectedNodes = [...nodes];
+            if (selectedNodes.length !== 3) {
+                throw new Error(`Russia gate requires exactly 3 configured Check-Host nodes; got ${selectedNodes.length}`);
             }
 
             const started = Date.now();
@@ -1119,9 +1121,13 @@ async function checkHostRussia(url, protocol, nodes = ACTIVE_CHECK_HOST_RUSSIA_N
                     parseCheckHostNode(payload?.[node] ?? null, node, transport)
                 );
                 const reachable = parsed.filter(x => x.reachable);
-                const hasUnresolved = parsed.some(x => x.inconclusive);
+                const unresolved = parsed.filter(x => x.inconclusive);
+                const requiredReachable = 2;
 
-                if (reachable.length > 0) {
+                // A candidate passes only when at least 2 of the 3 Russian nodes
+                // confirm it. All three nodes are in the SAME Check-Host request,
+                // so quorum does not multiply API create traffic.
+                if (reachable.length >= requiredReachable) {
                     return {
                         provider: "check-host",
                         ok: true,
@@ -1131,29 +1137,36 @@ async function checkHostRussia(url, protocol, nodes = ACTIVE_CHECK_HOST_RUSSIA_N
                         checkType,
                         nodesTested: parsed.length,
                         nodesReachable: reachable.length,
-                        nodesInconclusive: parsed.filter(x => x.inconclusive).length,
+                        nodesInconclusive: unresolved.length,
+                        quorumRequired: requiredReachable,
+                        quorumMet: true,
                         minLatencyMs: Math.min(...reachable.map(x => x.latencyMs)),
                         results: parsed
                     };
                 }
 
-                // The API documents null as "still performing". Do not turn a
-                // transient null into a permanent candidate failure; keep polling.
-                if (!hasUnresolved) {
+                // If even all unresolved nodes became successful, quorum would
+                // still be impossible. Fail immediately instead of wasting poll
+                // time on a result that cannot reach 2/3.
+                if (reachable.length + unresolved.length < requiredReachable) {
                     return {
                         provider: "check-host",
                         ok: false,
                         unavailable: false,
-                        inconclusive: transport === "udp",
+                        inconclusive: false,
                         transport,
                         checkType,
                         nodesTested: parsed.length,
-                        nodesReachable: 0,
-                        nodesInconclusive: parsed.filter(x => x.inconclusive).length,
-                        minLatencyMs: 0,
+                        nodesReachable: reachable.length,
+                        nodesInconclusive: unresolved.length,
+                        quorumRequired: requiredReachable,
+                        quorumMet: false,
+                        minLatencyMs: reachable.length ? Math.min(...reachable.map(x => x.latencyMs)) : 0,
                         results: parsed
                     };
                 }
+
+                // Otherwise an unresolved node could still complete the 2/3 quorum.
 
                 // Gradually reduce result-request pressure while allowing the
                 // asynchronous Russian node work to finish.
@@ -1225,6 +1238,16 @@ async function globalpingRussia(url, protocol) {
             return { provider: "globalping", ok: false, unavailable: true, inconclusive: false, rateLimited: Number(error?.status || 0) === 429, transport, protocol: tcp ? "TCP" : "ICMP", error: error?.message || String(error) };
         }
     });
+}
+
+function russiaGateEndpointKey(item) {
+    try {
+        const url = new URL(String(item?.link || "").trim());
+        const transport = getTransportType(getProtocol(item?.link || ""));
+        return `${transport}|${url.hostname.toLowerCase()}|${Number(url.port || (transport === "udp" ? 443 : 443))}`;
+    } catch {
+        return `invalid|${fingerprintLink(String(item?.link || ""))}`;
+    }
 }
 
 async function checkRussiaReachability(item, url, protocol, sourceMeta, options = {}) {
@@ -4378,124 +4401,140 @@ async function main() {
             `nodes=${ACTIVE_CHECK_HOST_RUSSIA_NODES.join(",")}`
         );
 
-        const russiaShardItems = RUSSIA_GATE_SHARD_MODE
-            ? managedItems.filter((_, index) => index % RUSSIA_GATE_SHARD_COUNT === RUSSIA_GATE_SHARD_INDEX)
-            : managedItems;
-        const russiaCursor = { value: 0 };
+        const requiredRussiaItems = managedItems.filter((item) => {
+            const fp = fingerprintLink(item.link || "");
+            return !isLteCandidate(item, candidateMap[fp] || null);
+        });
+
+        const endpointGroups = new Map();
+        for (const item of requiredRussiaItems) {
+            const fp = fingerprintLink(item.link || "");
+            const key = russiaGateEndpointKey(item);
+            const group = endpointGroups.get(key) || { key, representative: item, members: [] };
+            group.members.push({ item, fp });
+            endpointGroups.set(key, group);
+        }
+        const russiaEndpointGroups = [...endpointGroups.values()];
         const russiaGateStartedAt = Date.now();
         let russiaFreshChecks = 0;
+        let russiaFreshEndpointChecks = 0;
         let russiaCacheHits = 0;
+        let russiaGateChecked = 0;
+        let russiaGatePassed = 0;
+        let russiaGateFailures = 0;
+        let russiaGatePending = 0;
+        let russiaCheckHostUnavailable = 0;
+        let russiaCheckHostRateLimited = 0;
+        let russiaEndpointCursor = 0;
+
+        // LTE/whitelist entries never enter the Russia Gate. They retain the
+        // existing LTE workflow exactly as before this optimization.
+        for (const item of managedItems) {
+            const fp = fingerprintLink(item.link || "");
+            const sourceMeta = candidateMap[fp] || null;
+            if (isLteCandidate(item, sourceMeta)) {
+                russiaProbeByFingerprint.set(fp, {
+                    required: false,
+                    skipped: true,
+                    gatePassed: true,
+                    gatePending: false,
+                    reason: "LTE/white-list diagnostic only",
+                    checkedAt: Date.now()
+                });
+            }
+        }
+
+        console.log(
+            `RUSSIA GATE WORKSET: candidates=${requiredRussiaItems.length}; ` +
+            `uniqueEndpointChecks=${russiaEndpointGroups.length}; ` +
+            `dedupeSaved=${Math.max(0, requiredRussiaItems.length - russiaEndpointGroups.length)}; ` +
+            `endpointQuorum=2/3`
+        );
+
         const russiaWorkerCount = Math.min(
             CHECK_HOST_CONCURRENCY,
-            russiaShardItems.length || 1
+            russiaEndpointGroups.length || 1
         );
 
         async function russiaWorker() {
             while (true) {
-                const item = russiaShardItems[russiaCursor.value++];
-                if (!item) return;
+                const group = russiaEndpointGroups[russiaEndpointCursor++];
+                if (!group) return;
 
-                const fp = fingerprintLink(item.link || "");
-                const sourceMeta = candidateMap[fp] || null;
+                const representativeFp = fingerprintLink(group.representative.link || "");
+                const representativeSourceMeta = candidateMap[representativeFp] || null;
+                let probe = null;
                 const now = Date.now();
 
-                if (isLteCandidate(item, sourceMeta)) {
-                    const probe = { required: false, skipped: true, gatePassed: true, gatePending: false, reason: "LTE/white-list diagnostic only", checkedAt: now };
-                    russiaProbeByFingerprint.set(fp, probe);
-                    russiaGateChecked += 1;
-                    continue;
+                const cacheCandidates = group.members.map(member => {
+                    const cached = cachedRussiaGate[member.fp];
+                    const cachedAt = Number(cached?.checkedAt) || 0;
+                    return RUSSIA_GATE_USE_CACHE && cached &&
+                        Number(cached.gateAlgorithmVersion) === RUSSIA_GATE_ALGORITHM_VERSION &&
+                        cachedAt > 0 && cachedAt <= now && now - cachedAt < RUSSIA_GATE_STATE_MAX_AGE_MS
+                        ? cached
+                        : null;
+                });
+
+                if (cacheCandidates.length && cacheCandidates.every(Boolean)) {
+                    const first = cacheCandidates[0];
+                    const allSameVerdict = cacheCandidates.every(c =>
+                        Boolean(c.gatePassed) === Boolean(first.gatePassed) &&
+                        Boolean(c.gatePending) === Boolean(first.gatePending)
+                    );
+                    if (allSameVerdict) {
+                        probe = first;
+                        russiaCacheHits += group.members.length;
+                    }
                 }
 
-                const cached = cachedRussiaGate[fp];
-                const cachedAt = Number(cached?.checkedAt) || 0;
-                if (
-                    RUSSIA_GATE_USE_CACHE &&
-                    cached &&
-                    cachedAt > 0 &&
-                    Number(cached?.gateAlgorithmVersion) === RUSSIA_GATE_ALGORITHM_VERSION &&
-                    cachedAt <= now &&
-                    now - cachedAt < RUSSIA_GATE_STATE_MAX_AGE_MS
-                ) {
-                    russiaProbeByFingerprint.set(fp, cached);
-                    russiaCacheHits += 1;
+                if (!probe) {
+                    let url;
+                    try {
+                        url = new URL(String(group.representative.link || "").trim());
+                    } catch {
+                        probe = {
+                            required: true,
+                            skipped: false,
+                            gatePassed: false,
+                            gatePending: false,
+                            reason: "invalid URL",
+                            checkedAt: Date.now()
+                        };
+                    }
+
+                    if (!probe) {
+                        probe = await checkRussiaReachability(
+                            group.representative,
+                            url,
+                            getProtocol(group.representative.link || ""),
+                            representativeSourceMeta
+                        );
+                        russiaFreshEndpointChecks += 1;
+                        if (probe?.checkHost?.unavailable) russiaCheckHostUnavailable += 1;
+                        if (probe?.checkHost?.rateLimited) russiaCheckHostRateLimited += 1;
+                    }
+                }
+
+                for (const member of group.members) {
+                    const memberProbe = { ...probe, deduplicatedEndpointKey: group.key };
+                    russiaProbeByFingerprint.set(member.fp, memberProbe);
                     russiaGateChecked += 1;
-                    if (cached.gatePassed) russiaGatePassed += 1;
-                    else if (cached.gatePending) russiaGatePending += 1;
+                    if (memberProbe.gatePassed) russiaGatePassed += 1;
+                    else if (memberProbe.gatePending) russiaGatePending += 1;
                     else russiaGateFailures += 1;
-                    continue;
                 }
 
-                let url;
-                try {
-                    url = new URL(String(item.link || "").trim());
-                } catch {
-                    const probe = {
-                        required: true, skipped: false, gatePassed: false, gatePending: false, providersUnavailable: false,
-                        transport: getTransportType(getProtocol(item.link || "")),
-                        checkHost: { provider: "check-host", ok: false, unavailable: false, error: "invalid endpoint URL" },
-                        globalping: { provider: "globalping", ok: false, unavailable: false, skipped: true, inconclusive: true, error: "invalid endpoint URL" },
-                        checkedAt: now
-                    };
-                    russiaProbeByFingerprint.set(fp, probe);
-                    russiaGateChecked += 1;
-                    russiaGateFailures += 1;
-                    continue;
-                }
-
-                russiaFreshChecks += 1;
-                const probe = await checkRussiaReachability(item, url, getProtocol(item.link || ""), sourceMeta);
-                russiaProbeByFingerprint.set(fp, probe);
-                cachedRussiaGate[fp] = {
-                    ...probe,
-                    gateAlgorithmVersion: RUSSIA_GATE_ALGORITHM_VERSION,
-                    checkHost: probe.checkHost
-                        ? {
-                            provider: probe.checkHost.provider,
-                            ok: Boolean(probe.checkHost.ok),
-                            unavailable: Boolean(probe.checkHost.unavailable),
-                            inconclusive: Boolean(probe.checkHost.inconclusive),
-                            transport: probe.checkHost.transport,
-                            checkType: probe.checkHost.checkType,
-                            nodesTested: Number(probe.checkHost.nodesTested) || 0,
-                            nodesReachable: Number(probe.checkHost.nodesReachable) || 0,
-                            nodesInconclusive: Number(probe.checkHost.nodesInconclusive) || 0,
-                            minLatencyMs: Number(probe.checkHost.minLatencyMs) || 0,
-                            rateLimited: Boolean(probe.checkHost.rateLimited),
-                            error: probe.checkHost.error || "",
-                        }
-                        : probe.checkHost,
-                    globalping: probe.globalping
-                        ? {
-                            provider: probe.globalping.provider,
-                            ok: Boolean(probe.globalping.ok),
-                            unavailable: Boolean(probe.globalping.unavailable),
-                            inconclusive: Boolean(probe.globalping.inconclusive),
-                            skipped: Boolean(probe.globalping.skipped),
-                            probesTested: Number(probe.globalping.probesTested) || 0,
-                            probesReachable: Number(probe.globalping.probesReachable) || 0,
-                            minLatencyMs: Number(probe.globalping.minLatencyMs) || 0,
-                            rateLimited: Boolean(probe.globalping.rateLimited),
-                            error: probe.globalping.error || "",
-                        }
-                        : probe.globalping,
-                };
-
-                russiaGateChecked += 1;
-                if (probe.gatePassed) russiaGatePassed += 1;
-                else if (probe.gatePending) russiaGatePending += 1;
-                else russiaGateFailures += 1;
-
-                if (probe.checkHost?.unavailable) russiaCheckHostUnavailable += 1;
-                if (probe.checkHost?.rateLimited) russiaCheckHostRateLimited += 1;
-
-                if (russiaGateChecked % 50 === 0 || russiaGateChecked === russiaShardItems.length) {
-                    const elapsedMs = Math.max(1, Date.now() - russiaGateStartedAt);
-                    const checkedPerSecond = russiaGateChecked / (elapsedMs / 1000);
-                    const remaining = Math.max(0, russiaShardItems.length - russiaGateChecked);
-                    const etaSeconds = checkedPerSecond > 0 ? Math.round(remaining / checkedPerSecond) : 0;
+                const elapsedMs = Math.max(1, Date.now() - russiaGateStartedAt);
+                const endpointRate = russiaFreshEndpointChecks / (elapsedMs / 1000);
+                const remainingEndpoints = Math.max(0, russiaEndpointGroups.length - russiaFreshEndpointChecks - russiaCacheHits);
+                const etaSeconds = endpointRate > 0 ? Math.round(remainingEndpoints / endpointRate) : 0;
+                if (russiaGateChecked % 50 === 0 || russiaGateChecked === requiredRussiaItems.length) {
                     console.log(
-                        `RUSSIA PROGRESS ${russiaGateChecked}/${russiaShardItems.length}: ${russiaGatePassed} pass, ${russiaGateFailures} fail, ${russiaGatePending} pending; ` +
-                        `rate=${checkedPerSecond.toFixed(2)}/s; eta=${etaSeconds}s`
+                        `RUSSIA PROGRESS ${russiaGateChecked}/${requiredRussiaItems.length}: ` +
+                        `${russiaGatePassed} pass, ${russiaGateFailures} fail, ${russiaGatePending} pending; ` +
+                        `endpointChecks=${russiaFreshEndpointChecks}/${russiaEndpointGroups.length}; ` +
+                        `rate=${endpointRate.toFixed(2)}/s; eta=${etaSeconds}s`
                     );
                 }
             }
@@ -4503,162 +4542,78 @@ async function main() {
 
         await Promise.all(Array.from({ length: russiaWorkerCount }, () => russiaWorker()));
 
-        const requiredRussiaCandidates = managedItems.filter(
-            (item) => !isLteCandidate(item, candidateMap[fingerprintLink(item.link || "")] || null)
-        ).length;
-
         console.log(
-            `RUSSIA GATE RUN COMPLETE: ` +
-            `fresh=${russiaFreshChecks}, cacheHits=${russiaCacheHits}, candidates=${russiaShardItems.length}, ` +
+            `RUSSIA GATE RUN COMPLETE: freshCandidates=${russiaGateChecked - russiaCacheHits}, ` +
+            `freshEndpointChecks=${russiaFreshEndpointChecks}, cacheHits=${russiaCacheHits}, ` +
+            `uniqueEndpointChecks=${russiaEndpointGroups.length}, candidates=${requiredRussiaItems.length}, ` +
             `checked=${russiaGateChecked}, pending=${russiaGatePending}, fail=${russiaGateFailures}, ` +
             `checkerUnavailable=${russiaCheckHostUnavailable}, rateLimited=${russiaCheckHostRateLimited}`
         );
 
-        if (russiaGatePending > 0 && !RUSSIA_GATE_SHARD_MODE) {
-            const pendingItems = managedItems.filter(item => {
-                const fp = fingerprintLink(item.link || "");
-                return Boolean(russiaProbeByFingerprint.get(fp)?.gatePending);
+        // Retry only unique unresolved physical endpoints. The result is then
+        // propagated back to every VLESS variant sharing that endpoint.
+        if (russiaGatePending > 0) {
+            const pendingGroups = russiaEndpointGroups.filter(group => {
+                return group.members.some(member => russiaProbeByFingerprint.get(member.fp)?.gatePending);
             });
-
-            console.warn(
-                `RUSSIA GATE RETRY: ${pendingItems.length} unresolved candidate(s), extended poll=45000ms`
-            );
-
-            let retryCursor = 0;
-            const retryWorkers = Math.min(
-                CHECK_HOST_CONCURRENCY,
-                pendingItems.length || 1
-            );
-
-            await Promise.all(Array.from({ length: retryWorkers }, async () => {
-                while (true) {
-                    const item = pendingItems[retryCursor++];
-                    if (!item) return;
-
-                    let url;
-                    try {
-                        url = new URL(String(item.link || "").trim());
-                    } catch {
-                        continue;
-                    }
-
-                    const sourceMeta =
-                        candidateMap[fingerprintLink(item.link || "")] || null;
-
-                    const retried = await checkRussiaReachability(
-                        item,
-                        url,
-                        getProtocol(item.link || ""),
-                        sourceMeta,
-                        { maxPollMs: 45000 }
-                    );
-
-                    russiaProbeByFingerprint.set(
-                        fingerprintLink(item.link || ""),
-                        retried
-                    );
-                }
-            }));
-
-            russiaGatePending = 0;
-            russiaGatePassed = 0;
-            russiaGateFailures = 0;
-            russiaCheckHostUnavailable = 0;
-            russiaCheckHostRateLimited = 0;
-
-            for (const probe of russiaProbeByFingerprint.values()) {
-                if (probe?.gatePassed) russiaGatePassed += 1;
-                else if (probe?.gatePending) russiaGatePending += 1;
-                else if (probe?.required) russiaGateFailures += 1;
-
-                if (probe?.checkHost?.unavailable) russiaCheckHostUnavailable += 1;
-                if (probe?.checkHost?.rateLimited) russiaCheckHostRateLimited += 1;
-            }
-
-            if (russiaGatePending > 0) {
-                throw new Error(
-                    `Russia gate produced ${russiaGatePending} unresolved candidate(s) after retry; ` +
-                    `no unresolved candidate may enter publication.`
+            if (pendingGroups.length) {
+                console.warn(
+                    `RUSSIA GATE RETRY: ${pendingGroups.length} unresolved endpoint(s), extended poll=30000ms`
                 );
-            }
-        }
-
-        if (!RUSSIA_GATE_USE_CACHE && russiaFreshChecks !== requiredRussiaCandidates && !RUSSIA_GATE_SHARD_MODE) {
-            throw new Error(
-                `Russia gate did not freshly check every required candidate: ` +
-                `${russiaFreshChecks}/${requiredRussiaCandidates}`
-            );
-        }
-
-        if (RUSSIA_GATE_SHARD_MODE) {
-            let pendingItems = [];
-            let retryResolved = 0;
-            // Retry only unresolved candidates with a longer polling horizon.
-            // This specifically attacks the "pending" tail caused by one slow
-            // Russian checker node without making every ordinary request wait
-            // 30-45 seconds.
-            pendingItems = russiaShardItems.filter(item => {
-                const fp = fingerprintLink(item.link || "");
-                return Boolean(russiaProbeByFingerprint.get(fp)?.gatePending);
-            });
-            if (pendingItems.length) {
-                console.warn(`RUSSIA SHARD RETRY: ${pendingItems.length} unresolved candidate(s), extended poll=45000ms`);
                 let retryCursor = 0;
-                const retryWorkers = Math.min(8, pendingItems.length);
+                const retryWorkers = Math.min(16, pendingGroups.length);
                 await Promise.all(Array.from({ length: retryWorkers }, async () => {
                     while (true) {
-                        const item = pendingItems[retryCursor++];
-                        if (!item) return;
+                        const group = pendingGroups[retryCursor++];
+                        if (!group) return;
                         let url;
-                        try { url = new URL(String(item.link || "").trim()); } catch { continue; }
-                        const sourceMeta = candidateMap[fingerprintLink(item.link || "")] || null;
+                        try {
+                            url = new URL(String(group.representative.link || "").trim());
+                        } catch {
+                            continue;
+                        }
+                        const fp = fingerprintLink(group.representative.link || "");
                         const retried = await checkRussiaReachability(
-                            item, url, getProtocol(item.link || ""), sourceMeta, { maxPollMs: 45000 }
+                            group.representative,
+                            url,
+                            getProtocol(group.representative.link || ""),
+                            candidateMap[fp] || null,
+                            { maxPollMs: 30000 }
                         );
-                        russiaProbeByFingerprint.set(fingerprintLink(item.link || ""), retried);
-                        if (!retried.gatePending) retryResolved += 1;
+                        for (const member of group.members) {
+                            russiaProbeByFingerprint.set(member.fp, { ...retried, deduplicatedEndpointKey: group.key });
+                        }
                     }
                 }));
-            }
 
-            if (!RUSSIA_GATE_SHARD_OUTPUT) {
-                throw new Error("Russia gate shard mode requires HEALTHCHECK_RUSSIA_GATE_SHARD_OUTPUT");
+                russiaGatePending = 0;
+                russiaGatePassed = 0;
+                russiaGateFailures = 0;
+                russiaCheckHostUnavailable = 0;
+                russiaCheckHostRateLimited = 0;
+                for (const item of requiredRussiaItems) {
+                    const probe = russiaProbeByFingerprint.get(fingerprintLink(item.link || ""));
+                    if (probe?.gatePassed) russiaGatePassed += 1;
+                    else if (probe?.gatePending) russiaGatePending += 1;
+                    else russiaGateFailures += 1;
+                    if (probe?.checkHost?.unavailable) russiaCheckHostUnavailable += 1;
+                    if (probe?.checkHost?.rateLimited) russiaCheckHostRateLimited += 1;
+                }
             }
-            const shardResults = russiaShardItems.map(item => {
-                const fp = fingerprintLink(item.link || "");
-                const probe = russiaProbeByFingerprint.get(fp);
-                if (!probe) throw new Error(`Russia gate shard result missing for ${item.id}`);
-                return {
-                    id: item.id,
-                    link: String(item.link || "").trim(),
-                    probe,
-                };
-            });
-            await fs.mkdir(path.dirname(RUSSIA_GATE_SHARD_OUTPUT), { recursive: true });
-            const finalPending = shardResults.filter(row => row.probe?.gatePending).length;
-            const finalPassed = shardResults.filter(row => row.probe?.gatePassed).length;
-            const finalFailed = shardResults.filter(row => row.probe?.required && !row.probe?.gatePassed && !row.probe?.gatePending).length;
-            await fs.writeFile(
-                RUSSIA_GATE_SHARD_OUTPUT,
-                `${JSON.stringify({
-                    shardIndex: RUSSIA_GATE_SHARD_INDEX,
-                    shardCount: RUSSIA_GATE_SHARD_COUNT,
-                    candidates: checked,
-                    requiredCandidates: requiredRussiaCandidates,
-                    allowedCandidates: shardResults.filter(row => row.probe?.required && row.probe?.gatePassed).length,
-                    failedCandidates: finalFailed,
-                    pendingCandidates: finalPending,
-                    generatedAt: new Date().toISOString(),
-                    manifestSha256,
-                    gateAlgorithmVersion: RUSSIA_GATE_ALGORITHM_VERSION,
-                    checkHostNodes: ACTIVE_CHECK_HOST_RUSSIA_NODES,
-                    results: shardResults,
-                    retry: { attempted: pendingItems.length, resolved: pendingItems.filter(item => !russiaProbeByFingerprint.get(fingerprintLink(item.link || ""))?.gatePending).length },
-                }, null, 2)}\n`,
-                "utf8"
+        }
+
+        if (russiaGatePending > 0) {
+            throw new Error(
+                `Russia gate produced ${russiaGatePending} unresolved candidate(s) after retry; ` +
+                `no unresolved candidate may enter publication.`
             );
-            console.log(`RUSSIA GATE SHARD COMPLETE: ${russiaGateChecked}/${russiaShardItems.length} -> ${RUSSIA_GATE_SHARD_OUTPUT}`);
-            return;
+        }
+
+        if (!RUSSIA_GATE_USE_CACHE && russiaFreshEndpointChecks !== russiaEndpointGroups.length) {
+            throw new Error(
+                `Russia gate did not freshly check every unique required endpoint: ` +
+                `${russiaFreshEndpointChecks}/${russiaEndpointGroups.length}`
+            );
         }
 
         for (const [fp, probe] of russiaProbeByFingerprint) {
