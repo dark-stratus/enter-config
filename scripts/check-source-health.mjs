@@ -242,7 +242,7 @@ const CHECK_HOST_RUSSIA_NODES = String(
 let ACTIVE_CHECK_HOST_RUSSIA_NODES = [...CHECK_HOST_RUSSIA_NODES];
 const CHECK_HOST_TIMEOUT_MS = Math.max(5000, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_TIMEOUT_MS) || 10000);
 const CHECK_HOST_POLL_MS = Math.max(250, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_POLL_MS) || 700);
-const CHECK_HOST_MAX_POLL_MS = Math.max(CHECK_HOST_POLL_MS, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_MAX_POLL_MS) || 20000);
+const CHECK_HOST_MAX_POLL_MS = Math.max(CHECK_HOST_POLL_MS, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_MAX_POLL_MS) || 45000);
 // Check-Host is asynchronous: creating a request and fetching its result are
 // separate API operations. Keep independent adaptive start-rate budgets for
 // creation and result polling. Candidate workers are intentionally allowed to
@@ -285,7 +285,7 @@ const RUSSIA_GATE_USE_CACHE =
     );
 // Bump whenever the gate semantics change so old cached verdicts cannot be
 // reused after changing providers or reachability rules.
-const RUSSIA_GATE_ALGORITHM_VERSION = 18;
+const RUSSIA_GATE_ALGORITHM_VERSION = 19;
 // Russia Gate is deliberately single-process. A per-shard limiter would create
 // multiple independent API streams and can trigger Check-Host 429 responses.
 const RUSSIA_GATE_SHARD_INDEX = 0;
@@ -488,6 +488,40 @@ const SPEED_PROVIDER_CONCURRENCY =
     );
 
 const FAST_TOP_N = Math.max(1, Number(process.env.HEALTHCHECK_FAST_TOP_N) || 3);
+const FEATURED_COUNTRY_ORDER = [
+    "Netherlands",
+    "Germany",
+    "Sweden",
+    "Finland",
+    "Russia",
+    "Poland",
+];
+const FEATURED_COUNTRIES = new Set(FEATURED_COUNTRY_ORDER.map(country => country.toLowerCase()));
+
+function calculateFeaturedTargetCounts(ordinaryCountryCount) {
+    const count = Math.max(0, Number(ordinaryCountryCount) || 0);
+    if (count < 3) {
+        return {
+            total: Math.min(1, count),
+            fast: Math.min(1, count),
+            gaming: 0,
+        };
+    }
+
+    // Featured locations must never outnumber the remaining ordinary locations.
+    // The 40% target matches the requested 10 -> 4 and 15 -> 6 examples while
+    // preserving at least half of the country locations as ordinary choices.
+    const total = Math.min(
+        Math.floor(count * 0.4),
+        Math.floor(count / 2)
+    );
+
+    return {
+        total,
+        fast: Math.ceil(total / 2),
+        gaming: Math.floor(total / 2),
+    };
+}
 const FAST_SERVERS_PER_COUNTRY = Math.max(
     1,
     Math.min(3, Number(process.env.HEALTHCHECK_FAST_SERVERS_PER_COUNTRY) || 3)
@@ -3488,7 +3522,7 @@ function percentileRank(value, values, { ascending = true } = {}) {
     return below / finite.length;
 }
 
-function selectFeaturedFastServers(results, limit = FAST_TOP_N) {
+function selectFeaturedFastServers(results, limit = FAST_TOP_N, allowedCountries = FEATURED_COUNTRIES) {
     const candidates = results.filter(result =>
         result.ok &&
         !result.whiteList &&
@@ -3542,13 +3576,13 @@ function selectFeaturedFastServers(results, limit = FAST_TOP_N) {
         const country = String(result.country || '').trim();
         if (!country) continue;
         const countryKey = country.toLowerCase();
-        const count = countryCounts.get(countryKey) || 0;
+        if (!allowedCountries.has(countryKey)) continue;
 
-        if (!selectedCountries.has(countryKey) && selectedCountries.size >= 3) continue;
-        if (count >= FAST_SERVERS_PER_COUNTRY) continue;
+        // Fast is a location feature: one physical server per selected country.
+        if (selectedCountries.has(countryKey)) continue;
 
         selectedCountries.add(countryKey);
-        countryCounts.set(countryKey, count + 1);
+        countryCounts.set(countryKey, 1);
         selectedKeys.add(key);
         selected.push(result);
 
@@ -3561,7 +3595,8 @@ function selectFeaturedFastServers(results, limit = FAST_TOP_N) {
 function selectFeaturedGamingServers(
     results,
     excludedCountries = new Set(),
-    limit = GAMING_TOP_N
+    limit = GAMING_TOP_N,
+    allowedCountries = FEATURED_COUNTRIES
 ) {
     const candidates = results
         .filter(
@@ -3582,7 +3617,7 @@ function selectFeaturedGamingServers(
     for (const result of candidates) {
         const country = String(result.country || "").trim();
         const key = country.toLowerCase();
-        if (!country || excluded.has(key)) continue;
+        if (!country || excluded.has(key) || !allowedCountries.has(key)) continue;
 
         const bucket = groups.get(key) || { country, members: [] };
         bucket.members.push(result);
@@ -3624,10 +3659,21 @@ function selectFeaturedGamingServers(
     return rankedCountries.flatMap(country => country.members);
 }
 
-function applyFeaturedRegularBadges(indexEntries, healthResults) {
-    const fast = selectFeaturedFastServers(healthResults, FAST_TOP_N);
+function applyFeaturedRegularBadges(indexEntries, healthResults, featuredTargets) {
+    const targets = featuredTargets || calculateFeaturedTargetCounts(
+        new Set(
+            healthResults
+                .filter(result => result.ok && !result.whiteList && result.country)
+                .map(result => String(result.country).trim().toLowerCase())
+        ).size
+    );
+    const fast = selectFeaturedFastServers(healthResults, targets.fast);
     const fastFingerprints = new Set(fast.map(item => item.linkFingerprint));
-    const gaming = selectFeaturedGamingServers(healthResults, new Set(), GAMING_TOP_N);
+    const gaming = selectFeaturedGamingServers(
+        healthResults,
+        new Set(fast.map(item => item.country)),
+        targets.gaming
+    );
     const gamingFingerprints = new Set(gaming.map(item => item.linkFingerprint));
     const byFingerprint = new Map(healthResults.map(result => [result.linkFingerprint, result]));
 
@@ -3674,7 +3720,8 @@ async function buildGamingAssignments(
     selectedCountries,
     healthResults,
     candidateItems,
-    excludedCountries = new Set()
+    excludedCountries = new Set(),
+    featuredTargets = null
 ) {
     const candidateByFingerprint = new Map(
         (Array.isArray(candidateItems) ? candidateItems : [])
@@ -3682,10 +3729,13 @@ async function buildGamingAssignments(
             .filter(([fingerprint, item]) => fingerprint && item)
     );
 
+    const targets = featuredTargets || calculateFeaturedTargetCounts(
+        Array.isArray(selectedCountries) ? selectedCountries.length : 0
+    );
     const selected = selectFeaturedGamingServers(
         healthResults,
         new Set(excludedCountries),
-        GAMING_TOP_N
+        targets.gaming
     );
 
     return selected.map((item, index) => {
@@ -4550,56 +4600,16 @@ async function main() {
             `checkerUnavailable=${russiaCheckHostUnavailable}, rateLimited=${russiaCheckHostRateLimited}`
         );
 
-        // Retry only unique unresolved physical endpoints. The result is then
-        // propagated back to every VLESS variant sharing that endpoint.
+        // Do not create second-generation Check-Host requests for unresolved
+        // endpoints. The original request_id may still be finishing on the provider;
+        // creating a replacement request only increases queue pressure and can turn
+        // a slow result into a cascade of 429s. The main polling window below is
+        // deliberately long enough to let the original request finish.
         if (russiaGatePending > 0) {
-            const pendingGroups = russiaEndpointGroups.filter(group => {
-                return group.members.some(member => russiaProbeByFingerprint.get(member.fp)?.gatePending);
-            });
-            if (pendingGroups.length) {
-                console.warn(
-                    `RUSSIA GATE RETRY: ${pendingGroups.length} unresolved endpoint(s), extended poll=30000ms`
-                );
-                let retryCursor = 0;
-                const retryWorkers = Math.min(16, pendingGroups.length);
-                await Promise.all(Array.from({ length: retryWorkers }, async () => {
-                    while (true) {
-                        const group = pendingGroups[retryCursor++];
-                        if (!group) return;
-                        let url;
-                        try {
-                            url = new URL(String(group.representative.link || "").trim());
-                        } catch {
-                            continue;
-                        }
-                        const fp = fingerprintLink(group.representative.link || "");
-                        const retried = await checkRussiaReachability(
-                            group.representative,
-                            url,
-                            getProtocol(group.representative.link || ""),
-                            candidateMap[fp] || null,
-                            { maxPollMs: 30000 }
-                        );
-                        for (const member of group.members) {
-                            russiaProbeByFingerprint.set(member.fp, { ...retried, deduplicatedEndpointKey: group.key });
-                        }
-                    }
-                }));
-
-                russiaGatePending = 0;
-                russiaGatePassed = 0;
-                russiaGateFailures = 0;
-                russiaCheckHostUnavailable = 0;
-                russiaCheckHostRateLimited = 0;
-                for (const item of requiredRussiaItems) {
-                    const probe = russiaProbeByFingerprint.get(fingerprintLink(item.link || ""));
-                    if (probe?.gatePassed) russiaGatePassed += 1;
-                    else if (probe?.gatePending) russiaGatePending += 1;
-                    else russiaGateFailures += 1;
-                    if (probe?.checkHost?.unavailable) russiaCheckHostUnavailable += 1;
-                    if (probe?.checkHost?.rateLimited) russiaCheckHostRateLimited += 1;
-                }
-            }
+            console.warn(
+                `RUSSIA GATE PENDING: ${russiaGatePending} candidate(s) remain unresolved ` +
+                `after the primary polling window; no duplicate Check-Host requests will be created.`
+            );
         }
 
         if (russiaGatePending > 0) {
@@ -4795,7 +4805,20 @@ async function main() {
     const selectedCountries =
         buildCountryHealthPool(healthResults, false);
 
-    const featured = applyFeaturedRegularBadges(managedItems, healthResults);
+    const featuredTargets = calculateFeaturedTargetCounts(
+        selectedCountries.length
+    );
+
+    console.log(
+        `FEATURED TARGETS: ordinaryLocations=${selectedCountries.length}; ` +
+        `total=${featuredTargets.total}; fast=${featuredTargets.fast}; gaming=${featuredTargets.gaming}`
+    );
+
+    const featured = applyFeaturedRegularBadges(
+        managedItems,
+        healthResults,
+        featuredTargets
+    );
     const featuredFastCountries = new Set(featured.fast.map(item => item.country));
     const featuredFastIds = new Set(featured.fast.map(item => item.id));
 
@@ -4879,7 +4902,8 @@ async function main() {
             selectedCountries,
             healthResults,
             candidates,
-            featuredFastCountries
+            featuredFastCountries,
+            featuredTargets
         );
 
     await writeGamingAssignments(
