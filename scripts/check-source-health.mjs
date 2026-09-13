@@ -286,14 +286,15 @@ const RUSSIA_GATE_USE_CACHE =
     );
 // Bump whenever the gate semantics change so old cached verdicts cannot be
 // reused after changing providers or reachability rules.
-const RUSSIA_GATE_ALGORITHM_VERSION = 21;
+const RUSSIA_GATE_ALGORITHM_VERSION = Math.max(1, Number(process.env.HEALTHCHECK_RUSSIA_GATE_ALGORITHM_VERSION) || 22);
 // Russia Gate is deliberately single-process. A per-shard limiter would create
 // multiple independent API streams and can trigger Check-Host 429 responses.
 const RUSSIA_GATE_SHARD_INDEX = 0;
 const RUSSIA_GATE_SHARD_COUNT = 1;
 const RUSSIA_GATE_SHARD_OUTPUT = "";
 const RUSSIA_GATE_SHARD_MODE = false;
-const CHECK_HOST_CONCURRENCY = Math.max(8, Math.min(32, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_CONCURRENCY) || 16));
+const CHECK_HOST_CONCURRENCY = Math.max(2, Math.min(12, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_CONCURRENCY) || 6));
+const CHECK_HOST_MAX_IN_FLIGHT = Math.max(2, Math.min(12, Number(process.env.HEALTHCHECK_RUSSIA_MAX_IN_FLIGHT) || CHECK_HOST_CONCURRENCY));
 const GLOBALPING_CONCURRENCY = Math.max(1, Math.min(4, Number(process.env.HEALTHCHECK_GLOBALPING_CONCURRENCY) || 4));
 
 // Speed providers are called from many candidate workers. Keep their concurrency
@@ -846,7 +847,8 @@ async function requestJsonWithRetries(url, options = {}, timeoutMs = REQUEST_TIM
 
 const CHECK_HOST_TOTAL_MIN_INTERVAL_MS = Math.max(
     250,
-    Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_TOTAL_MIN_INTERVAL_MS) || 300
+    Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_TOTAL_MIN_INTERVAL_MS) ||
+        Math.max(CHECK_HOST_API_MIN_INTERVAL_MS, CHECK_HOST_CREATE_MIN_INTERVAL_MS, CHECK_HOST_RESULT_MIN_INTERVAL_MS)
 );
 
 const checkHostRateState = {
@@ -1033,209 +1035,299 @@ async function checkHostProviderPreflight() {
         `Check-Host Russia preflight failed: ${lastProbe?.error || "no Russian node completed a TCP result"}`
     );
 }
-async function checkHostRussia(url, protocol, nodes = ACTIVE_CHECK_HOST_RUSSIA_NODES, options = {}) {
+async function createCheckHostRequest(url, protocol, nodes) {
     const transport = getTransportType(protocol);
     const checkType = transport === "udp" ? "udp" : "tcp";
-    const pollLimitMs = Math.max(CHECK_HOST_MAX_POLL_MS, Number(options.maxPollMs) || 0);
-    const totalPollLimitMs = pollLimitMs + CHECK_HOST_GRACE_POLL_MS;
+    const params = new URLSearchParams({
+        host: `${url.hostname}:${Number(url.port || 443)}`,
+        max_nodes: String(nodes.length)
+    });
+    for (const node of nodes) params.append("node", node);
 
-    let lastError = null;
-
-    try {
-            const params = new URLSearchParams({
-                host: `${url.hostname}:${Number(url.port || 443)}`,
-                max_nodes: String(nodes.length)
-            });
-            for (const node of nodes) params.append("node", node);
-
-            const createUrl = `${CHECK_HOST_API_BASE}/check-${checkType}?${params}`;
-            let created = null;
-            let createLastError = null;
-            for (let createAttempt = 0; createAttempt < 5; createAttempt += 1) {
-                try {
-                    created = await scheduleCheckHostApiRequest(() =>
-                        requestJsonWithRetries(
-                            createUrl,
-                            { headers: { "user-agent": "enter-config-russia-health/1.0" } },
-                            CHECK_HOST_TIMEOUT_MS,
-                            0
-                        ),
-                        "create"
-                    );
-                    createLastError = null;
-                    break;
-                } catch (error) {
-                    createLastError = error;
-                    const status = Number(error?.status || 0);
-                    const retryable =
-                        status === 429 ||
-                        status === 408 ||
-                        status >= 500 ||
-                        /aborted|timeout|timed out|fetch failed/i.test(String(error?.message || ""));
-                    if (!retryable || createAttempt >= 4) throw error;
-
-                    const serverDelay = Number(error?.retryAfterMs);
-                    const backoff = status === 429
-                        ? 1500 * Math.min(4, createAttempt + 1)
-                        : 750 * Math.min(4, createAttempt + 1);
-                    await sleep(Math.min(30000, Number.isFinite(serverDelay) ? Math.max(serverDelay, backoff) : backoff));
-                }
-            }
-            if (createLastError && !created) throw createLastError;
-
+    const createUrl = `${CHECK_HOST_API_BASE}/check-${checkType}?${params}`;
+    for (let createAttempt = 0; createAttempt < 4; createAttempt += 1) {
+        try {
+            const created = await scheduleCheckHostApiRequest(
+                () => requestJson(
+                    createUrl,
+                    { headers: { "user-agent": "enter-config-russia-health/1.0" } },
+                    CHECK_HOST_TIMEOUT_MS
+                ),
+                "create"
+            );
             const requestId = String(created?.request_id || "").trim();
             if (!requestId) throw new Error("missing Check-Host request_id");
-
-            const selectedNodes = [...nodes];
-            if (selectedNodes.length !== 3) {
-                throw new Error(`Russia gate requires exactly 3 configured Check-Host nodes; got ${selectedNodes.length}`);
-            }
-
-            const started = Date.now();
-            let pollDelayMs = Math.max(700, Math.min(1200, CHECK_HOST_POLL_MS));
-            let firstPoll = true;
-            let transientErrors = 0;
-
-            while (Date.now() - started <= totalPollLimitMs) {
-                await sleep(firstPoll ? Math.max(500, Math.min(900, CHECK_HOST_POLL_MS)) : pollDelayMs);
-                firstPoll = false;
-
-                let payload;
-                try {
-                    // Do NOT let one temporary 429/timeout terminate the whole
-                    // candidate. The request budget and cooldown are handled by
-                    // scheduleCheckHostApiRequest; the polling loop remains alive.
-                    payload = await scheduleCheckHostApiRequest(() =>
-                        requestJson(
-                            `${CHECK_HOST_API_BASE}/check-result/${encodeURIComponent(requestId)}`,
-                            { headers: { "user-agent": "enter-config-russia-health/1.0" } },
-                            CHECK_HOST_TIMEOUT_MS
-                        ),
-                        "result"
-                    );
-                    transientErrors = 0;
-                } catch (error) {
-                    lastError = error;
-                    const status = Number(error?.status || 0);
-                    const retryable =
-                        status === 429 ||
-                        status === 408 ||
-                        status >= 500 ||
-                        /aborted|timeout|timed out|fetch failed/i.test(
-                            String(error?.message || "")
-                        );
-
-                    if (!retryable) throw error;
-
-                    transientErrors += 1;
-
-                    // 429/temporary network failures are not "checker
-                    // unavailable". Stay on the same request_id and retry after
-                    // a bounded delay. The scheduler has already applied any
-                    // server Retry-After cooldown.
-                    const serverDelay = Number(error?.retryAfterMs);
-                    const backoff = status === 429
-                        ? 750 * Math.min(4, transientErrors)
-                        : 750 * Math.min(4, transientErrors);
-                    const delay = Number.isFinite(serverDelay)
-                        ? Math.max(serverDelay, backoff)
-                        : backoff;
-
-                    await sleep(Math.min(10000, delay));
-                    pollDelayMs = Math.min(4000, Math.max(700, Math.round(pollDelayMs * 1.30)));
-                    continue;
-                }
-
-                const parsed = selectedNodes.map(node =>
-                    parseCheckHostNode(payload?.[node] ?? null, node, transport)
-                );
-                const reachable = parsed.filter(x => x.reachable);
-                const unresolved = parsed.filter(x => x.inconclusive);
-                const requiredReachable = 2;
-
-                // A candidate passes only when at least 2 of the 3 Russian nodes
-                // confirm it. All three nodes are in the SAME Check-Host request,
-                // so quorum does not multiply API create traffic.
-                if (reachable.length >= requiredReachable) {
-                    return {
-                        provider: "check-host",
-                        ok: true,
-                        unavailable: false,
-                        inconclusive: false,
-                        transport,
-                        checkType,
-                        nodesTested: parsed.length,
-                        nodesReachable: reachable.length,
-                        nodesInconclusive: unresolved.length,
-                        quorumRequired: requiredReachable,
-                        quorumMet: true,
-                        minLatencyMs: Math.min(...reachable.map(x => x.latencyMs)),
-                        results: parsed
-                    };
-                }
-
-                // If even all unresolved nodes became successful, quorum would
-                // still be impossible. Fail immediately instead of wasting poll
-                // time on a result that cannot reach 2/3.
-                if (reachable.length + unresolved.length < requiredReachable) {
-                    return {
-                        provider: "check-host",
-                        ok: false,
-                        unavailable: false,
-                        inconclusive: false,
-                        transport,
-                        checkType,
-                        nodesTested: parsed.length,
-                        nodesReachable: reachable.length,
-                        nodesInconclusive: unresolved.length,
-                        quorumRequired: requiredReachable,
-                        quorumMet: false,
-                        minLatencyMs: reachable.length ? Math.min(...reachable.map(x => x.latencyMs)) : 0,
-                        results: parsed
-                    };
-                }
-
-                // Otherwise an unresolved node could still complete the 2/3 quorum.
-
-                // Gradually reduce result-request pressure while allowing the
-                // asynchronous Russian node work to finish.
-                pollDelayMs = Math.min(4000, Math.max(700, Math.round(pollDelayMs * 1.14)));
-            }
-
-            console.warn(
-                `RUSSIA CHECK-HOST POLL TIMEOUT: requestId=${requestId}; ` +
-                `primary=${Math.round(pollLimitMs / 1000)}s; ` +
-                `grace=${Math.round(CHECK_HOST_GRACE_POLL_MS / 1000)}s; ` +
-                `no duplicate request will be created`
-            );
-
-            return {
-                provider: "check-host",
-                ok: false,
-                // This is genuinely unresolved: the Russian checker did not
-                // return a definitive result inside both the primary and grace
-                // polling windows for the same request_id.
-                unavailable: true,
-                inconclusive: transport === "udp",
-                transport,
-                checkType,
-                rateLimited: Number(lastError?.status || 0) === 429,
-                error: lastError?.message
-                    ? `Check-Host polling timeout after transient errors: ${lastError.message}`
-                    : "Check-Host polling timeout"
-            };
+            return { requestId, transport, checkType, nodes: [...nodes], createdAt: Date.now() };
         } catch (error) {
-            return {
+            const status = Number(error?.status || 0);
+            // Creation is not idempotent: a timeout/5xx may have created the
+            // request even if the response never reached us. Never replay such
+            // a request. HTTP 429 is the only safe create retry because the
+            // provider rejected the request before issuing a request_id.
+            if (status !== 429 || createAttempt >= 3) throw error;
+
+            const serverDelay = Number(error?.retryAfterMs);
+            const backoff = 2000 * Math.min(4, createAttempt + 1);
+            const delay = Number.isFinite(serverDelay) ? Math.max(serverDelay, backoff) : backoff;
+            await sleep(Math.min(20000, delay));
+        }
+    }
+    throw new Error("Check-Host create failed");
+}
+
+function evaluateCheckHostPayload(payload, transport, nodes) {
+    const parsed = nodes.map(node => parseCheckHostNode(payload?.[node] ?? null, node, transport));
+    const reachable = parsed.filter(x => x.reachable);
+    const unresolved = parsed.filter(x => x.inconclusive);
+    const requiredReachable = 2;
+
+    if (reachable.length >= requiredReachable) {
+        return {
+            done: true,
+            result: {
                 provider: "check-host",
-                ok: false,
-                unavailable: true,
+                ok: true,
+                unavailable: false,
                 inconclusive: false,
                 transport,
-                checkType,
-                rateLimited: Number(error?.status || 0) === 429,
-                error: error?.message || String(error)
+                nodesTested: parsed.length,
+                nodesReachable: reachable.length,
+                nodesInconclusive: unresolved.length,
+                quorumRequired: requiredReachable,
+                quorumMet: true,
+                minLatencyMs: Math.min(...reachable.map(x => x.latencyMs)),
+                results: parsed
+            }
+        };
+    }
+
+    if (reachable.length + unresolved.length < requiredReachable) {
+        return {
+            done: true,
+            result: {
+                provider: "check-host",
+                ok: false,
+                unavailable: false,
+                inconclusive: false,
+                transport,
+                nodesTested: parsed.length,
+                nodesReachable: reachable.length,
+                nodesInconclusive: unresolved.length,
+                quorumRequired: requiredReachable,
+                quorumMet: false,
+                minLatencyMs: reachable.length ? Math.min(...reachable.map(x => x.latencyMs)) : 0,
+                results: parsed
+            }
+        };
+    }
+
+    return { done: false, parsed };
+}
+
+async function pollCheckHostRequest(request, options = {}) {
+    const pollLimitMs = Math.max(CHECK_HOST_MAX_POLL_MS, Number(options.maxPollMs) || 0);
+    const totalPollLimitMs = pollLimitMs + CHECK_HOST_GRACE_POLL_MS;
+    const started = Date.now();
+    let pollDelayMs = Math.max(900, Math.min(2500, CHECK_HOST_POLL_MS));
+    let firstPoll = true;
+    let transientErrors = 0;
+    let lastError = null;
+
+    while (Date.now() - started <= totalPollLimitMs) {
+        await sleep(firstPoll ? 500 : pollDelayMs);
+        firstPoll = false;
+
+        try {
+            const payload = await scheduleCheckHostApiRequest(
+                () => requestJson(
+                    `${CHECK_HOST_API_BASE}/check-result/${encodeURIComponent(request.requestId)}`,
+                    { headers: { "user-agent": "enter-config-russia-health/1.0" } },
+                    CHECK_HOST_TIMEOUT_MS
+                ),
+                "result"
+            );
+            transientErrors = 0;
+            const evaluation = evaluateCheckHostPayload(payload, request.transport, request.nodes);
+            if (evaluation.done) return evaluation.result;
+            pollDelayMs = Math.min(5000, Math.max(900, Math.round(pollDelayMs * 1.18)));
+        } catch (error) {
+            lastError = error;
+            const status = Number(error?.status || 0);
+            const retryable =
+                status === 429 || status === 408 || status >= 500 ||
+                /aborted|timeout|timed out|fetch failed/i.test(String(error?.message || ""));
+            if (!retryable) throw error;
+
+            transientErrors += 1;
+            const serverDelay = Number(error?.retryAfterMs);
+            const backoff = status === 429
+                ? 1500 * Math.min(6, transientErrors)
+                : 1000 * Math.min(6, transientErrors);
+            const delay = Number.isFinite(serverDelay) ? Math.max(serverDelay, backoff) : backoff;
+            await sleep(Math.min(12000, delay));
+            pollDelayMs = Math.min(5000, Math.max(900, Math.round(pollDelayMs * 1.35)));
+        }
+    }
+
+    console.warn(
+        `RUSSIA CHECK-HOST POLL TIMEOUT: requestId=${request.requestId}; ` +
+        `primary=${Math.round(pollLimitMs / 1000)}s; ` +
+        `grace=${Math.round(CHECK_HOST_GRACE_POLL_MS / 1000)}s; ` +
+        `no duplicate request will be created`
+    );
+
+    return {
+        provider: "check-host",
+        ok: false,
+        unavailable: true,
+        inconclusive: request.transport === "udp",
+        transport: request.transport,
+        checkType: request.checkType,
+        requestId: request.requestId,
+        rateLimited: Number(lastError?.status || 0) === 429,
+        error: lastError?.message
+            ? `Check-Host polling timeout after transient errors: ${lastError.message}`
+            : "Check-Host polling timeout"
+    };
+}
+
+async function checkHostRussia(url, protocol, nodes = ACTIVE_CHECK_HOST_RUSSIA_NODES, options = {}) {
+    try {
+        if (nodes.length !== 3) {
+            throw new Error(`Russia gate requires exactly 3 configured Check-Host nodes; got ${nodes.length}`);
+        }
+        const request = await createCheckHostRequest(url, protocol, nodes);
+        return await pollCheckHostRequest(request, options);
+    } catch (error) {
+        return {
+            provider: "check-host",
+            ok: false,
+            unavailable: true,
+            inconclusive: false,
+            transport: getTransportType(protocol),
+            checkType: getTransportType(protocol) === "udp" ? "udp" : "tcp",
+            rateLimited: Number(error?.status || 0) === 429,
+            error: error?.message || String(error)
+        };
+    }
+}
+
+async function runRussiaGateEndpointCoordinator(endpointGroups, { maxInFlight = CHECK_HOST_MAX_IN_FLIGHT } = {}) {
+    const startedAt = Date.now();
+    const outcomes = new Map();
+    const active = new Map();
+    let cursor = 0;
+    let completed = 0;
+    let fatalProviderError = null;
+
+    const startOne = async (group) => {
+        let url;
+        try {
+            url = new URL(String(group.representative.link || "").trim());
+        } catch {
+            return {
+                group,
+                probe: {
+                    required: true,
+                    skipped: false,
+                    gatePassed: false,
+                    gatePending: false,
+                    reason: "invalid URL",
+                    checkedAt: Date.now()
+                }
             };
         }
+
+        try {
+            const request = await createCheckHostRequest(
+                url,
+                getProtocol(group.representative.link || ""),
+                ACTIVE_CHECK_HOST_RUSSIA_NODES
+            );
+            const probe = await pollCheckHostRequest(request);
+            return {
+                group,
+                probe: await checkRussiaReachabilityFromProbe(group.representative, url, group.representative.protocol || getProtocol(group.representative.link || ""), probe)
+            };
+        } catch (error) {
+            const probe = {
+                required: true,
+                skipped: false,
+                gatePassed: false,
+                gatePending: true,
+                reason: `Check-Host coordinator error: ${error?.message || String(error)}`,
+                providersUnavailable: true,
+                transport: getTransportType(getProtocol(group.representative.link || "")),
+                checkHost: {
+                    provider: "check-host",
+                    ok: false,
+                    unavailable: true,
+                    inconclusive: false,
+                    rateLimited: Number(error?.status || 0) === 429,
+                    error: error?.message || String(error)
+                },
+                checkedAt: Date.now()
+            };
+            return { group, probe };
+        }
+    };
+
+    // Keep only a small number of Check-Host requests outstanding at once.
+    // The API itself is asynchronous; flooding it with hundreds of request_ids
+    // merely turns result polling into provider-side queue contention.
+    while (cursor < endpointGroups.length || active.size) {
+        while (!fatalProviderError && cursor < endpointGroups.length && active.size < maxInFlight) {
+            const group = endpointGroups[cursor++];
+            const promise = startOne(group).then(result => ({ result })).catch(error => ({ error, group }));
+            active.set(group.key, promise);
+        }
+
+        if (!active.size) break;
+        const settled = await Promise.race(active.values());
+        const groupKey = settled.result?.group?.key || settled.group?.key;
+        if (groupKey) active.delete(groupKey);
+        if (settled.error) {
+            fatalProviderError = settled.error;
+        } else {
+            outcomes.set(settled.result.group.key, settled.result.probe);
+            completed += 1;
+            if (completed % 25 === 0 || completed === endpointGroups.length) {
+                const elapsed = Math.max(1, Date.now() - startedAt);
+                const rate = completed / (elapsed / 1000);
+                const remaining = Math.max(0, endpointGroups.length - completed);
+                const eta = rate > 0 ? Math.round(remaining / rate) : 0;
+                console.log(
+                    `RUSSIA COORDINATOR PROGRESS ${completed}/${endpointGroups.length}: ` +
+                    `inFlight=${active.size}; rate=${rate.toFixed(2)}/s; eta=${eta}s`
+                );
+            }
+        }
+    }
+
+    return { outcomes, elapsedMs: Date.now() - startedAt, fatalProviderError };
+}
+
+async function checkRussiaReachabilityFromProbe(item, url, protocol, checkHost) {
+    return {
+        required: true,
+        skipped: false,
+        gatePassed: Boolean(checkHost.ok),
+        gatePending: !checkHost.ok && Boolean(checkHost.unavailable || checkHost.inconclusive),
+        anyReachable: Boolean(checkHost.ok),
+        providersUnavailable: Boolean(checkHost.unavailable),
+        transport: getTransportType(protocol),
+        checkHost,
+        globalping: {
+            provider: "globalping",
+            ok: false,
+            unavailable: false,
+            inconclusive: false,
+            skipped: true,
+            error: "diagnostic-only; not part of Russia gate"
+        },
+        minLatencyMs: Number(checkHost.minLatencyMs) > 0 ? Number(checkHost.minLatencyMs) : 0,
+        checkedAt: Date.now()
+    };
 }
 
 async function globalpingRussia(url, protocol) {
@@ -4421,12 +4513,6 @@ async function main() {
     // then the full gate is persisted for the next job. The normal health mode
     // only consumes that immutable gate output and never calls Check-Host again.
     const russiaProbeByFingerprint = new Map();
-    let russiaGateFailures = 0;
-    let russiaGatePassed = 0;
-    let russiaGatePending = 0;
-    let russiaGateChecked = 0;
-    let russiaCheckHostUnavailable = 0;
-    let russiaCheckHostRateLimited = 0;
 
     const cachedRussiaGate =
         persistentState?.russiaGate && typeof persistentState.russiaGate === "object"
@@ -4450,7 +4536,7 @@ async function main() {
             `RUSSIA GATE START: Check-Host=${ACTIVE_CHECK_HOST_RUSSIA_NODES.length} live Russian nodes for all non-LTE candidates; ` +
             `cache=${RUSSIA_GATE_USE_CACHE ? "enabled" : "disabled"}; ` +
             `Globalping=diagnostic-only (never affects gate); ` +
-            `adaptive-pacing=create>=${CHECK_HOST_CREATE_MIN_INTERVAL_MS}ms/result>=${CHECK_HOST_RESULT_MIN_INTERVAL_MS}ms; ` +
+            `adaptive-pacing=global-api>=${CHECK_HOST_TOTAL_MIN_INTERVAL_MS}ms; ` +
             `nodes=${ACTIVE_CHECK_HOST_RUSSIA_NODES.join(",")}`
         );
 
@@ -4469,7 +4555,6 @@ async function main() {
         }
         const russiaEndpointGroups = [...endpointGroups.values()];
         const russiaGateStartedAt = Date.now();
-        let russiaFreshChecks = 0;
         let russiaFreshEndpointChecks = 0;
         let russiaCacheHits = 0;
         let russiaGateChecked = 0;
@@ -4478,7 +4563,6 @@ async function main() {
         let russiaGatePending = 0;
         let russiaCheckHostUnavailable = 0;
         let russiaCheckHostRateLimited = 0;
-        let russiaEndpointCursor = 0;
 
         // LTE/whitelist entries never enter the Russia Gate. They retain the
         // existing LTE workflow exactly as before this optimization.
@@ -4504,110 +4588,89 @@ async function main() {
             `endpointQuorum=2/3`
         );
 
-        const russiaWorkerCount = Math.min(
-            CHECK_HOST_CONCURRENCY,
-            russiaEndpointGroups.length || 1
+        const freshEndpointGroups = [];
+        for (const group of russiaEndpointGroups) {
+            const now = Date.now();
+            const cacheCandidates = group.members.map(member => {
+                const cached = cachedRussiaGate[member.fp];
+                const cachedAt = Number(cached?.checkedAt) || 0;
+                return RUSSIA_GATE_USE_CACHE && cached &&
+                    Number(cached.gateAlgorithmVersion) === RUSSIA_GATE_ALGORITHM_VERSION &&
+                    cachedAt > 0 && cachedAt <= now && now - cachedAt < RUSSIA_GATE_STATE_MAX_AGE_MS
+                    ? cached
+                    : null;
+            });
+
+            if (cacheCandidates.length && cacheCandidates.every(Boolean)) {
+                const first = cacheCandidates[0];
+                const allSameVerdict = cacheCandidates.every(c =>
+                    Boolean(c.gatePassed) === Boolean(first.gatePassed) &&
+                    Boolean(c.gatePending) === Boolean(first.gatePending)
+                );
+                if (allSameVerdict) {
+                    for (const member of group.members) {
+                        russiaProbeByFingerprint.set(member.fp, {
+                            ...first,
+                            deduplicatedEndpointKey: group.key,
+                            fromCache: true
+                        });
+                        russiaGateChecked += 1;
+                        russiaCacheHits += 1;
+                        if (first.gatePassed) russiaGatePassed += 1;
+                        else if (first.gatePending) russiaGatePending += 1;
+                        else russiaGateFailures += 1;
+                    }
+                    continue;
+                }
+            }
+            freshEndpointGroups.push(group);
+        }
+
+        const coordinator = await runRussiaGateEndpointCoordinator(
+            freshEndpointGroups,
+            { maxInFlight: CHECK_HOST_MAX_IN_FLIGHT }
         );
 
-        async function russiaWorker() {
-            while (true) {
-                const group = russiaEndpointGroups[russiaEndpointCursor++];
-                if (!group) return;
+        for (const group of freshEndpointGroups) {
+            let probe = coordinator.outcomes.get(group.key);
+            if (!probe) {
+                probe = {
+                    required: true,
+                    skipped: false,
+                    gatePassed: false,
+                    gatePending: true,
+                    reason: "Russia gate coordinator produced no result",
+                    providersUnavailable: true,
+                    transport: getTransportType(getProtocol(group.representative.link || "")),
+                    checkedAt: Date.now()
+                };
+            }
 
-                const representativeFp = fingerprintLink(group.representative.link || "");
-                const representativeSourceMeta = candidateMap[representativeFp] || null;
-                let probe = null;
-                const now = Date.now();
+            russiaFreshEndpointChecks += 1;
+            if (probe?.checkHost?.unavailable) russiaCheckHostUnavailable += 1;
+            if (probe?.checkHost?.rateLimited) russiaCheckHostRateLimited += 1;
 
-                const cacheCandidates = group.members.map(member => {
-                    const cached = cachedRussiaGate[member.fp];
-                    const cachedAt = Number(cached?.checkedAt) || 0;
-                    return RUSSIA_GATE_USE_CACHE && cached &&
-                        Number(cached.gateAlgorithmVersion) === RUSSIA_GATE_ALGORITHM_VERSION &&
-                        cachedAt > 0 && cachedAt <= now && now - cachedAt < RUSSIA_GATE_STATE_MAX_AGE_MS
-                        ? cached
-                        : null;
-                });
-
-                if (cacheCandidates.length && cacheCandidates.every(Boolean)) {
-                    const first = cacheCandidates[0];
-                    const allSameVerdict = cacheCandidates.every(c =>
-                        Boolean(c.gatePassed) === Boolean(first.gatePassed) &&
-                        Boolean(c.gatePending) === Boolean(first.gatePending)
-                    );
-                    if (allSameVerdict) {
-                        probe = first;
-                        russiaCacheHits += group.members.length;
-                    }
-                }
-
-                if (!probe) {
-                    let url;
-                    try {
-                        url = new URL(String(group.representative.link || "").trim());
-                    } catch {
-                        probe = {
-                            required: true,
-                            skipped: false,
-                            gatePassed: false,
-                            gatePending: false,
-                            reason: "invalid URL",
-                            checkedAt: Date.now()
-                        };
-                    }
-
-                    if (!probe) {
-                        probe = await checkRussiaReachability(
-                            group.representative,
-                            url,
-                            getProtocol(group.representative.link || ""),
-                            representativeSourceMeta
-                        );
-                        russiaFreshEndpointChecks += 1;
-                        if (probe?.checkHost?.unavailable) russiaCheckHostUnavailable += 1;
-                        if (probe?.checkHost?.rateLimited) russiaCheckHostRateLimited += 1;
-                    }
-                }
-
-                for (const member of group.members) {
-                    const memberProbe = { ...probe, deduplicatedEndpointKey: group.key };
-                    russiaProbeByFingerprint.set(member.fp, memberProbe);
-                    russiaGateChecked += 1;
-                    if (memberProbe.gatePassed) russiaGatePassed += 1;
-                    else if (memberProbe.gatePending) russiaGatePending += 1;
-                    else russiaGateFailures += 1;
-                }
-
-                const elapsedMs = Math.max(1, Date.now() - russiaGateStartedAt);
-                const endpointRate = russiaFreshEndpointChecks / (elapsedMs / 1000);
-                const remainingEndpoints = Math.max(0, russiaEndpointGroups.length - russiaFreshEndpointChecks - russiaCacheHits);
-                const etaSeconds = endpointRate > 0 ? Math.round(remainingEndpoints / endpointRate) : 0;
-                if (russiaGateChecked % 50 === 0 || russiaGateChecked === requiredRussiaItems.length) {
-                    console.log(
-                        `RUSSIA PROGRESS ${russiaGateChecked}/${requiredRussiaItems.length}: ` +
-                        `${russiaGatePassed} pass, ${russiaGateFailures} fail, ${russiaGatePending} pending; ` +
-                        `endpointChecks=${russiaFreshEndpointChecks}/${russiaEndpointGroups.length}; ` +
-                        `rate=${endpointRate.toFixed(2)}/s; eta=${etaSeconds}s`
-                    );
-                }
+            for (const member of group.members) {
+                const memberProbe = { ...probe, deduplicatedEndpointKey: group.key };
+                russiaProbeByFingerprint.set(member.fp, memberProbe);
+                russiaGateChecked += 1;
+                if (memberProbe.gatePassed) russiaGatePassed += 1;
+                else if (memberProbe.gatePending) russiaGatePending += 1;
+                else russiaGateFailures += 1;
             }
         }
 
-        await Promise.all(Array.from({ length: russiaWorkerCount }, () => russiaWorker()));
-
+        const elapsedMs = Math.max(1, Date.now() - russiaGateStartedAt);
+        const endpointRate = russiaFreshEndpointChecks / (elapsedMs / 1000);
         console.log(
-            `RUSSIA GATE RUN COMPLETE: freshCandidates=${russiaGateChecked - russiaCacheHits}, ` +
-            `freshEndpointChecks=${russiaFreshEndpointChecks}, cacheHits=${russiaCacheHits}, ` +
-            `uniqueEndpointChecks=${russiaEndpointGroups.length}, candidates=${requiredRussiaItems.length}, ` +
-            `checked=${russiaGateChecked}, pending=${russiaGatePending}, fail=${russiaGateFailures}, ` +
-            `checkerUnavailable=${russiaCheckHostUnavailable}, rateLimited=${russiaCheckHostRateLimited}`
+            `RUSSIA GATE COORDINATOR COMPLETE: endpoints=${russiaFreshEndpointChecks}/${russiaEndpointGroups.length}; ` +
+            `inFlightMax=${CHECK_HOST_MAX_IN_FLIGHT}; elapsed=${Math.round(elapsedMs / 1000)}s; ` +
+            `rate=${endpointRate.toFixed(2)}/s`
         );
 
-        // Do not create second-generation Check-Host requests for unresolved
-        // endpoints. The original request_id may still be finishing on the provider;
-        // creating a replacement request only increases queue pressure and can turn
-        // a slow result into a cascade of 429s. The main polling window below is
-        // deliberately long enough to let the original request finish.
+        // Never create replacement Check-Host requests for an unresolved endpoint.
+        // One request_id has one bounded lifecycle; retrying by creating a second request
+        // would amplify provider pressure and invalidate the gate accounting.
         if (russiaGatePending > 0) {
             console.warn(
                 `RUSSIA GATE PENDING: ${russiaGatePending} candidate(s) remain unresolved ` +
@@ -4630,7 +4693,7 @@ async function main() {
         }
 
         for (const [fp, probe] of russiaProbeByFingerprint) {
-            if (!cachedRussiaGate[fp] && probe?.checkedAt) {
+            if (probe?.checkedAt && !probe.fromCache) {
                 cachedRussiaGate[fp] = {
                     ...probe,
                     gateAlgorithmVersion: RUSSIA_GATE_ALGORITHM_VERSION,
