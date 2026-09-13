@@ -242,7 +242,8 @@ const CHECK_HOST_RUSSIA_NODES = String(
 let ACTIVE_CHECK_HOST_RUSSIA_NODES = [...CHECK_HOST_RUSSIA_NODES];
 const CHECK_HOST_TIMEOUT_MS = Math.max(5000, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_TIMEOUT_MS) || 10000);
 const CHECK_HOST_POLL_MS = Math.max(250, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_POLL_MS) || 700);
-const CHECK_HOST_MAX_POLL_MS = Math.max(CHECK_HOST_POLL_MS, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_MAX_POLL_MS) || 45000);
+const CHECK_HOST_MAX_POLL_MS = Math.max(CHECK_HOST_POLL_MS, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_MAX_POLL_MS) || 120000);
+const CHECK_HOST_GRACE_POLL_MS = Math.max(0, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_GRACE_POLL_MS) || 60000);
 // Check-Host is asynchronous: creating a request and fetching its result are
 // separate API operations. Keep independent adaptive start-rate budgets for
 // creation and result polling. Candidate workers are intentionally allowed to
@@ -285,7 +286,7 @@ const RUSSIA_GATE_USE_CACHE =
     );
 // Bump whenever the gate semantics change so old cached verdicts cannot be
 // reused after changing providers or reachability rules.
-const RUSSIA_GATE_ALGORITHM_VERSION = 19;
+const RUSSIA_GATE_ALGORITHM_VERSION = 20;
 // Russia Gate is deliberately single-process. A per-shard limiter would create
 // multiple independent API streams and can trigger Check-Host 429 responses.
 const RUSSIA_GATE_SHARD_INDEX = 0;
@@ -1002,7 +1003,7 @@ async function checkHostProviderPreflight() {
                 new URL("https://check-host.net:443"),
                 "https",
                 nodes,
-                { maxPollMs: 45000 }
+                { maxPollMs: CHECK_HOST_MAX_POLL_MS }
             );
             lastProbe = probe;
             if (probe.ok) return probe;
@@ -1043,6 +1044,7 @@ async function checkHostRussia(url, protocol, nodes = ACTIVE_CHECK_HOST_RUSSIA_N
     const transport = getTransportType(protocol);
     const checkType = transport === "udp" ? "udp" : "tcp";
     const pollLimitMs = Math.max(CHECK_HOST_MAX_POLL_MS, Number(options.maxPollMs) || 0);
+    const totalPollLimitMs = pollLimitMs + CHECK_HOST_GRACE_POLL_MS;
 
     let lastError = null;
 
@@ -1101,7 +1103,7 @@ async function checkHostRussia(url, protocol, nodes = ACTIVE_CHECK_HOST_RUSSIA_N
             let firstPoll = true;
             let transientErrors = 0;
 
-            while (Date.now() - started <= pollLimitMs) {
+            while (Date.now() - started <= totalPollLimitMs) {
                 await sleep(firstPoll ? Math.max(250, Math.min(500, CHECK_HOST_POLL_MS)) : pollDelayMs);
                 firstPoll = false;
 
@@ -1207,11 +1209,19 @@ async function checkHostRussia(url, protocol, nodes = ACTIVE_CHECK_HOST_RUSSIA_N
                 pollDelayMs = Math.min(3000, Math.max(300, Math.round(pollDelayMs * 1.14)));
             }
 
+            console.warn(
+                `RUSSIA CHECK-HOST POLL TIMEOUT: requestId=${requestId}; ` +
+                `primary=${Math.round(pollLimitMs / 1000)}s; ` +
+                `grace=${Math.round(CHECK_HOST_GRACE_POLL_MS / 1000)}s; ` +
+                `no duplicate request will be created`
+            );
+
             return {
                 provider: "check-host",
                 ok: false,
                 // This is genuinely unresolved: the Russian checker did not
-                // return a definitive result inside our bounded polling window.
+                // return a definitive result inside both the primary and grace
+                // polling windows for the same request_id.
                 unavailable: true,
                 inconclusive: transport === "udp",
                 transport,
