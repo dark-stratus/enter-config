@@ -285,7 +285,7 @@ const RUSSIA_GATE_USE_CACHE =
     );
 // Bump whenever the gate semantics change so old cached verdicts cannot be
 // reused after changing providers or reachability rules.
-const RUSSIA_GATE_ALGORITHM_VERSION = 14;
+const RUSSIA_GATE_ALGORITHM_VERSION = 15;
 const RUSSIA_GATE_SHARD_INDEX = Math.max(0, Number(process.env.HEALTHCHECK_RUSSIA_GATE_SHARD_INDEX) || 0);
 const RUSSIA_GATE_SHARD_COUNT = Math.max(1, Number(process.env.HEALTHCHECK_RUSSIA_GATE_SHARD_COUNT) || 1);
 const RUSSIA_GATE_SHARD_OUTPUT = String(process.env.HEALTHCHECK_RUSSIA_GATE_SHARD_OUTPUT || "").trim();
@@ -936,40 +936,20 @@ function parseCheckHostNode(raw, node, transport = "tcp") {
 }
 
 async function resolveRussianCheckHostNodes() {
-    const preferred = new Set(CHECK_HOST_RUSSIA_NODES.map(value => String(value).trim()).filter(Boolean));
+    const configured = CHECK_HOST_RUSSIA_NODES
+        .map(value => String(value).trim())
+        .filter(Boolean);
 
-    try {
-        const data = await requestJsonWithRetries(
-            `${CHECK_HOST_API_BASE}/nodes/hosts`,
-            { headers: { "user-agent": "enter-config-russia-health/1.0" } },
-            CHECK_HOST_TIMEOUT_MS
+    if (!configured.length) {
+        throw new Error(
+            "No Russian Check-Host nodes configured; set HEALTHCHECK_RUSSIA_CHECK_HOST_NODES"
         );
-
-        const liveRussianNodes = Object.entries(data?.nodes || {})
-            .filter(([, info]) => {
-                const location = Array.isArray(info?.location) ? info.location : [];
-                return String(location[0] || "").trim().toLowerCase() === "ru";
-            })
-            .map(([hostname]) => hostname)
-            .filter(Boolean);
-
-        // Use every live Russian node. The configured list only controls
-        // preference/order for known nodes; newly added Russian nodes are picked
-        // up automatically instead of silently being ignored.
-        const selected = liveRussianNodes.slice().sort((a, b) => {
-            const aPreferred = preferred.has(a) ? 0 : 1;
-            const bPreferred = preferred.has(b) ? 0 : 1;
-            return aPreferred - bPreferred || a.localeCompare(b);
-        });
-
-        if (!selected.length) {
-            throw new Error("Check-Host currently exposes no live Russian checking nodes");
-        }
-
-        return selected;
-    } catch (error) {
-        throw new Error(`Unable to resolve live Russian Check-Host nodes: ${error?.message || error}`);
     }
+
+    // Never call /nodes/hosts during the hourly gate. That discovery endpoint
+    // has its own rate limit and became the source of HTTP 429 failures when
+    // several gate shards started together.
+    return configured;
 }
 
 async function checkHostProviderPreflight() {
@@ -4528,17 +4508,79 @@ async function main() {
         ).length;
 
         console.log(
-            `RUSSIA GATE SHARD ${RUSSIA_GATE_SHARD_INDEX + 1}/${RUSSIA_GATE_SHARD_COUNT}: ` +
-            `fresh=${russiaFreshChecks}, cacheHits=${russiaCacheHits}, shardItems=${russiaShardItems.length}, ` +
+            `RUSSIA GATE RUN COMPLETE: ` +
+            `fresh=${russiaFreshChecks}, cacheHits=${russiaCacheHits}, candidates=${russiaShardItems.length}, ` +
             `checked=${russiaGateChecked}, pending=${russiaGatePending}, fail=${russiaGateFailures}, ` +
             `checkerUnavailable=${russiaCheckHostUnavailable}, rateLimited=${russiaCheckHostRateLimited}`
         );
 
         if (russiaGatePending > 0 && !RUSSIA_GATE_SHARD_MODE) {
-            throw new Error(
-                `Russia gate produced ${russiaGatePending} unresolved candidate(s). ` +
-                `No unresolved candidate may enter publication; increase checker capacity or retry.`
+            const pendingItems = managedItems.filter(item => {
+                const fp = fingerprintLink(item.link || "");
+                return Boolean(russiaProbeByFingerprint.get(fp)?.gatePending);
+            });
+
+            console.warn(
+                `RUSSIA GATE RETRY: ${pendingItems.length} unresolved candidate(s), extended poll=45000ms`
             );
+
+            let retryCursor = 0;
+            const retryWorkers = Math.min(
+                CHECK_HOST_CONCURRENCY,
+                pendingItems.length || 1
+            );
+
+            await Promise.all(Array.from({ length: retryWorkers }, async () => {
+                while (true) {
+                    const item = pendingItems[retryCursor++];
+                    if (!item) return;
+
+                    let url;
+                    try {
+                        url = new URL(String(item.link || "").trim());
+                    } catch {
+                        continue;
+                    }
+
+                    const sourceMeta =
+                        candidateMap[fingerprintLink(item.link || "")] || null;
+
+                    const retried = await checkRussiaReachability(
+                        item,
+                        url,
+                        getProtocol(item.link || ""),
+                        sourceMeta,
+                        { maxPollMs: 45000 }
+                    );
+
+                    russiaProbeByFingerprint.set(
+                        fingerprintLink(item.link || ""),
+                        retried
+                    );
+                }
+            }));
+
+            russiaGatePending = 0;
+            russiaGatePassed = 0;
+            russiaGateFailures = 0;
+            russiaCheckHostUnavailable = 0;
+            russiaCheckHostRateLimited = 0;
+
+            for (const probe of russiaProbeByFingerprint.values()) {
+                if (probe?.gatePassed) russiaGatePassed += 1;
+                else if (probe?.gatePending) russiaGatePending += 1;
+                else if (probe?.required) russiaGateFailures += 1;
+
+                if (probe?.checkHost?.unavailable) russiaCheckHostUnavailable += 1;
+                if (probe?.checkHost?.rateLimited) russiaCheckHostRateLimited += 1;
+            }
+
+            if (russiaGatePending > 0) {
+                throw new Error(
+                    `Russia gate produced ${russiaGatePending} unresolved candidate(s) after retry; ` +
+                    `no unresolved candidate may enter publication.`
+                );
+            }
         }
 
         if (!RUSSIA_GATE_USE_CACHE && russiaFreshChecks !== requiredRussiaCandidates && !RUSSIA_GATE_SHARD_MODE) {
