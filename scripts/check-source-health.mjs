@@ -285,7 +285,11 @@ const RUSSIA_GATE_USE_CACHE =
     );
 // Bump whenever the gate semantics change so old cached verdicts cannot be
 // reused after changing providers or reachability rules.
-const RUSSIA_GATE_ALGORITHM_VERSION = 13;
+const RUSSIA_GATE_ALGORITHM_VERSION = 14;
+const RUSSIA_GATE_SHARD_INDEX = Math.max(0, Number(process.env.HEALTHCHECK_RUSSIA_GATE_SHARD_INDEX) || 0);
+const RUSSIA_GATE_SHARD_COUNT = Math.max(1, Number(process.env.HEALTHCHECK_RUSSIA_GATE_SHARD_COUNT) || 1);
+const RUSSIA_GATE_SHARD_OUTPUT = String(process.env.HEALTHCHECK_RUSSIA_GATE_SHARD_OUTPUT || "").trim();
+const RUSSIA_GATE_SHARD_MODE = RUSSIA_GATE_SHARD_COUNT > 1 || Boolean(RUSSIA_GATE_SHARD_OUTPUT);
 const CHECK_HOST_CONCURRENCY = Math.max(16, Math.min(96, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_CONCURRENCY) || 64));
 const GLOBALPING_CONCURRENCY = Math.max(1, Math.min(4, Number(process.env.HEALTHCHECK_GLOBALPING_CONCURRENCY) || 4));
 
@@ -1243,7 +1247,7 @@ async function globalpingRussia(url, protocol) {
     });
 }
 
-async function checkRussiaReachability(item, url, protocol, sourceMeta) {
+async function checkRussiaReachability(item, url, protocol, sourceMeta, options = {}) {
     if (isLteCandidate(item, sourceMeta)) {
         return {
             required: false,
@@ -1258,7 +1262,7 @@ async function checkRussiaReachability(item, url, protocol, sourceMeta) {
     // Globalping is intentionally NOT consulted here: its free quota,
     // rate limiting, probe availability, or outage must never change whether
     // a candidate is accepted or rejected by the publication gate.
-    const checkHost = await checkHostRussia(url, protocol);
+    const checkHost = await checkHostRussia(url, protocol, ACTIVE_CHECK_HOST_RUSSIA_NODES, options);
 
     return {
         required: true,
@@ -4394,18 +4398,21 @@ async function main() {
             `nodes=${ACTIVE_CHECK_HOST_RUSSIA_NODES.join(",")}`
         );
 
+        const russiaShardItems = RUSSIA_GATE_SHARD_MODE
+            ? managedItems.filter((_, index) => index % RUSSIA_GATE_SHARD_COUNT === RUSSIA_GATE_SHARD_INDEX)
+            : managedItems;
         const russiaCursor = { value: 0 };
         const russiaGateStartedAt = Date.now();
         let russiaFreshChecks = 0;
         let russiaCacheHits = 0;
         const russiaWorkerCount = Math.min(
-            Math.max(CHECK_HOST_CONCURRENCY, GLOBALPING_CONCURRENCY),
-            managedItems.length || 1
+            CHECK_HOST_CONCURRENCY,
+            russiaShardItems.length || 1
         );
 
         async function russiaWorker() {
             while (true) {
-                const item = managedItems[russiaCursor.value++];
+                const item = russiaShardItems[russiaCursor.value++];
                 if (!item) return;
 
                 const fp = fingerprintLink(item.link || "");
@@ -4501,13 +4508,13 @@ async function main() {
                 if (probe.checkHost?.unavailable) russiaCheckHostUnavailable += 1;
                 if (probe.checkHost?.rateLimited) russiaCheckHostRateLimited += 1;
 
-                if (russiaGateChecked % 100 === 0 || russiaGateChecked === checked) {
+                if (russiaGateChecked % 50 === 0 || russiaGateChecked === russiaShardItems.length) {
                     const elapsedMs = Math.max(1, Date.now() - russiaGateStartedAt);
                     const checkedPerSecond = russiaGateChecked / (elapsedMs / 1000);
-                    const remaining = Math.max(0, checked - russiaGateChecked);
+                    const remaining = Math.max(0, russiaShardItems.length - russiaGateChecked);
                     const etaSeconds = checkedPerSecond > 0 ? Math.round(remaining / checkedPerSecond) : 0;
                     console.log(
-                        `RUSSIA PROGRESS ${russiaGateChecked}/${checked}: ${russiaGatePassed} pass, ${russiaGateFailures} fail, ${russiaGatePending} pending; ` +
+                        `RUSSIA PROGRESS ${russiaGateChecked}/${russiaShardItems.length}: ${russiaGatePassed} pass, ${russiaGateFailures} fail, ${russiaGatePending} pending; ` +
                         `rate=${checkedPerSecond.toFixed(2)}/s; eta=${etaSeconds}s`
                     );
                 }
@@ -4521,23 +4528,95 @@ async function main() {
         ).length;
 
         console.log(
-            `RUSSIA GATE CHECKS: fresh=${russiaFreshChecks}, cacheHits=${russiaCacheHits}, ` +
-            `required=${requiredRussiaCandidates}, checked=${russiaGateChecked}, ` +
+            `RUSSIA GATE SHARD ${RUSSIA_GATE_SHARD_INDEX + 1}/${RUSSIA_GATE_SHARD_COUNT}: ` +
+            `fresh=${russiaFreshChecks}, cacheHits=${russiaCacheHits}, shardItems=${russiaShardItems.length}, ` +
+            `checked=${russiaGateChecked}, pending=${russiaGatePending}, fail=${russiaGateFailures}, ` +
             `checkerUnavailable=${russiaCheckHostUnavailable}, rateLimited=${russiaCheckHostRateLimited}`
         );
 
-        if (russiaGatePending > 0) {
+        if (russiaGatePending > 0 && !RUSSIA_GATE_SHARD_MODE) {
             throw new Error(
                 `Russia gate produced ${russiaGatePending} unresolved candidate(s). ` +
                 `No unresolved candidate may enter publication; increase checker capacity or retry.`
             );
         }
 
-        if (!RUSSIA_GATE_USE_CACHE && russiaFreshChecks !== requiredRussiaCandidates) {
+        if (!RUSSIA_GATE_USE_CACHE && russiaFreshChecks !== requiredRussiaCandidates && !RUSSIA_GATE_SHARD_MODE) {
             throw new Error(
                 `Russia gate did not freshly check every required candidate: ` +
                 `${russiaFreshChecks}/${requiredRussiaCandidates}`
             );
+        }
+
+        if (RUSSIA_GATE_SHARD_MODE) {
+            let pendingItems = [];
+            let retryResolved = 0;
+            // Retry only unresolved candidates with a longer polling horizon.
+            // This specifically attacks the "pending" tail caused by one slow
+            // Russian checker node without making every ordinary request wait
+            // 30-45 seconds.
+            pendingItems = russiaShardItems.filter(item => {
+                const fp = fingerprintLink(item.link || "");
+                return Boolean(russiaProbeByFingerprint.get(fp)?.gatePending);
+            });
+            if (pendingItems.length) {
+                console.warn(`RUSSIA SHARD RETRY: ${pendingItems.length} unresolved candidate(s), extended poll=45000ms`);
+                let retryCursor = 0;
+                const retryWorkers = Math.min(8, pendingItems.length);
+                await Promise.all(Array.from({ length: retryWorkers }, async () => {
+                    while (true) {
+                        const item = pendingItems[retryCursor++];
+                        if (!item) return;
+                        let url;
+                        try { url = new URL(String(item.link || "").trim()); } catch { continue; }
+                        const sourceMeta = candidateMap[fingerprintLink(item.link || "")] || null;
+                        const retried = await checkRussiaReachability(
+                            item, url, getProtocol(item.link || ""), sourceMeta, { maxPollMs: 45000 }
+                        );
+                        russiaProbeByFingerprint.set(fingerprintLink(item.link || ""), retried);
+                        if (!retried.gatePending) retryResolved += 1;
+                    }
+                }));
+            }
+
+            if (!RUSSIA_GATE_SHARD_OUTPUT) {
+                throw new Error("Russia gate shard mode requires HEALTHCHECK_RUSSIA_GATE_SHARD_OUTPUT");
+            }
+            const shardResults = russiaShardItems.map(item => {
+                const fp = fingerprintLink(item.link || "");
+                const probe = russiaProbeByFingerprint.get(fp);
+                if (!probe) throw new Error(`Russia gate shard result missing for ${item.id}`);
+                return {
+                    id: item.id,
+                    link: String(item.link || "").trim(),
+                    probe,
+                };
+            });
+            await fs.mkdir(path.dirname(RUSSIA_GATE_SHARD_OUTPUT), { recursive: true });
+            const finalPending = shardResults.filter(row => row.probe?.gatePending).length;
+            const finalPassed = shardResults.filter(row => row.probe?.gatePassed).length;
+            const finalFailed = shardResults.filter(row => row.probe?.required && !row.probe?.gatePassed && !row.probe?.gatePending).length;
+            await fs.writeFile(
+                RUSSIA_GATE_SHARD_OUTPUT,
+                `${JSON.stringify({
+                    shardIndex: RUSSIA_GATE_SHARD_INDEX,
+                    shardCount: RUSSIA_GATE_SHARD_COUNT,
+                    candidates: checked,
+                    requiredCandidates: requiredRussiaCandidates,
+                    allowedCandidates: shardResults.filter(row => row.probe?.required && row.probe?.gatePassed).length,
+                    failedCandidates: finalFailed,
+                    pendingCandidates: finalPending,
+                    generatedAt: new Date().toISOString(),
+                    manifestSha256,
+                    gateAlgorithmVersion: RUSSIA_GATE_ALGORITHM_VERSION,
+                    checkHostNodes: ACTIVE_CHECK_HOST_RUSSIA_NODES,
+                    results: shardResults,
+                    retry: { attempted: pendingItems.length, resolved: pendingItems.filter(item => !russiaProbeByFingerprint.get(fingerprintLink(item.link || ""))?.gatePending).length },
+                }, null, 2)}\n`,
+                "utf8"
+            );
+            console.log(`RUSSIA GATE SHARD COMPLETE: ${russiaGateChecked}/${russiaShardItems.length} -> ${RUSSIA_GATE_SHARD_OUTPUT}`);
+            return;
         }
 
         for (const [fp, probe] of russiaProbeByFingerprint) {
