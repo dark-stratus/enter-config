@@ -244,6 +244,7 @@ const CHECK_HOST_RUSSIA_NODES = String(
     "ru1.node.check-host.net,ru2.node.check-host.net,ru3.node.check-host.net"
 ).split(/[,\r\n;]+/).map(v => v.trim()).filter(Boolean);
 let ACTIVE_CHECK_HOST_RUSSIA_NODES = [...CHECK_HOST_RUSSIA_NODES];
+let ACTIVE_CHECK_HOST_GATE_QUORUM = CHECK_HOST_GATE_QUORUM;
 const CHECK_HOST_TIMEOUT_MS = Math.max(5000, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_TIMEOUT_MS) || 12000);
 // Check-Host creation and result retrieval have very different latency profiles.
 // A slow /check-result request must never occupy a worker for the full create timeout,
@@ -303,7 +304,7 @@ const RUSSIA_GATE_USE_CACHE =
     );
 // Bump whenever the gate semantics change so old cached verdicts cannot be
 // reused after changing providers or reachability rules.
-const RUSSIA_GATE_ALGORITHM_VERSION = Math.max(1, Number(process.env.HEALTHCHECK_RUSSIA_GATE_ALGORITHM_VERSION) || 30);
+const RUSSIA_GATE_ALGORITHM_VERSION = Math.max(1, Number(process.env.HEALTHCHECK_RUSSIA_GATE_ALGORITHM_VERSION) || 33);
 // Russia Gate is deliberately single-process. A per-shard limiter would create
 // multiple independent API streams and can trigger Check-Host 429 responses.
 const RUSSIA_GATE_SHARD_INDEX = 0;
@@ -1057,111 +1058,103 @@ async function resolveRussianCheckHostNodes() {
 }
 
 async function checkHostProviderPreflight() {
-    const nodes = ACTIVE_CHECK_HOST_RUSSIA_NODES;
+    const configured = CHECK_HOST_RUSSIA_NODES
+        .map(value => String(value).trim())
+        .filter(Boolean);
     let lastProbe = null;
+    const nodeProbes = [];
 
-    // Preflight is only a provider sanity check. A 429 here means the API
-    // is throttling us, not that the Russian checker nodes are dead. Retry the
-    // same control target for a bounded period instead of aborting the whole
-    // workflow before the real candidate checks even begin.
-    for (let attempt = 0; attempt < 4; attempt += 1) {
+    // Probe every configured Russian checker independently. This is deliberately
+    // separate from the candidate gate: it lets us distinguish 2 live checkers,
+    // 1 live checker, and a total checker outage before choosing the gate mode.
+    for (const node of configured) {
         try {
-            const probe = await checkHostRussiaQuorum(
+            const request = await createCheckHostRequest(
                 new URL("https://check-host.net:443"),
                 "https",
-                nodes
+                [node]
             );
+            const probe = await pollCheckHostRequest(request, {
+                maxPollMs: Math.min(5000, CHECK_HOST_MAX_POLL_MS),
+                gracePollMs: Math.min(1000, CHECK_HOST_GRACE_POLL_MS),
+                requiredReachable: 1,
+            });
+            const nodeResult = Array.isArray(probe?.results)
+                ? probe.results.find(row => row?.node === node)
+                : null;
+            const reachable = nodeResult?.reachable === true;
+            nodeProbes.push({
+                node,
+                reachable,
+                inconclusive: Boolean(nodeResult?.inconclusive),
+                timeout: /timeout|timed out|aborted/i.test(String(nodeResult?.error || probe?.error || "")),
+                rateLimited: Boolean(probe?.rateLimited),
+                error: nodeResult?.error || probe?.error || "",
+                latencyMs: Number(nodeResult?.latencyMs) || 0,
+            });
             lastProbe = probe;
-
-            const liveNodes = Array.isArray(probe?.results)
-                ? probe.results
-                    .filter(row => row?.reachable === true)
-                    .map(row => String(row.node || "").trim())
-                    .filter(Boolean)
-                : [];
-
-            // The preflight is intentionally used to select the currently
-            // healthy Russian Check-Host nodes. The main gate must not submit
-            // every candidate to a node that has already failed the control
-            // target: one unhealthy node can keep a multi-node request pending
-            // even when the required positive reachability result is available
-            // from the healthy node(s). Historical working reports used the
-            // live ru2/ru3 pair in exactly this way.
-            if (liveNodes.length >= CHECK_HOST_PREFLIGHT_QUORUM) {
-                const nodeCity = new Map([
-                    ["ru1.node.check-host.net", "Moscow"],
-                    ["ru2.node.check-host.net", "Moscow"],
-                    ["ru3.node.check-host.net", "Saint Petersburg"],
-                ]);
-                const diverseLiveNodes = liveNodes.filter((node) => nodeCity.has(node));
-                const selectedLiveNodes = diverseLiveNodes
-                    .filter((node) => node === "ru3.node.check-host.net")
-                    .concat(
-                        ["ru2.node.check-host.net", "ru1.node.check-host.net"]
-                            .filter((node) => diverseLiveNodes.includes(node))
-                            .slice(0, 1)
-                    );
-
-                if (selectedLiveNodes.length >= CHECK_HOST_PREFLIGHT_QUORUM) {
-                    const selected = selectedLiveNodes.slice(0, CHECK_HOST_PREFLIGHT_QUORUM);
-                    return {
-                        ...probe,
-                        liveNodes,
-                        selectedLiveNodes: selected,
-                        nodesTested: liveNodes.length,
-                        nodesReachable: liveNodes.length,
-                        quorumRequired: CHECK_HOST_PREFLIGHT_QUORUM,
-                        quorumMet: true
-                    };
-                }
-
-                return {
-                    ...probe,
-                    liveNodes,
-                    selectedLiveNodes: [],
-                    nodesTested: liveNodes.length,
-                    nodesReachable: liveNodes.length,
-                    quorumRequired: CHECK_HOST_PREFLIGHT_QUORUM,
-                    quorumMet: false,
-                    diverseLocationQuorumMet: false,
-                    error: "fewer than two live Russian Check-Host nodes are available from distinct configured cities"
-                };
-            }
-
-            if (probe.ok) return probe;
-
-            if (!probe.rateLimited && !probe.unavailable) break;
         } catch (error) {
-            lastProbe = { ok: false, unavailable: true, rateLimited: Number(error?.status || 0) === 429, error: error?.message || String(error) };
+            nodeProbes.push({
+                node,
+                reachable: false,
+                inconclusive: false,
+                timeout: /timeout|timed out|aborted/i.test(String(error?.message || "")),
+                rateLimited: Number(error?.status || 0) === 429,
+                error: error?.message || String(error),
+                latencyMs: 0,
+            });
         }
-
-        const delay = lastProbe?.rateLimited ? 15000 * (attempt + 1) : 5000 * (attempt + 1);
-        console.warn(
-            `RUSSIA CHECKER PREFLIGHT RETRY ${attempt + 1}/4: ${lastProbe?.error || "no definitive result"}; ` +
-            `sleeping ${Math.round(delay / 1000)}s`
-        );
-        await sleep(Math.min(45000, delay));
     }
 
-    // Never turn a provider-side 429 into a permanent gate failure. The main
-    // gate has its own bounded retries and will fail closed only if candidates
-    // remain genuinely unresolved after those retries.
-    if (lastProbe?.rateLimited) {
+    const liveNodes = nodeProbes.filter(row => row.reachable).map(row => row.node);
+    const preferredPairs = [
+        ["ru2.node.check-host.net", "ru3.node.check-host.net"],
+        ["ru1.node.check-host.net", "ru3.node.check-host.net"],
+        ["ru1.node.check-host.net", "ru2.node.check-host.net"],
+    ];
+    const selectedPair = preferredPairs.find(pair => pair.every(node => liveNodes.includes(node))) || null;
+
+    if (selectedPair) {
         return {
-            provider: "check-host",
-            ok: true,
-            preflightRateLimited: true,
-            unavailable: false,
-            nodesTested: nodes.length,
-            nodesReachable: nodes.length,
-            error: "control preflight was rate-limited; continuing with main gate"
+            nodeProbes,
+            liveNodes,
+            selectedLiveNodes: selectedPair,
+            nodesTested: configured.length,
+            nodesReachable: liveNodes.length,
+            quorumRequired: 2,
+            quorumMet: true,
+            checkerMode: "dual",
         };
     }
 
-    throw new Error(
-        `Check-Host Russia preflight failed: ${lastProbe?.error || "no Russian node completed a TCP result"}`
-    );
+    if (liveNodes.length === 1) {
+        return {
+            nodeProbes,
+            liveNodes,
+            selectedLiveNodes: liveNodes,
+            nodesTested: configured.length,
+            nodesReachable: 1,
+            quorumRequired: 1,
+            quorumMet: true,
+            checkerMode: "single",
+            warning: "Only one Russian Check-Host node is available; Russia Gate is running in single-checker warning mode.",
+        };
+    }
+
+    return {
+        nodeProbes,
+        liveNodes: [],
+        selectedLiveNodes: [],
+        nodesTested: configured.length,
+        nodesReachable: 0,
+        quorumRequired: 0,
+        quorumMet: false,
+        checkerMode: "skipped",
+        warning: "No Russian Check-Host nodes are available; Russia Gate is skipped and candidates proceed directly to Heavy.",
+        lastProbe,
+    };
 }
+
 async function createCheckHostRequest(url, protocol, nodes) {
     const transport = getTransportType(protocol);
     const checkType = transport === "udp" ? "udp" : "tcp";
@@ -1202,11 +1195,10 @@ async function createCheckHostRequest(url, protocol, nodes) {
     throw new Error("Check-Host create failed");
 }
 
-function evaluateCheckHostPayload(payload, transport, nodes) {
+function evaluateCheckHostPayload(payload, transport, nodes, requiredReachable = ACTIVE_CHECK_HOST_GATE_QUORUM) {
     const parsed = nodes.map(node => parseCheckHostNode(payload?.[node] ?? null, node, transport));
     const reachable = parsed.filter(x => x.reachable);
     const unresolved = parsed.filter(x => x.inconclusive);
-    const requiredReachable = CHECK_HOST_GATE_QUORUM;
 
     if (reachable.length >= requiredReachable) {
         return {
@@ -1260,6 +1252,7 @@ async function pollCheckHostRequest(request, options = {}) {
         0,
         Number(options.gracePollMs) || CHECK_HOST_GRACE_POLL_MS
     );
+    const requiredReachable = Math.max(1, Number(options.requiredReachable) || ACTIVE_CHECK_HOST_GATE_QUORUM);
     const totalPollLimitMs = pollLimitMs + gracePollMs;
     const started = Date.now();
     let pollDelayMs = Math.max(900, Math.min(2500, CHECK_HOST_POLL_MS));
@@ -1281,7 +1274,7 @@ async function pollCheckHostRequest(request, options = {}) {
                 "result"
             );
             transientErrors = 0;
-            const evaluation = evaluateCheckHostPayload(payload, request.transport, request.nodes);
+            const evaluation = evaluateCheckHostPayload(payload, request.transport, request.nodes, requiredReachable);
             if (evaluation.done) return evaluation.result;
             pollDelayMs = Math.min(5000, Math.max(900, Math.round(pollDelayMs * 1.18)));
         } catch (error) {
@@ -4852,32 +4845,96 @@ async function main() {
             ? [...new Set(russiaPreflight.selectedLiveNodes)]
             : [];
 
-        if (liveRussiaNodes.length < CHECK_HOST_PREFLIGHT_QUORUM) {
-            throw new Error(
-                `Check-Host Russia preflight found fewer than ${CHECK_HOST_PREFLIGHT_QUORUM} ` +
-                `usable Russian node(s) in distinct configured cities; live=${(russiaPreflight?.liveNodes || []).join(",") || "none"}`
-            );
-        }
-
         ACTIVE_CHECK_HOST_RUSSIA_NODES = liveRussiaNodes;
+        ACTIVE_CHECK_HOST_GATE_QUORUM = Number(russiaPreflight?.quorumRequired) || 0;
+        const russiaCheckerMode = russiaPreflight?.checkerMode || (liveRussiaNodes.length >= 2 ? "dual" : liveRussiaNodes.length === 1 ? "single" : "skipped");
+
         console.log(
             `RUSSIA CHECKER PREFLIGHT: ${russiaPreflight.nodesReachable}/${russiaPreflight.nodesTested} ` +
-            `usable Russian node(s); selected=${ACTIVE_CHECK_HOST_RUSSIA_NODES.join(",")}`
+            `usable Russian node(s); mode=${russiaCheckerMode}; selected=${ACTIVE_CHECK_HOST_RUSSIA_NODES.join(",") || "none"}`
         );
 
         console.log(
             `RUSSIA GATE START: Check-Host=${ACTIVE_CHECK_HOST_RUSSIA_NODES.length} live Russian nodes for all non-LTE candidates; ` +
-            `strategy=positive-reachability-on-live-nodes; ` +
+            `strategy=${russiaCheckerMode === "dual" ? "strict-positive-reachability-2-of-2" : russiaCheckerMode === "single" ? "single-live-node-warning-mode" : "skipped-all-checkers-unavailable"}; ` +
             `cache=${RUSSIA_GATE_USE_CACHE ? "enabled" : "disabled"}; ` +
             `Globalping=diagnostic-only (never affects gate); ` +
             `adaptive-pacing=global-api>=${CHECK_HOST_TOTAL_MIN_INTERVAL_MS}ms; ` +
-            `nodes=${ACTIVE_CHECK_HOST_RUSSIA_NODES.join(",")}`
+            `nodes=${ACTIVE_CHECK_HOST_RUSSIA_NODES.join(",") || "none"}`
         );
 
         const requiredRussiaItems = managedItems.filter((item) => {
             const fp = fingerprintLink(item.link || "");
             return !isLteCandidate(item, candidateMap[fp] || null);
         });
+
+        if (ACTIVE_CHECK_HOST_GATE_QUORUM === 0) {
+            for (const item of requiredRussiaItems) {
+                const fp = fingerprintLink(item.link || "");
+                russiaProbeByFingerprint.set(fp, {
+                    required: false,
+                    skipped: true,
+                    gatePassed: true,
+                    gatePending: false,
+                    anyReachable: false,
+                    reason: "Russia Gate skipped: no usable Russian Check-Host node was available; passed directly to Heavy",
+                    warning: true,
+                    checkedAt: Date.now(),
+                    checkHost: {
+                        provider: "check-host",
+                        ok: false,
+                        unavailable: true,
+                        skipped: true,
+                        nodesTested: 0,
+                        nodesReachable: 0,
+                        nodesInconclusive: 0,
+                        quorumRequired: 0,
+                        quorumMet: false,
+                        results: []
+                    }
+                });
+            }
+
+            const skippedReport = {
+                generatedAt: new Date().toISOString(),
+                generationId: updateStatus.generationId || null,
+                manifestSha256,
+                candidates: checked,
+                requiredCandidates: 0,
+                allowedCandidates: 0,
+                failedCandidates: 0,
+                skippedCandidates: requiredRussiaItems.length,
+                checkerMode: "skipped",
+                warning: "No Russian Check-Host nodes were available. Russia Gate was skipped; candidates were passed directly to Heavy.",
+                checkHostNodes: [],
+                configuredCheckHostNodes: CHECK_HOST_RUSSIA_NODES,
+                positiveReachabilityRequired: 0,
+                nodeStats: CHECK_HOST_RUSSIA_NODES.map(node => ({
+                    node,
+                    candidateChecks: 0,
+                    reachable: 0,
+                    inconclusive: 0,
+                    timeouts: 0,
+                    rateLimited: 0,
+                    otherErrors: 0
+                })),
+                results: managedItems.map(item => ({
+                    id: item.id,
+                    link: String(item.link || "").trim(),
+                    source: candidateMap[fingerprintLink(item.link || "")]?.source || item.source || "retained/manual",
+                    country: candidateMap[fingerprintLink(item.link || "")]?.country || "",
+                    required: false,
+                    gatePassed: true,
+                    gatePending: false,
+                    skipped: true,
+                    checkedAt: Date.now(),
+                    probe: russiaProbeByFingerprint.get(fingerprintLink(item.link || ""))
+                }))
+            };
+            await fs.writeFile(RUSSIA_GATE_FILE, `${JSON.stringify(skippedReport, null, 2)}\n`, "utf8");
+            console.warn(`⚠️ RUSSIA GATE SKIPPED: no usable Russian Check-Host nodes; ${requiredRussiaItems.length} non-LTE candidates go directly to Heavy`);
+            return;
+        }
 
         const endpointGroups = new Map();
         for (const item of requiredRussiaItems) {
@@ -4915,7 +4972,7 @@ async function main() {
             `RUSSIA GATE WORKSET: candidates=${requiredRussiaItems.length}; ` +
             `uniqueEndpointChecks=${russiaEndpointGroups.length}; ` +
             `dedupeSaved=${Math.max(0, requiredRussiaItems.length - russiaEndpointGroups.length)}; ` +
-            `positiveReachability=${CHECK_HOST_GATE_QUORUM}/${ACTIVE_CHECK_HOST_RUSSIA_NODES.length}`
+            `positiveReachability=${ACTIVE_CHECK_HOST_GATE_QUORUM}/${ACTIVE_CHECK_HOST_RUSSIA_NODES.length}`
         );
 
         const freshEndpointGroups = [];
@@ -4961,14 +5018,37 @@ async function main() {
             { maxInFlight: CHECK_HOST_MAX_IN_FLIGHT }
         );
 
+        const nodeStats = ACTIVE_CHECK_HOST_RUSSIA_NODES.map(node => {
+            const stats = { node, candidateChecks: 0, reachable: 0, inconclusive: 0, timeouts: 0, rateLimited: 0, otherErrors: 0 };
+            for (const row of russiaProbeByFingerprint.values()) {
+                if (!row?.required || !row?.checkHost) continue;
+                const nodeResult = Array.isArray(row.checkHost.results)
+                    ? row.checkHost.results.find(result => result?.node === node)
+                    : null;
+                if (!nodeResult) continue;
+                stats.candidateChecks += 1;
+                if (nodeResult.reachable) stats.reachable += 1;
+                if (nodeResult.inconclusive) stats.inconclusive += 1;
+                const errorText = String(nodeResult.error || "");
+                if (/timeout|timed out|aborted/i.test(errorText)) stats.timeouts += 1;
+                if (row.checkHost.rateLimited) stats.rateLimited += 1;
+                if (!nodeResult.reachable && !nodeResult.inconclusive && errorText && !/timeout|timed out|aborted/i.test(errorText)) stats.otherErrors += 1;
+            }
+            return stats;
+        });
+
         const russiaGateDiagnostics = {
             generatedAt: new Date().toISOString(),
             algorithmVersion: RUSSIA_GATE_ALGORITHM_VERSION,
+            checkerMode: russiaCheckerMode,
+            warning: russiaCheckerMode !== "dual" ? (russiaCheckerMode === "single" ? "Only one Russian Check-Host node was available." : "No Russian Check-Host nodes were available; gate skipped.") : "",
             configuredNodes: ACTIVE_CHECK_HOST_RUSSIA_NODES,
             candidateCount: requiredRussiaItems.length,
             uniqueEndpointChecks: russiaEndpointGroups.length,
             dedupeSaved: Math.max(0, requiredRussiaItems.length - russiaEndpointGroups.length),
-            positiveReachabilityRequired: CHECK_HOST_GATE_QUORUM,
+            positiveReachabilityRequired: ACTIVE_CHECK_HOST_GATE_QUORUM,
+            selectedNodes: ACTIVE_CHECK_HOST_RUSSIA_NODES,
+            nodeStats,
             activeWindow: Number(process.env.HEALTHCHECK_RUSSIA_ACTIVE_WINDOW) || 64,
             maxInFlight: CHECK_HOST_MAX_IN_FLIGHT,
             coordinator: {
@@ -5036,7 +5116,7 @@ async function main() {
 
         if (russiaGatePending > 0) {
             throw new Error(
-                `Russia gate produced ${russiaGatePending} unresolved candidate(s) after bounded node-pair checks; ` +
+                `Russia gate produced ${russiaGatePending} unresolved candidate(s) after bounded Check-Host polling; ` +
                 `no unresolved candidate may enter publication.`
             );
         }
@@ -5123,6 +5203,9 @@ async function main() {
                 requiredCandidates: gateResults.filter(item => item.required).length,
                 allowedCandidates: gateResults.filter(item => item.required && item.gatePassed).length,
                 failedCandidates: gateResults.filter(item => item.required && !item.gatePassed && !item.gatePending).length,
+                checkerMode: russiaCheckerMode,
+                warning: russiaCheckerMode !== "dual" ? (russiaCheckerMode === "single" ? "⚠️ Only one Russian Check-Host node was available; single-node mode used." : "⚠️ No Russian Check-Host nodes were available; Russia Gate was skipped and candidates were passed directly to Heavy.") : "",
+                nodeStats,
                 cachedResults: gateResults.filter(item => {
                     const age = Date.now() - (Number(item.checkedAt) || 0);
                     return age >= 0 && age < RUSSIA_GATE_STATE_MAX_AGE_MS;
@@ -5585,7 +5668,7 @@ async function main() {
             russiaGatePassed,
             russiaGateFailures,
             russiaGatePending,
-            policy: "Every managed non-LTE candidate is submitted to Check-Host at all currently live Russian nodes discovered from Check-Host; the configured list only provides ordering preference. A positive result from at least one configured Russian node passes the reachability gate; a definitive negative result rejects the candidate. Check-Host 429/5xx/timeout or unresolved results are UNKNOWN/PENDING and never an automatic PASS. If the checker is unavailable or any required candidate remains unresolved, the run stops before publication so the last known-good subscription remains in service. Globalping is diagnostics-only and cannot affect gate decisions. LTE/whitelist candidates are exempt from the Russia gate."
+            policy: "Russia Gate uses the preferred geographically independent checker pairs ru2+ru3, then ru1+ru3, then ru1+ru2. With two live nodes, both must positively verify the candidate; with one live node, that node is used in warning mode; with zero live nodes, Russia Gate is skipped and candidates proceed directly to Heavy. Check-Host 429/5xx/timeout or unresolved results are UNKNOWN/PENDING and never an automatic PASS while a checker is available. Globalping is diagnostics-only and cannot affect gate decisions. LTE/whitelist candidates are exempt from the Russia gate."
         },
         gamingCriteria: {
             minKbps:
@@ -5780,6 +5863,31 @@ async function main() {
 
     if (!sourceStats.length) {
         readmeLines.push("| — | — | 0 | 0 | 0 | ⚠️ нет настроенных источников |");
+    }
+
+    try {
+        const gateReportForReadme = JSON.parse(await fs.readFile(RUSSIA_GATE_FILE, "utf8"));
+        const mode = String(gateReportForReadme?.checkerMode || "").trim();
+        const modeLabel = mode === "dual" ? "2 независимые точки" : mode === "single" ? "1 российская точка (⚠️)" : mode === "skipped" ? "ПРОПУЩЕН (⚠️)" : "неизвестно";
+        readmeLines.push("", "## 🇷🇺 Russia Gate", "", `**Режим:** ${modeLabel}.`);
+        if (gateReportForReadme?.warning) readmeLines.push(`**Предупреждение:** ${gateReportForReadme.warning}`);
+        readmeLines.push(
+            `Проверено кандидатов: **${Number(gateReportForReadme.requiredCandidates || 0) + Number(gateReportForReadme.skippedCandidates || 0)}**; ` +
+            `прошли: **${Number(gateReportForReadme.allowedCandidates || 0)}**; ` +
+            `отброшены: **${Number(gateReportForReadme.failedCandidates || 0)}**; ` +
+            `pending: **${Math.max(0, Number(gateReportForReadme.requiredCandidates || 0) - Number(gateReportForReadme.allowedCandidates || 0) - Number(gateReportForReadme.failedCandidates || 0))}**.`,
+            "",
+            "| Russian checker | Проверок | Reachable | Inconclusive | Timeout | 429 | Другие ошибки |",
+            "|---|---:|---:|---:|---:|---:|---:|"
+        );
+        for (const stat of Array.isArray(gateReportForReadme.nodeStats) ? gateReportForReadme.nodeStats : []) {
+            readmeLines.push(`| ${stat.node} | ${stat.candidateChecks || 0} | ${stat.reachable || 0} | ${stat.inconclusive || 0} | ${stat.timeouts || 0} | ${stat.rateLimited || 0} | ${stat.otherErrors || 0} |`);
+        }
+        if (!Array.isArray(gateReportForReadme.nodeStats) || gateReportForReadme.nodeStats.length === 0) {
+            readmeLines.push("| — | 0 | 0 | 0 | 0 | 0 | 0 |");
+        }
+    } catch {
+        // Russia Gate report is optional for older repositories/runs.
     }
 
     readmeLines.push(
