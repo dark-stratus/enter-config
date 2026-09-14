@@ -303,7 +303,7 @@ const RUSSIA_GATE_USE_CACHE =
     );
 // Bump whenever the gate semantics change so old cached verdicts cannot be
 // reused after changing providers or reachability rules.
-const RUSSIA_GATE_ALGORITHM_VERSION = Math.max(1, Number(process.env.HEALTHCHECK_RUSSIA_GATE_ALGORITHM_VERSION) || 29);
+const RUSSIA_GATE_ALGORITHM_VERSION = Math.max(1, Number(process.env.HEALTHCHECK_RUSSIA_GATE_ALGORITHM_VERSION) || 30);
 // Russia Gate is deliberately single-process. A per-shard limiter would create
 // multiple independent API streams and can trigger Check-Host 429 responses.
 const RUSSIA_GATE_SHARD_INDEX = 0;
@@ -1072,6 +1072,32 @@ async function checkHostProviderPreflight() {
                 nodes
             );
             lastProbe = probe;
+
+            const liveNodes = Array.isArray(probe?.results)
+                ? probe.results
+                    .filter(row => row?.reachable === true)
+                    .map(row => String(row.node || "").trim())
+                    .filter(Boolean)
+                : [];
+
+            // The preflight is intentionally used to select the currently
+            // healthy Russian Check-Host nodes. The main gate must not submit
+            // every candidate to a node that has already failed the control
+            // target: one unhealthy node can keep a multi-node request pending
+            // even when the required positive reachability result is available
+            // from the healthy node(s). Historical working reports used the
+            // live ru2/ru3 pair in exactly this way.
+            if (liveNodes.length >= CHECK_HOST_PREFLIGHT_QUORUM) {
+                return {
+                    ...probe,
+                    liveNodes,
+                    nodesTested: liveNodes.length,
+                    nodesReachable: liveNodes.length,
+                    quorumRequired: CHECK_HOST_PREFLIGHT_QUORUM,
+                    quorumMet: true
+                };
+            }
+
             if (probe.ok) return probe;
 
             if (!probe.rateLimited && !probe.unavailable) break;
@@ -1338,7 +1364,7 @@ async function runRussiaGateEndpointCoordinator(endpointGroups, { maxInFlight = 
     // Keep the provider-side asynchronous workset bounded. Creating hundreds of
     // Check-Host jobs up front makes the provider queue the checks itself; result
     // polling then observes many long-lived null responses. A bounded active
-    // window preserves the same 2-of-3 decision rule while preventing that
+    // window preserves the same positive-reachability decision rule while preventing that
     // provider-side backlog.
     const activeWindow = Math.max(
         maxInFlight,
@@ -4769,17 +4795,29 @@ async function main() {
 
         // Verify the checker itself before spending hundreds of checks. This
         // separates "Check-Host is unavailable/throttling" from "this target is
-        // unreachable". If the provider is down, fail the gate before any
-        // publication step; no unverified candidate is admitted.
+        // unreachable" and selects only Russian nodes that can actually reach
+        // the control target.
         const russiaPreflight = await checkHostProviderPreflight();
+        const liveRussiaNodes = Array.isArray(russiaPreflight?.liveNodes)
+            ? [...new Set(russiaPreflight.liveNodes)]
+            : [];
+
+        if (liveRussiaNodes.length < CHECK_HOST_PREFLIGHT_QUORUM) {
+            throw new Error(
+                `Check-Host Russia preflight found only ${liveRussiaNodes.length}/${ACTIVE_CHECK_HOST_RUSSIA_NODES.length} ` +
+                `usable Russian node(s); at least ${CHECK_HOST_PREFLIGHT_QUORUM} are required`
+            );
+        }
+
+        ACTIVE_CHECK_HOST_RUSSIA_NODES = liveRussiaNodes;
         console.log(
             `RUSSIA CHECKER PREFLIGHT: ${russiaPreflight.nodesReachable}/${russiaPreflight.nodesTested} ` +
-            `Russian node(s) reached the control target`
+            `usable Russian node(s); selected=${ACTIVE_CHECK_HOST_RUSSIA_NODES.join(",")}`
         );
 
         console.log(
             `RUSSIA GATE START: Check-Host=${ACTIVE_CHECK_HOST_RUSSIA_NODES.length} live Russian nodes for all non-LTE candidates; ` +
-            `strategy=single-request-2-of-3; ` +
+            `strategy=positive-reachability-on-live-nodes; ` +
             `cache=${RUSSIA_GATE_USE_CACHE ? "enabled" : "disabled"}; ` +
             `Globalping=diagnostic-only (never affects gate); ` +
             `adaptive-pacing=global-api>=${CHECK_HOST_TOTAL_MIN_INTERVAL_MS}ms; ` +
@@ -4939,9 +4977,10 @@ async function main() {
             `rate=${endpointRate.toFixed(2)}/s`
         );
 
-        // Every endpoint now uses one Check-Host request containing all three
-        // Russian nodes. The response is accepted only when the same 2-of-3
-        // quorum rule is met; unresolved provider results remain pending.
+        // Every endpoint uses one Check-Host request containing only the live
+        // Russian nodes selected by preflight. Any one definitive reachable
+        // result passes the historical positive-reachability gate; unresolved
+        // provider results remain pending.
         if (russiaGatePending > 0) {
             console.warn(
                 `RUSSIA GATE PENDING: ${russiaGatePending} candidate(s) remain unresolved ` +
