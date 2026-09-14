@@ -1219,156 +1219,44 @@ async function checkHostRussia(url, protocol, nodes = ACTIVE_CHECK_HOST_RUSSIA_N
     }
 }
 
-function buildCheckHostPairPlan(nodes, quorum = CHECK_HOST_QUORUM) {
-    const unique = [...new Set(nodes.map(value => String(value).trim()).filter(Boolean))];
-    if (unique.length < 3 || quorum !== 2) {
-        return [unique.slice(0, Math.max(1, quorum))];
-    }
-
-    // A 2-of-3 quorum is a small decision problem. Test one pair first; only
-    // request the third node if the first pair cannot decide the quorum.
-    // Every pair is explicit, so a single stuck Check-Host node cannot hold the
-    // whole endpoint open for the full 3-node polling window.
-    return [
-        [unique[0], unique[1]],
-        [unique[0], unique[2]],
-        [unique[1], unique[2]],
-    ];
-}
-
 async function checkHostRussiaQuorum(url, protocol, nodes = ACTIVE_CHECK_HOST_RUSSIA_NODES) {
-    const allNodes = [...nodes];
-    if (allNodes.length !== 3) {
-        throw new Error(`Russia gate requires exactly 3 configured Check-Host nodes; got ${allNodes.length}`);
+    const allNodes = [...new Set(nodes.map(value => String(value).trim()).filter(Boolean))];
+    if (allNodes.length !== 3 || CHECK_HOST_QUORUM !== 2) {
+        throw new Error(
+            `Russia gate requires exactly 3 configured Check-Host nodes and quorum 2/3; ` +
+            `got nodes=${allNodes.length}, quorum=${CHECK_HOST_QUORUM}`
+        );
     }
 
-    const pairPlan = buildCheckHostPairPlan(allNodes, CHECK_HOST_QUORUM);
-    const observations = new Map();
-    let lastProbe = null;
-
-    for (let pairIndex = 0; pairIndex < pairPlan.length; pairIndex += 1) {
-        const pair = pairPlan[pairIndex];
-        let probe;
-        try {
-            const request = await createCheckHostRequest(url, protocol, pair);
-            probe = await pollCheckHostRequest(request, {
-                maxPollMs: CHECK_HOST_MAX_POLL_MS,
-                gracePollMs: CHECK_HOST_GRACE_POLL_MS,
-            });
-        } catch (error) {
-            probe = {
-                provider: "check-host",
-                ok: false,
-                unavailable: true,
-                inconclusive: true,
-                transport: getTransportType(protocol),
-                checkType: getTransportType(protocol) === "udp" ? "udp" : "tcp",
-                nodesTested: pair.length,
-                nodesReachable: 0,
-                nodesInconclusive: pair.length,
-                quorumRequired: CHECK_HOST_QUORUM,
-                quorumMet: false,
-                rateLimited: Number(error?.status || 0) === 429,
-                error: error?.message || String(error),
-            };
-        }
-
-        for (const row of Array.isArray(probe?.results) ? probe.results : []) {
-            observations.set(row.node, row);
-        }
-
-        const reachable = [...observations.values()].filter(row => row.reachable).length;
-        const definitiveUnreachable = [...observations.values()].filter(
-            row => !row.reachable && !row.inconclusive
-        ).length;
-        const unresolved = allNodes.length - reachable - definitiveUnreachable;
-
-        if (reachable >= CHECK_HOST_QUORUM) {
-            return {
-                ...probe,
-                ok: true,
-                unavailable: false,
-                inconclusive: false,
-                nodesTested: allNodes.length,
-                nodesReachable: reachable,
-                nodesInconclusive: unresolved,
-                quorumRequired: CHECK_HOST_QUORUM,
-                quorumMet: true,
-                minLatencyMs: Math.min(
-                    ...[...observations.values()]
-                        .filter(row => row.reachable)
-                        .map(row => row.latencyMs)
-                ),
-                results: allNodes.map(node => observations.get(node) || {
-                    node,
-                    reachable: false,
-                    inconclusive: true,
-                    latencyMs: 0,
-                    error: "not queried because quorum was already met",
-                }),
-                pairChecks: pairIndex + 1,
-                pairPlan,
-            };
-        }
-
-        if (reachable + unresolved < CHECK_HOST_QUORUM) {
-            return {
-                ...probe,
-                ok: false,
-                unavailable: false,
-                inconclusive: false,
-                nodesTested: allNodes.length,
-                nodesReachable: reachable,
-                nodesInconclusive: unresolved,
-                quorumRequired: CHECK_HOST_QUORUM,
-                quorumMet: false,
-                minLatencyMs: reachable
-                    ? Math.min(...[...observations.values()].filter(row => row.reachable).map(row => row.latencyMs))
-                    : 0,
-                results: allNodes.map(node => observations.get(node) || {
-                    node,
-                    reachable: false,
-                    inconclusive: false,
-                    latencyMs: 0,
-                    error: "not queried because quorum became impossible",
-                }),
-                pairChecks: pairIndex + 1,
-                pairPlan,
-            };
-        }
-
-        lastProbe = probe;
-    }
-
-    const reachable = [...observations.values()].filter(row => row.reachable).length;
-    const unresolved = allNodes.length - observations.size;
-    return {
-        provider: "check-host",
-        ok: false,
-        unavailable: Boolean(lastProbe?.unavailable),
-        inconclusive: unresolved > 0,
-        transport: getTransportType(protocol),
-        checkType: getTransportType(protocol) === "udp" ? "udp" : "tcp",
-        nodesTested: allNodes.length,
-        nodesReachable: reachable,
-        nodesInconclusive: unresolved,
-        quorumRequired: CHECK_HOST_QUORUM,
-        quorumMet: false,
-        minLatencyMs: reachable
-            ? Math.min(...[...observations.values()].filter(row => row.reachable).map(row => row.latencyMs))
-            : 0,
-        rateLimited: Boolean(lastProbe?.rateLimited),
-        results: allNodes.map(node => observations.get(node) || {
-            node,
-            reachable: false,
+    // The decision rule is still exactly 2-of-3. One asynchronous Check-Host
+    // request asks all three configured Russian nodes at once, while the poller
+    // returns as soon as two nodes are definitively reachable or the quorum is
+    // mathematically impossible. This preserves the gate semantics but removes
+    // the old worst-case chain of up to three sequential pair requests per
+    // endpoint, which was the main source of the 45-minute wall-clock risk.
+    try {
+        const request = await createCheckHostRequest(url, protocol, allNodes);
+        return await pollCheckHostRequest(request, {
+            maxPollMs: CHECK_HOST_MAX_POLL_MS,
+            gracePollMs: CHECK_HOST_GRACE_POLL_MS,
+        });
+    } catch (error) {
+        return {
+            provider: "check-host",
+            ok: false,
+            unavailable: true,
             inconclusive: true,
-            latencyMs: 0,
-            error: "no definitive result",
-        }),
-        pairChecks: pairPlan.length,
-        pairPlan,
-        error: lastProbe?.error || "Check-Host quorum unresolved",
-    };
+            transport: getTransportType(protocol),
+            checkType: getTransportType(protocol) === "udp" ? "udp" : "tcp",
+            nodesTested: allNodes.length,
+            nodesReachable: 0,
+            nodesInconclusive: allNodes.length,
+            quorumRequired: CHECK_HOST_QUORUM,
+            quorumMet: false,
+            rateLimited: Number(error?.status || 0) === 429,
+            error: error?.message || String(error),
+        };
+    }
 }
 
 
@@ -4693,7 +4581,7 @@ async function main() {
 
         console.log(
             `RUSSIA GATE START: Check-Host=${ACTIVE_CHECK_HOST_RUSSIA_NODES.length} live Russian nodes for all non-LTE candidates; ` +
-            `strategy=2-of-3-pair-fallback; ` +
+            `strategy=single-request-2-of-3; ` +
             `cache=${RUSSIA_GATE_USE_CACHE ? "enabled" : "disabled"}; ` +
             `Globalping=diagnostic-only (never affects gate); ` +
             `adaptive-pacing=global-api>=${CHECK_HOST_TOTAL_MIN_INTERVAL_MS}ms; ` +
@@ -4828,9 +4716,9 @@ async function main() {
             `rate=${endpointRate.toFixed(2)}/s`
         );
 
-        // A single endpoint may use up to three explicit node-pair requests, but only
-        // when the previous pair cannot decide the 2-of-3 quorum. We never blindly
-        // replay the same request_id; every fallback pair adds a different node set.
+        // Every endpoint now uses one Check-Host request containing all three
+        // Russian nodes. The response is accepted only when the same 2-of-3
+        // quorum rule is met; unresolved provider results remain pending.
         if (russiaGatePending > 0) {
             console.warn(
                 `RUSSIA GATE PENDING: ${russiaGatePending} candidate(s) remain unresolved ` +
