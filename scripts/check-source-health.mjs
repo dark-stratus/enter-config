@@ -298,7 +298,7 @@ const RUSSIA_GATE_USE_CACHE =
     );
 // Bump whenever the gate semantics change so old cached verdicts cannot be
 // reused after changing providers or reachability rules.
-const RUSSIA_GATE_ALGORITHM_VERSION = Math.max(1, Number(process.env.HEALTHCHECK_RUSSIA_GATE_ALGORITHM_VERSION) || 22);
+const RUSSIA_GATE_ALGORITHM_VERSION = Math.max(1, Number(process.env.HEALTHCHECK_RUSSIA_GATE_ALGORITHM_VERSION) || 25);
 // Russia Gate is deliberately single-process. A per-shard limiter would create
 // multiple independent API streams and can trigger Check-Host 429 responses.
 const RUSSIA_GATE_SHARD_INDEX = 0;
@@ -1274,95 +1274,203 @@ async function checkHostRussiaQuorum(url, protocol, nodes = ACTIVE_CHECK_HOST_RU
 async function runRussiaGateEndpointCoordinator(endpointGroups, { maxInFlight = CHECK_HOST_MAX_IN_FLIGHT } = {}) {
     const startedAt = Date.now();
     const outcomes = new Map();
-    const active = new Map();
-    let cursor = 0;
+    const createdRequests = [];
+    const createFailures = [];
     let completed = 0;
-    let fatalProviderError = null;
 
-    const startOne = async (group) => {
+    const coordinatorPollRounds = Math.max(
+        2,
+        Math.min(8, Number(process.env.HEALTHCHECK_RUSSIA_COORDINATOR_POLL_ROUNDS) || 4)
+    );
+    const coordinatorInitialDelayMs = Math.max(
+        250,
+        Math.min(5000, Number(process.env.HEALTHCHECK_RUSSIA_COORDINATOR_INITIAL_DELAY_MS) || 1200)
+    );
+    const coordinatorRoundDelayMs = Math.max(
+        250,
+        Math.min(5000, Number(process.env.HEALTHCHECK_RUSSIA_COORDINATOR_ROUND_DELAY_MS) || 900)
+    );
+
+    async function runBoundedPool(items, workerLimit, fn) {
+        let cursor = 0;
+        const workerCount = Math.max(1, Math.min(workerLimit, items.length || 1));
+        const workers = Array.from({ length: workerCount }, async () => {
+            while (true) {
+                const index = cursor++;
+                if (index >= items.length) return;
+                await fn(items[index]);
+            }
+        });
+        await Promise.all(workers);
+    }
+
+    const makeTimeoutProbe = (group, errorMessage) => ({
+        required: true,
+        skipped: false,
+        gatePassed: false,
+        gatePending: true,
+        reason: errorMessage,
+        providersUnavailable: true,
+        transport: getTransportType(getProtocol(group.representative.link || "")),
+        checkHost: {
+            provider: "check-host",
+            ok: false,
+            unavailable: true,
+            inconclusive: false,
+            rateLimited: false,
+            error: errorMessage
+        },
+        checkedAt: Date.now()
+    });
+
+    // Phase 1: create exactly one Check-Host request per unique endpoint.
+    // Creating and polling are intentionally separated. The previous design
+    // held a worker through create + repeated result polling, so the global
+    // limiter could end up with a queue of result requests behind requests
+    // that had already consumed the worker's time budget. That is what caused
+    // the observed 0.28 checks/s despite maxInFlight=12.
+    await runBoundedPool(endpointGroups, maxInFlight, async group => {
         let url;
         try {
             url = new URL(String(group.representative.link || "").trim());
         } catch {
-            return {
-                group,
-                probe: {
-                    required: true,
-                    skipped: false,
-                    gatePassed: false,
-                    gatePending: false,
-                    reason: "invalid URL",
-                    checkedAt: Date.now()
-                }
-            };
+            outcomes.set(group.key, {
+                required: true,
+                skipped: false,
+                gatePassed: false,
+                gatePending: false,
+                reason: "invalid URL",
+                checkedAt: Date.now()
+            });
+            completed += 1;
+            return;
         }
 
         try {
-            const probe = await checkHostRussiaQuorum(
+            const request = await createCheckHostRequest(
                 url,
                 group.representative.protocol || getProtocol(group.representative.link || ""),
                 ACTIVE_CHECK_HOST_RUSSIA_NODES
             );
-            return {
-                group,
-                probe: await checkRussiaReachabilityFromProbe(group.representative, url, group.representative.protocol || getProtocol(group.representative.link || ""), probe)
-            };
+            createdRequests.push({ group, url, request });
         } catch (error) {
-            const probe = {
-                required: true,
-                skipped: false,
-                gatePassed: false,
-                gatePending: true,
-                reason: `Check-Host coordinator error: ${error?.message || String(error)}`,
-                providersUnavailable: true,
-                transport: getTransportType(getProtocol(group.representative.link || "")),
-                checkHost: {
-                    provider: "check-host",
-                    ok: false,
-                    unavailable: true,
-                    inconclusive: false,
-                    rateLimited: Number(error?.status || 0) === 429,
-                    error: error?.message || String(error)
-                },
-                checkedAt: Date.now()
-            };
-            return { group, probe };
-        }
-    };
-
-    // Keep only a small number of Check-Host requests outstanding at once.
-    // The API itself is asynchronous; flooding it with hundreds of request_ids
-    // merely turns result polling into provider-side queue contention.
-    while (cursor < endpointGroups.length || active.size) {
-        while (!fatalProviderError && cursor < endpointGroups.length && active.size < maxInFlight) {
-            const group = endpointGroups[cursor++];
-            const promise = startOne(group).then(result => ({ result })).catch(error => ({ error, group }));
-            active.set(group.key, promise);
-        }
-
-        if (!active.size) break;
-        const settled = await Promise.race(active.values());
-        const groupKey = settled.result?.group?.key || settled.group?.key;
-        if (groupKey) active.delete(groupKey);
-        if (settled.error) {
-            fatalProviderError = settled.error;
-        } else {
-            outcomes.set(settled.result.group.key, settled.result.probe);
+            const message = `Check-Host create failed: ${error?.message || String(error)}`;
+            outcomes.set(group.key, makeTimeoutProbe(group, message));
+            createFailures.push(group.key);
             completed += 1;
-            if (completed % 25 === 0 || completed === endpointGroups.length) {
-                const elapsed = Math.max(1, Date.now() - startedAt);
-                const rate = completed / (elapsed / 1000);
-                const remaining = Math.max(0, endpointGroups.length - completed);
-                const eta = rate > 0 ? Math.round(remaining / rate) : 0;
-                console.log(
-                    `RUSSIA COORDINATOR PROGRESS ${completed}/${endpointGroups.length}: ` +
-                    `inFlight=${active.size}; rate=${rate.toFixed(2)}/s; eta=${eta}s`
+        }
+
+        if (completed > 0 && completed % 25 === 0) {
+            const elapsed = Math.max(1, Date.now() - startedAt);
+            const rate = completed / (elapsed / 1000);
+            const remaining = Math.max(0, endpointGroups.length - completed);
+            const eta = rate > 0 ? Math.round(remaining / rate) : 0;
+            console.log(
+                `RUSSIA COORDINATOR CREATE ${completed}/${endpointGroups.length}: ` +
+                `inFlight=${maxInFlight}; rate=${rate.toFixed(2)}/s; eta=${eta}s`
+            );
+        }
+    });
+
+    let pending = [...createdRequests];
+    await sleep(coordinatorInitialDelayMs);
+
+    // Phase 2: poll in centralized rounds. A round processes each outstanding
+    // request at most once, with the same global Check-Host API scheduler and
+    // the same result timeout. A pending result simply moves to the next round;
+    // it does not occupy a worker while sleeping. This preserves the original
+    // fail-closed rule: only a definitive 2-of-3 quorum passes; unresolved
+    // provider results remain pending and never enter publication.
+    for (let round = 0; round < coordinatorPollRounds && pending.length; round += 1) {
+        const current = pending;
+        const nextPending = [];
+
+        await runBoundedPool(current, maxInFlight, async entry => {
+            try {
+                const payload = await scheduleCheckHostApiRequest(
+                    () => requestJson(
+                        `${CHECK_HOST_API_BASE}/check-result/${encodeURIComponent(entry.request.requestId)}`,
+                        { headers: { "user-agent": "enter-config-russia-health/1.0" } },
+                        CHECK_HOST_RESULT_TIMEOUT_MS
+                    ),
+                    "result"
                 );
+
+                const evaluation = evaluateCheckHostPayload(
+                    payload,
+                    entry.request.transport,
+                    entry.request.nodes
+                );
+
+                if (evaluation.done) {
+                    const probe = await checkRussiaReachabilityFromProbe(
+                        entry.group.representative,
+                        entry.url,
+                        entry.group.representative.protocol || getProtocol(entry.group.representative.link || ""),
+                        evaluation.result
+                    );
+                    outcomes.set(entry.group.key, probe);
+                    completed += 1;
+                } else {
+                    nextPending.push(entry);
+                }
+            } catch (error) {
+                const status = Number(error?.status || 0);
+                const transient =
+                    status === 429 || status === 408 || status >= 500 ||
+                    /aborted|timeout|timed out|fetch failed/i.test(String(error?.message || ""));
+
+                // Keep transient provider failures pending for the next round.
+                // Non-transient failures are terminal for this endpoint.
+                if (transient && round + 1 < coordinatorPollRounds) {
+                    nextPending.push(entry);
+                } else {
+                    const message = `Check-Host result failed: ${error?.message || String(error)}`;
+                    const probe = makeTimeoutProbe(entry.group, message);
+                    probe.checkHost.rateLimited = status === 429;
+                    outcomes.set(entry.group.key, probe);
+                    completed += 1;
+                }
             }
+        });
+
+        pending = nextPending;
+
+        const elapsed = Math.max(1, Date.now() - startedAt);
+        const rate = completed / (elapsed / 1000);
+        const remaining = Math.max(0, endpointGroups.length - completed);
+        const eta = rate > 0 ? Math.round(remaining / rate) : 0;
+        console.log(
+            `RUSSIA COORDINATOR POLL ROUND ${round + 1}/${coordinatorPollRounds}: ` +
+            `resolved=${completed}/${endpointGroups.length}; pending=${pending.length}; ` +
+            `created=${createdRequests.length}; rate=${rate.toFixed(2)}/s; eta=${eta}s`
+        );
+
+        if (pending.length && round + 1 < coordinatorPollRounds) {
+            await sleep(coordinatorRoundDelayMs);
         }
     }
 
-    return { outcomes, elapsedMs: Date.now() - startedAt, fatalProviderError };
+    // Any request that is still pending after all bounded rounds is explicitly
+    // unresolved. This is equivalent to the previous fail-closed timeout path,
+    // but now the timeout is applied to the centralized polling budget rather
+    // than to a worker-local sequence of queued API calls.
+    for (const entry of pending) {
+        outcomes.set(
+            entry.group.key,
+            makeTimeoutProbe(entry.group, `Check-Host polling unresolved after ${coordinatorPollRounds} centralized rounds`)
+        );
+        completed += 1;
+    }
+
+    return {
+        outcomes,
+        elapsedMs: Date.now() - startedAt,
+        fatalProviderError: null,
+        createdRequests: createdRequests.length,
+        createFailures: createFailures.length,
+        unresolved: pending.length,
+    };
 }
 
 async function checkRussiaReachabilityFromProbe(item, url, protocol, checkHost) {
