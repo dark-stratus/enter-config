@@ -203,6 +203,10 @@ const RUSSIA_GATE_FILE =
     process.env.RUSSIA_GATE_FILE ||
     path.join(ROOT, "config", "source-russia-gate.json");
 
+const RUSSIA_GATE_DIAGNOSTICS_FILE =
+    process.env.RUSSIA_GATE_DIAGNOSTICS_FILE ||
+    path.join(ROOT, "russia-gate-diagnostics.json");
+
 const UPDATE_STATUS_FILE =
     path.join(ROOT, "config", "source-update-status.json");
 
@@ -299,7 +303,7 @@ const RUSSIA_GATE_USE_CACHE =
     );
 // Bump whenever the gate semantics change so old cached verdicts cannot be
 // reused after changing providers or reachability rules.
-const RUSSIA_GATE_ALGORITHM_VERSION = Math.max(1, Number(process.env.HEALTHCHECK_RUSSIA_GATE_ALGORITHM_VERSION) || 28);
+const RUSSIA_GATE_ALGORITHM_VERSION = Math.max(1, Number(process.env.HEALTHCHECK_RUSSIA_GATE_ALGORITHM_VERSION) || 29);
 // Russia Gate is deliberately single-process. A per-shard limiter would create
 // multiple independent API streams and can trigger Check-Host 429 responses.
 const RUSSIA_GATE_SHARD_INDEX = 0;
@@ -879,35 +883,52 @@ const checkHostRateTelemetry = {
     requestTimeouts: 0,
     otherErrors: 0,
     maxIntervalMs: CHECK_HOST_TOTAL_MIN_INTERVAL_MS,
+    events: [],
 };
 
+const CHECK_HOST_RATE_EVENT_LIMIT = 250;
+
+let checkHostRateQueueTail = Promise.resolve();
+
 async function scheduleCheckHostApiRequest(fn, kind = "result") {
-    // Check-Host rate-limits the API from the runner's public IP, so create and
-    // result calls must share ONE global budget. Separate per-kind limiters can
-    // silently add their rates (e.g. 350 ms creates + 200 ms results) and
-    // overload the provider even though each individual limiter looks safe.
+    // Check-Host exposes one API budget to the runner. The previous scheduler
+    // reserved future slots before requests actually started. That meant that
+    // after a 429 increased interval/cooldown, already-reserved old slots kept
+    // firing at the old rate and created a burst of additional 429s.
+    //
+    // Serialize admission to the global queue instead: a caller receives its
+    // slot only after the previous call has finished, and the current interval
+    // is therefore always the interval that was actually in force.
+    let releaseQueueTurn;
+    const queueTurn = new Promise(resolve => {
+        releaseQueueTurn = resolve;
+    });
+    const previous = checkHostRateQueueTail;
+    checkHostRateQueueTail = previous.then(() => queueTurn, () => queueTurn);
+    await previous.catch(() => {});
+
     const state = checkHostRateState;
+    const queuedAt = Date.now();
+    let startedAt = 0;
 
-    while (true) {
-        const now = Date.now();
-        const slot = Math.max(now, state.nextAt, state.cooldownUntil);
-        state.nextAt = slot + state.intervalMs;
-
-        const waitMs = slot - now;
-        if (waitMs > 0) await sleep(waitMs);
+    try {
+        const waitUntil = Math.max(Date.now(), state.nextAt, state.cooldownUntil);
+        if (waitUntil > Date.now()) {
+            await sleep(waitUntil - Date.now());
+        }
 
         const cooldownWait = state.cooldownUntil - Date.now();
-        if (cooldownWait > 0) {
-            await sleep(cooldownWait);
-            continue;
-        }
+        if (cooldownWait > 0) await sleep(cooldownWait);
+
+        // Only now reserve the next slot, immediately before starting the API
+        // call. This prevents stale pre-reserved slots after adaptive backoff.
+        startedAt = Date.now();
+        state.nextAt = startedAt + state.intervalMs;
 
         try {
             checkHostRateTelemetry.calls += 1;
             const result = await checkHostHttpLimiter(fn);
 
-            // Recover slowly after successful calls, never faster than the
-            // configured global floor.
             state.intervalMs = Math.max(
                 state.minIntervalMs,
                 Math.round(state.intervalMs * 0.96)
@@ -915,12 +936,17 @@ async function scheduleCheckHostApiRequest(fn, kind = "result") {
             return result;
         } catch (error) {
             const status = Number(error?.status || 0);
+            const message = String(error?.message || "");
             if (status === 429) checkHostRateTelemetry.rateLimited429 += 1;
             else if (status >= 500) checkHostRateTelemetry.serverErrors5xx += 1;
-            else if (/aborted|timeout|timed out/i.test(String(error?.message || ""))) checkHostRateTelemetry.requestTimeouts += 1;
+            else if (/aborted|timeout|timed out/i.test(message)) checkHostRateTelemetry.requestTimeouts += 1;
             else checkHostRateTelemetry.otherErrors += 1;
+
+            const beforeIntervalMs = state.intervalMs;
+            let retryAfterMs = null;
             if (status === 429 || status >= 500) {
-                const retryAfterMs = Number(error?.retryAfterMs);
+                const parsedRetryAfter = Number(error?.retryAfterMs);
+                retryAfterMs = Number.isFinite(parsedRetryAfter) ? parsedRetryAfter : null;
                 const multiplier = status === 429 ? 2.0 : 1.5;
 
                 state.intervalMs = Math.min(
@@ -940,14 +966,29 @@ async function scheduleCheckHostApiRequest(fn, kind = "result") {
                     ? Math.max(baseCooldownMs, retryAfterMs)
                     : baseCooldownMs;
 
-                state.cooldownUntil = Math.max(
-                    state.cooldownUntil,
-                    Date.now() + Math.min(12000, cooldownMs)
-                );
+                state.cooldownUntil = Date.now() + Math.min(12000, cooldownMs);
                 state.nextAt = Math.max(state.nextAt, state.cooldownUntil);
             }
+
+            if (checkHostRateTelemetry.events.length < CHECK_HOST_RATE_EVENT_LIMIT) {
+                checkHostRateTelemetry.events.push({
+                    kind,
+                    status,
+                    beforeIntervalMs,
+                    afterIntervalMs: state.intervalMs,
+                    retryAfterMs,
+                    cooldownMs: state.cooldownUntil > Date.now()
+                        ? state.cooldownUntil - Date.now()
+                        : 0,
+                    queueWaitMs: startedAt && queuedAt ? Math.max(0, startedAt - queuedAt) : 0,
+                    timestamp: new Date().toISOString(),
+                });
+            }
+
             throw error;
         }
+    } finally {
+        releaseQueueTurn();
     }
 }
 
@@ -1291,6 +1332,7 @@ async function runRussiaGateEndpointCoordinator(endpointGroups, { maxInFlight = 
     const startedAt = Date.now();
     const outcomes = new Map();
     const createFailures = [];
+    const diagnosticPendingRequests = [];
     let completed = 0;
 
     // Keep the provider-side asynchronous workset bounded. Creating hundreds of
@@ -1461,6 +1503,14 @@ async function runRussiaGateEndpointCoordinator(endpointGroups, { maxInFlight = 
         }
 
         for (const entry of pending) {
+            diagnosticPendingRequests.push({
+                endpointKey: entry.group.key,
+                requestId: entry.request.requestId,
+                transport: entry.request.transport,
+                checkType: entry.request.checkType,
+                batchStart: batchStart + 1,
+                batchEnd: Math.min(batchStart + activeWindow, endpointGroups.length),
+            });
             outcomes.set(
                 entry.group.key,
                 makeTimeoutProbe(
@@ -1489,6 +1539,16 @@ async function runRussiaGateEndpointCoordinator(endpointGroups, { maxInFlight = 
         createdRequests: endpointGroups.length - createFailures.length,
         createFailures: createFailures.length,
         unresolved: [...outcomes.values()].filter(value => value?.gatePending).length,
+        rateTelemetry: {
+            calls: checkHostRateTelemetry.calls,
+            rateLimited429: checkHostRateTelemetry.rateLimited429,
+            serverErrors5xx: checkHostRateTelemetry.serverErrors5xx,
+            requestTimeouts: checkHostRateTelemetry.requestTimeouts,
+            otherErrors: checkHostRateTelemetry.otherErrors,
+            maxIntervalMs: checkHostRateTelemetry.maxIntervalMs,
+            events: checkHostRateTelemetry.events,
+        },
+        pendingRequests: diagnosticPendingRequests,
     };
 }
 
@@ -4815,6 +4875,31 @@ async function main() {
         const coordinator = await runRussiaGateEndpointCoordinator(
             freshEndpointGroups,
             { maxInFlight: CHECK_HOST_MAX_IN_FLIGHT }
+        );
+
+        const russiaGateDiagnostics = {
+            generatedAt: new Date().toISOString(),
+            algorithmVersion: RUSSIA_GATE_ALGORITHM_VERSION,
+            configuredNodes: ACTIVE_CHECK_HOST_RUSSIA_NODES,
+            candidateCount: requiredRussiaItems.length,
+            uniqueEndpointChecks: russiaEndpointGroups.length,
+            dedupeSaved: Math.max(0, requiredRussiaItems.length - russiaEndpointGroups.length),
+            positiveReachabilityRequired: CHECK_HOST_GATE_QUORUM,
+            activeWindow: Number(process.env.HEALTHCHECK_RUSSIA_ACTIVE_WINDOW) || 64,
+            maxInFlight: CHECK_HOST_MAX_IN_FLIGHT,
+            coordinator: {
+                elapsedMs: coordinator.elapsedMs,
+                createdRequests: coordinator.createdRequests,
+                createFailures: coordinator.createFailures,
+                unresolved: coordinator.unresolved,
+                pendingRequests: coordinator.pendingRequests,
+            },
+            rateTelemetry: coordinator.rateTelemetry,
+        };
+        await fs.writeFile(
+            RUSSIA_GATE_DIAGNOSTICS_FILE,
+            `${JSON.stringify(russiaGateDiagnostics, null, 2)}\n`,
+            "utf8"
         );
 
         for (const group of freshEndpointGroups) {
