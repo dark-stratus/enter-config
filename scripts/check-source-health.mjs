@@ -255,7 +255,8 @@ const CHECK_HOST_RESULT_TIMEOUT_MS = Math.max(
 const CHECK_HOST_POLL_MS = Math.max(250, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_POLL_MS) || 700);
 const CHECK_HOST_MAX_POLL_MS = Math.max(CHECK_HOST_POLL_MS, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_MAX_POLL_MS) || 5000);
 const CHECK_HOST_GRACE_POLL_MS = Math.max(0, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_GRACE_POLL_MS) || 1000);
-const CHECK_HOST_QUORUM = Math.max(1, Math.min(3, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_QUORUM) || 2));
+const CHECK_HOST_GATE_QUORUM = 1;
+const CHECK_HOST_PREFLIGHT_QUORUM = 2;
 // Check-Host is asynchronous: creating a request and fetching its result are
 // separate API operations. Both operations share one global adaptive budget because
 // the provider rate-limits the runner as a whole. A bounded worker pool prevents
@@ -298,7 +299,7 @@ const RUSSIA_GATE_USE_CACHE =
     );
 // Bump whenever the gate semantics change so old cached verdicts cannot be
 // reused after changing providers or reachability rules.
-const RUSSIA_GATE_ALGORITHM_VERSION = Math.max(1, Number(process.env.HEALTHCHECK_RUSSIA_GATE_ALGORITHM_VERSION) || 27);
+const RUSSIA_GATE_ALGORITHM_VERSION = Math.max(1, Number(process.env.HEALTHCHECK_RUSSIA_GATE_ALGORITHM_VERSION) || 28);
 // Russia Gate is deliberately single-process. A per-shard limiter would create
 // multiple independent API streams and can trigger Check-Host 429 responses.
 const RUSSIA_GATE_SHARD_INDEX = 0;
@@ -1108,7 +1109,7 @@ function evaluateCheckHostPayload(payload, transport, nodes) {
     const parsed = nodes.map(node => parseCheckHostNode(payload?.[node] ?? null, node, transport));
     const reachable = parsed.filter(x => x.reachable);
     const unresolved = parsed.filter(x => x.inconclusive);
-    const requiredReachable = CHECK_HOST_QUORUM;
+    const requiredReachable = CHECK_HOST_GATE_QUORUM;
 
     if (reachable.length >= requiredReachable) {
         return {
@@ -1250,19 +1251,16 @@ async function checkHostRussia(url, protocol, nodes = ACTIVE_CHECK_HOST_RUSSIA_N
 
 async function checkHostRussiaQuorum(url, protocol, nodes = ACTIVE_CHECK_HOST_RUSSIA_NODES) {
     const allNodes = [...new Set(nodes.map(value => String(value).trim()).filter(Boolean))];
-    if (allNodes.length !== 3 || CHECK_HOST_QUORUM !== 2) {
+    if (allNodes.length !== 3 || CHECK_HOST_PREFLIGHT_QUORUM !== 2) {
         throw new Error(
             `Russia gate requires exactly 3 configured Check-Host nodes and quorum 2/3; ` +
-            `got nodes=${allNodes.length}, quorum=${CHECK_HOST_QUORUM}`
+            `got nodes=${allNodes.length}, quorum=${CHECK_HOST_PREFLIGHT_QUORUM}`
         );
     }
 
-    // The decision rule is still exactly 2-of-3. One asynchronous Check-Host
-    // request asks all three configured Russian nodes at once, while the poller
-    // returns as soon as two nodes are definitively reachable or the quorum is
-    // mathematically impossible. This preserves the gate semantics but removes
-    // the old worst-case chain of up to three sequential pair requests per
-    // endpoint, which was the main source of the 45-minute wall-clock risk.
+    // Preflight sanity check only: require 2 of the 3 configured Russian nodes.
+    // The publication gate itself uses the historical positive-reachability rule
+    // below: any one definitive reachable result is sufficient to PASS.
     try {
         const request = await createCheckHostRequest(url, protocol, allNodes);
         return await pollCheckHostRequest(request, {
@@ -1280,7 +1278,7 @@ async function checkHostRussiaQuorum(url, protocol, nodes = ACTIVE_CHECK_HOST_RU
             nodesTested: allNodes.length,
             nodesReachable: 0,
             nodesInconclusive: allNodes.length,
-            quorumRequired: CHECK_HOST_QUORUM,
+            quorumRequired: CHECK_HOST_PREFLIGHT_QUORUM,
             quorumMet: false,
             rateLimited: Number(error?.status || 0) === 429,
             error: error?.message || String(error),
@@ -1302,19 +1300,19 @@ async function runRussiaGateEndpointCoordinator(endpointGroups, { maxInFlight = 
     // provider-side backlog.
     const activeWindow = Math.max(
         maxInFlight,
-        Math.min(64, Number(process.env.HEALTHCHECK_RUSSIA_ACTIVE_WINDOW) || 32)
+        Math.min(64, Number(process.env.HEALTHCHECK_RUSSIA_ACTIVE_WINDOW) || 64)
     );
     const coordinatorPollRounds = Math.max(
         2,
-        Math.min(12, Number(process.env.HEALTHCHECK_RUSSIA_COORDINATOR_POLL_ROUNDS) || 12)
+        Math.min(8, Number(process.env.HEALTHCHECK_RUSSIA_COORDINATOR_POLL_ROUNDS) || 8)
     );
     const coordinatorInitialDelayMs = Math.max(
         250,
-        Math.min(5000, Number(process.env.HEALTHCHECK_RUSSIA_COORDINATOR_INITIAL_DELAY_MS) || 1200)
+        Math.min(5000, Number(process.env.HEALTHCHECK_RUSSIA_COORDINATOR_INITIAL_DELAY_MS) || 1000)
     );
     const coordinatorRoundDelayMs = Math.max(
         250,
-        Math.min(5000, Number(process.env.HEALTHCHECK_RUSSIA_COORDINATOR_ROUND_DELAY_MS) || 900)
+        Math.min(5000, Number(process.env.HEALTHCHECK_RUSSIA_COORDINATOR_ROUND_DELAY_MS) || 700)
     );
 
     async function runBoundedPool(items, workerLimit, fn) {
@@ -4773,7 +4771,7 @@ async function main() {
             `RUSSIA GATE WORKSET: candidates=${requiredRussiaItems.length}; ` +
             `uniqueEndpointChecks=${russiaEndpointGroups.length}; ` +
             `dedupeSaved=${Math.max(0, requiredRussiaItems.length - russiaEndpointGroups.length)}; ` +
-            `endpointQuorum=2/3`
+            `positiveReachability=1/3`
         );
 
         const freshEndpointGroups = [];
@@ -4862,7 +4860,7 @@ async function main() {
         if (russiaGatePending > 0) {
             console.warn(
                 `RUSSIA GATE PENDING: ${russiaGatePending} candidate(s) remain unresolved ` +
-                `after all bounded node-pair checks.`
+                `after all bounded Check-Host polling.`
             );
         }
 
