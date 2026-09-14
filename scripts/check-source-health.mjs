@@ -4784,6 +4784,13 @@ async function main() {
     // then the full gate is persisted for the next job. The normal health mode
     // only consumes that immutable gate output and never calls Check-Host again.
     const russiaProbeByFingerprint = new Map();
+    // These counters are also consumed by the normal heavy-health mode below.
+    // Keep them in the main function scope so an russia-gate run can populate
+    // them and a subsequent health run can report/consume the persisted gate.
+    let russiaGateChecked = 0;
+    let russiaGatePassed = 0;
+    let russiaGateFailures = 0;
+    let russiaGatePending = 0;
 
     const cachedRussiaGate =
         persistentState?.russiaGate && typeof persistentState.russiaGate === "object"
@@ -4841,10 +4848,6 @@ async function main() {
         const russiaGateStartedAt = Date.now();
         let russiaFreshEndpointChecks = 0;
         let russiaCacheHits = 0;
-        let russiaGateChecked = 0;
-        let russiaGatePassed = 0;
-        let russiaGateFailures = 0;
-        let russiaGatePending = 0;
         let russiaCheckHostUnavailable = 0;
         let russiaCheckHostRateLimited = 0;
 
