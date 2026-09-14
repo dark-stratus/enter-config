@@ -4000,7 +4000,15 @@ function selectFeaturedGamingServers(
                 return resultSpeed(b) - resultSpeed(a);
             });
 
-            const primary = sorted.find(item => Number(item.gaming?.tier) === 1);
+            // A Gaming country may be represented by either a strict Tier-1
+            // server or a Tier-2 backup when no Tier-1 candidate exists.
+            // This keeps the requested Gaming location count achievable without
+            // relaxing the underlying Gaming quality/latency tiers: Tier-2
+            // candidates remain explicitly marked as backup-tier Gaming nodes.
+            const primary = sorted.find(item =>
+                Number(item.gaming?.tier) === 1 ||
+                Number(item.gaming?.tier) === 2
+            );
             if (!primary) return null;
 
             const backup = sorted.find(item =>
@@ -4035,9 +4043,14 @@ function applyFeaturedRegularBadges(indexEntries, healthResults, featuredTargets
     );
     const fast = selectFeaturedFastServers(healthResults, targets.fast);
     const fastFingerprints = new Set(fast.map(item => item.linkFingerprint));
+    // Fast and Gaming are separate feature locations. A country already
+    // represented by Fast may also host a distinct Gaming winner; excluding
+    // Fast countries made Gaming impossible whenever only the Fast countries
+    // had strict Gaming Tier-1 candidates. The selected servers remain
+    // fingerprint-distinct and are published as separate Gaming balancers.
     const gaming = selectFeaturedGamingServers(
         healthResults,
-        new Set(fast.map(item => item.country)),
+        new Set(),
         targets.gaming
     );
     const gamingFingerprints = new Set(gaming.map(item => item.linkFingerprint));
@@ -5184,8 +5197,12 @@ async function main() {
     const selectedCountries =
         buildCountryHealthPool(healthResults, false);
 
+    // Europe is a permanent visible location but is not part of
+    // selectedCountries. Include it in the featured-location target so the
+    // configured 15 visible locations (14 country locations + Europe) produce
+    // the intended 3 Fast + 3 Gaming feature slots.
     const featuredTargets = calculateFeaturedTargetCounts(
-        selectedCountries.length
+        selectedCountries.length + 1
     );
 
     console.log(
@@ -5197,6 +5214,11 @@ async function main() {
         managedItems,
         healthResults,
         featuredTargets
+    );
+    const featuredById = new Map(
+        managedItems
+            .filter(item => item && MANAGED_REGULAR_RE.test(String(item.id || "")))
+            .map(item => [String(item.id), item])
     );
     const featuredFastCountries = new Set(featured.fast.map(item => item.country));
     const featuredFastIds = new Set(featured.fast.map(item => item.id));
@@ -5333,10 +5355,26 @@ async function main() {
                         )
                 )
                 .map(
-                    item => [
-                        item.id,
-                        item
-                    ]
+                    item => {
+                        const featuredItem = featuredById.get(String(item.id));
+                        if (!featuredItem) return [item.id, item];
+
+                        return [
+                            item.id,
+                            {
+                                ...item,
+                                ...(featuredItem.featured
+                                    ? { featured: featuredItem.featured }
+                                    : {}),
+                                ...(Number.isFinite(Number(featuredItem.featuredRank))
+                                    ? { featuredRank: Number(featuredItem.featuredRank) }
+                                    : {}),
+                                ...(featuredItem.featured === 'fast' && featuredItem.remarks
+                                    ? { remarks: featuredItem.remarks }
+                                    : {})
+                            }
+                        ];
+                    }
                 )
         );
 
