@@ -259,7 +259,7 @@ const CHECK_HOST_RESULT_TIMEOUT_MS = Math.max(
 const CHECK_HOST_POLL_MS = Math.max(250, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_POLL_MS) || 700);
 const CHECK_HOST_MAX_POLL_MS = Math.max(CHECK_HOST_POLL_MS, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_MAX_POLL_MS) || 5000);
 const CHECK_HOST_GRACE_POLL_MS = Math.max(0, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_GRACE_POLL_MS) || 1000);
-const CHECK_HOST_GATE_QUORUM = 1;
+const CHECK_HOST_GATE_QUORUM = Math.max(1, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_QUORUM) || 2);
 const CHECK_HOST_PREFLIGHT_QUORUM = 2;
 // Check-Host is asynchronous: creating a request and fetching its result are
 // separate API operations. Both operations share one global adaptive budget because
@@ -1088,13 +1088,43 @@ async function checkHostProviderPreflight() {
             // from the healthy node(s). Historical working reports used the
             // live ru2/ru3 pair in exactly this way.
             if (liveNodes.length >= CHECK_HOST_PREFLIGHT_QUORUM) {
+                const nodeCity = new Map([
+                    ["ru1.node.check-host.net", "Moscow"],
+                    ["ru2.node.check-host.net", "Moscow"],
+                    ["ru3.node.check-host.net", "Saint Petersburg"],
+                ]);
+                const diverseLiveNodes = liveNodes.filter((node) => nodeCity.has(node));
+                const selectedLiveNodes = diverseLiveNodes
+                    .filter((node) => node === "ru3.node.check-host.net")
+                    .concat(
+                        ["ru2.node.check-host.net", "ru1.node.check-host.net"]
+                            .filter((node) => diverseLiveNodes.includes(node))
+                            .slice(0, 1)
+                    );
+
+                if (selectedLiveNodes.length >= CHECK_HOST_PREFLIGHT_QUORUM) {
+                    const selected = selectedLiveNodes.slice(0, CHECK_HOST_PREFLIGHT_QUORUM);
+                    return {
+                        ...probe,
+                        liveNodes,
+                        selectedLiveNodes: selected,
+                        nodesTested: liveNodes.length,
+                        nodesReachable: liveNodes.length,
+                        quorumRequired: CHECK_HOST_PREFLIGHT_QUORUM,
+                        quorumMet: true
+                    };
+                }
+
                 return {
                     ...probe,
                     liveNodes,
+                    selectedLiveNodes: [],
                     nodesTested: liveNodes.length,
                     nodesReachable: liveNodes.length,
                     quorumRequired: CHECK_HOST_PREFLIGHT_QUORUM,
-                    quorumMet: true
+                    quorumMet: false,
+                    diverseLocationQuorumMet: false,
+                    error: "fewer than two live Russian Check-Host nodes are available from distinct configured cities"
                 };
             }
 
@@ -4818,14 +4848,14 @@ async function main() {
         // unreachable" and selects only Russian nodes that can actually reach
         // the control target.
         const russiaPreflight = await checkHostProviderPreflight();
-        const liveRussiaNodes = Array.isArray(russiaPreflight?.liveNodes)
-            ? [...new Set(russiaPreflight.liveNodes)]
+        const liveRussiaNodes = Array.isArray(russiaPreflight?.selectedLiveNodes)
+            ? [...new Set(russiaPreflight.selectedLiveNodes)]
             : [];
 
         if (liveRussiaNodes.length < CHECK_HOST_PREFLIGHT_QUORUM) {
             throw new Error(
-                `Check-Host Russia preflight found only ${liveRussiaNodes.length}/${ACTIVE_CHECK_HOST_RUSSIA_NODES.length} ` +
-                `usable Russian node(s); at least ${CHECK_HOST_PREFLIGHT_QUORUM} are required`
+                `Check-Host Russia preflight found fewer than ${CHECK_HOST_PREFLIGHT_QUORUM} ` +
+                `usable Russian node(s) in distinct configured cities; live=${(russiaPreflight?.liveNodes || []).join(",") || "none"}`
             );
         }
 
@@ -4885,7 +4915,7 @@ async function main() {
             `RUSSIA GATE WORKSET: candidates=${requiredRussiaItems.length}; ` +
             `uniqueEndpointChecks=${russiaEndpointGroups.length}; ` +
             `dedupeSaved=${Math.max(0, requiredRussiaItems.length - russiaEndpointGroups.length)}; ` +
-            `positiveReachability=1/3`
+            `positiveReachability=${CHECK_HOST_GATE_QUORUM}/${ACTIVE_CHECK_HOST_RUSSIA_NODES.length}`
         );
 
         const freshEndpointGroups = [];
@@ -4993,10 +5023,10 @@ async function main() {
             `rate=${endpointRate.toFixed(2)}/s`
         );
 
-        // Every endpoint uses one Check-Host request containing only the live
-        // Russian nodes selected by preflight. Any one definitive reachable
-        // result passes the historical positive-reachability gate; unresolved
-        // provider results remain pending.
+        // Every endpoint uses one Check-Host request containing exactly the two
+        // geographically distinct Russian nodes selected by preflight. Both
+        // definitive reachable results are required for publication; unresolved
+        // or failed results remain non-publishable.
         if (russiaGatePending > 0) {
             console.warn(
                 `RUSSIA GATE PENDING: ${russiaGatePending} candidate(s) remain unresolved ` +
