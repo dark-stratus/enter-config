@@ -241,9 +241,20 @@ const CHECK_HOST_RUSSIA_NODES = String(
 ).split(/[,\r\n;]+/).map(v => v.trim()).filter(Boolean);
 let ACTIVE_CHECK_HOST_RUSSIA_NODES = [...CHECK_HOST_RUSSIA_NODES];
 const CHECK_HOST_TIMEOUT_MS = Math.max(5000, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_TIMEOUT_MS) || 12000);
+// Check-Host creation and result retrieval have very different latency profiles.
+// A slow /check-result request must never occupy a worker for the full create timeout,
+// otherwise a small pool of stuck result calls can collapse the coordinator throughput.
+const CHECK_HOST_CREATE_TIMEOUT_MS = Math.max(
+    4000,
+    Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_CREATE_TIMEOUT_MS) || 8000
+);
+const CHECK_HOST_RESULT_TIMEOUT_MS = Math.max(
+    1500,
+    Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_RESULT_TIMEOUT_MS) || 2500
+);
 const CHECK_HOST_POLL_MS = Math.max(250, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_POLL_MS) || 700);
-const CHECK_HOST_MAX_POLL_MS = Math.max(CHECK_HOST_POLL_MS, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_MAX_POLL_MS) || 12000);
-const CHECK_HOST_GRACE_POLL_MS = Math.max(0, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_GRACE_POLL_MS) || 3000);
+const CHECK_HOST_MAX_POLL_MS = Math.max(CHECK_HOST_POLL_MS, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_MAX_POLL_MS) || 5000);
+const CHECK_HOST_GRACE_POLL_MS = Math.max(0, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_GRACE_POLL_MS) || 1000);
 const CHECK_HOST_QUORUM = Math.max(1, Math.min(3, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_QUORUM) || 2));
 // Check-Host is asynchronous: creating a request and fetching its result are
 // separate API operations. Both operations share one global adaptive budget because
@@ -1051,7 +1062,7 @@ async function createCheckHostRequest(url, protocol, nodes) {
                 () => requestJson(
                     createUrl,
                     { headers: { "user-agent": "enter-config-russia-health/1.0" } },
-                    CHECK_HOST_TIMEOUT_MS
+                    CHECK_HOST_CREATE_TIMEOUT_MS
                 ),
                 "create"
             );
@@ -1149,7 +1160,7 @@ async function pollCheckHostRequest(request, options = {}) {
                 () => requestJson(
                     `${CHECK_HOST_API_BASE}/check-result/${encodeURIComponent(request.requestId)}`,
                     { headers: { "user-agent": "enter-config-russia-health/1.0" } },
-                    CHECK_HOST_TIMEOUT_MS
+                    CHECK_HOST_RESULT_TIMEOUT_MS
                 ),
                 "result"
             );
