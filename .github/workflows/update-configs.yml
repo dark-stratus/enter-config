@@ -559,7 +559,7 @@ jobs:
           HEALTHCHECK_RUSSIA_GATE_USE_CACHE: 0
           HEALTHCHECK_RUSSIA_GATE_STATE_MAX_AGE_MS: 21600000
           HEALTH_CANDIDATES_FILE: ${{ github.workspace }}/config/source-health-candidates.json
-          HEALTHCHECK_RUSSIA_GATE_ALGORITHM_VERSION: 24
+          HEALTHCHECK_RUSSIA_GATE_ALGORITHM_VERSION: 25
         run: |
           set -euo pipefail
           node scripts/check-source-health.mjs
