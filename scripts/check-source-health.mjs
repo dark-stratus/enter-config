@@ -298,7 +298,7 @@ const RUSSIA_GATE_USE_CACHE =
     );
 // Bump whenever the gate semantics change so old cached verdicts cannot be
 // reused after changing providers or reachability rules.
-const RUSSIA_GATE_ALGORITHM_VERSION = Math.max(1, Number(process.env.HEALTHCHECK_RUSSIA_GATE_ALGORITHM_VERSION) || 26);
+const RUSSIA_GATE_ALGORITHM_VERSION = Math.max(1, Number(process.env.HEALTHCHECK_RUSSIA_GATE_ALGORITHM_VERSION) || 27);
 // Russia Gate is deliberately single-process. A per-shard limiter would create
 // multiple independent API streams and can trigger Check-Host 429 responses.
 const RUSSIA_GATE_SHARD_INDEX = 0;
@@ -1306,7 +1306,7 @@ async function runRussiaGateEndpointCoordinator(endpointGroups, { maxInFlight = 
     );
     const coordinatorPollRounds = Math.max(
         2,
-        Math.min(6, Number(process.env.HEALTHCHECK_RUSSIA_COORDINATOR_POLL_ROUNDS) || 4)
+        Math.min(12, Number(process.env.HEALTHCHECK_RUSSIA_COORDINATOR_POLL_ROUNDS) || 12)
     );
     const coordinatorInitialDelayMs = Math.max(
         250,
