@@ -513,7 +513,7 @@ const FEATURED_COUNTRY_ORDER = [
     "Germany",
     "Sweden",
     "Finland",
-    "Russia",
+    "Estonia",
     "Poland",
 ];
 const FEATURED_COUNTRIES = new Set(FEATURED_COUNTRY_ORDER.map(country => country.toLowerCase()));
