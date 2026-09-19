@@ -1,6 +1,6 @@
 # Russia checker experiment v3
 
-Generated: 2026-09-19T18:50:45.924Z
+Generated: 2026-09-19T19:38:09.344Z
 Scope: lte
 Core Check-Host nodes: ru1.node.check-host.net, ru2.node.check-host.net, ru3.node.check-host.net
 TCP strong threshold: 2/3; TCP minimum threshold: 1/3; non-pass TCP recheck: enabled; exact-link Xray: enabled
@@ -12,9 +12,9 @@ TCP strong threshold: 2/3; TCP minimum threshold: 1/3; non-pass TCP recheck: ena
 Candidates: **164**
 Protocols: **vless=152**, **hysteria2=12**
 Unique endpoints: **65**
-Verdicts: **PASS=52**, **FAIL=3**, **UNKNOWN=4**, **PASS-PARTIAL=1**, **PASS-UDP-STRONG=5**
-HAPP-ready transport links: **155**
-Exact-link Xray: **PASS-XRAY=36**, **FAIL-XRAY=119**
+Verdicts: **PASS=52**, **UNKNOWN=4**, **FAIL=3**, **PASS-PARTIAL=1**, **PASS-UDP-STRONG=5**
+HAPP-ready transport links: **150**
+Exact-link Xray: **PASS-XRAY=43**, **FAIL-XRAY=121**
 Copy all transport candidates: [locations-lte.txt](./locations-lte.txt)
 Exact-link Xray verified: [locations-lte-xray-verified.txt](./locations-lte-xray-verified.txt)
 Needs manual review: [locations-lte-xray-review.txt](./locations-lte-xray-review.txt)
@@ -51,10 +51,10 @@ The exact-link Xray stage uses the real parsed protocol from `scripts/link-runti
 
 ## Globalping — additional Russian cities
 
-Online Russian probes discovered: **167**
-Inventory cities: Moscow (103; eyeball=11; dc=92), Saint Petersburg (20; eyeball=2; dc=18), Yekaterinburg (2; eyeball=0; dc=2), Kazan (2; eyeball=1; dc=1), Novosibirsk (8; eyeball=2; dc=6), Samara (1; eyeball=0; dc=1), Krasnodar (2; eyeball=1; dc=1), Ufa (1; eyeball=1; dc=0), Kursk (2; eyeball=2; dc=0)
-Recovery cities (excluding Moscow/SPb): **Yekaterinburg, Kazan, Novosibirsk, Krasnodar**
-Globalping remaining budget before run: **250 tests**; reset: 0 s.
+Online Russian probes discovered: **0**
+Inventory cities: none
+Recovery cities: none
+Globalping rate-limit status was unavailable, so recovery measurements are not started.
 
 Recovery is capped at **45 endpoints** and reserves **10 tests**. With four cities, one endpoint costs four Globalping tests. The run stops immediately on HTTP 429.
 This is the extra Russian checker intended to be reusable later for ordinary locations. It is used as a second geographic transport signal, not as proof of a working proxy protocol.
