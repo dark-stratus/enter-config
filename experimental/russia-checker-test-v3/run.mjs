@@ -6,7 +6,7 @@ import crypto from "node:crypto";
 
 const ROOT = process.cwd();
 const INPUT_FILE = path.resolve(ROOT, process.env.RUSSIA_TEST_INPUT || "config/source-health-candidates.json");
-const OUT_DIR = path.resolve(ROOT, process.env.RUSSIA_TEST_OUTPUT_DIR || "experimental/russia-checker-test-v2/results");
+const OUT_DIR = path.resolve(ROOT, process.env.RUSSIA_TEST_OUTPUT_DIR || "experimental/russia-checker-test-v3/results");
 
 const CHECK_HOST_BASE = String(process.env.RUSSIA_TEST_CHECK_HOST_BASE || "https://check-host.net").replace(/\/$/, "");
 const CORE_NODES = String(process.env.RUSSIA_TEST_CORE_NODES || "ru1.node.check-host.net,ru2.node.check-host.net,ru3.node.check-host.net")
@@ -77,7 +77,7 @@ function targetForCheckHost(url, port) {
 function authHeaders(extra = {}) {
   return {
     accept: "application/json",
-    "user-agent": "escapevpn-russia-checker-experiment-v2/1.0",
+    "user-agent": "escapevpn-russia-checker-experiment-v3/1.0",
     "accept-encoding": "gzip",
     ...extra,
   };
@@ -430,7 +430,7 @@ function runSelfTest() {
   const refused = parseNodeResult([{ error: "Connection refused" }], "ru2", "udp");
   if (filtered.state !== "udp-filtered" || refused.state !== "refused") throw new Error("UDP parser self-test failed");
   if (decide([{state:"udp-filtered"},{state:"udp-filtered"}], "udp").verdict !== "PASS-UDP-STRONG") throw new Error("UDP decision self-test failed");
-  console.log("RUSSIA TEST V2 SELF-TEST: PASS");
+  console.log("RUSSIA TEST V3 SELF-TEST: PASS");
 }
 
 async function main() {
