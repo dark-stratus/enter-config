@@ -4,7 +4,15 @@ This is the single experimental v3 path. Do not create v4/v5: edit these files i
 
 ## Purpose
 
-Test LTE/whitelist links without changing production. The experiment uses three layers: Check-Host for the Russian transport baseline, exact-link Xray for the original proxy protocol, and host.tools as an independent multi-region TCP source. Globalping is not used by the main test.
+Test LTE/whitelist links without changing production. The experiment uses Check-Host for the core Russian transport baseline, exact-link Xray for the original proxy protocol, and authenticated Globalping as the active additional Russian-city transport source. host.tools remains optional and is disabled by default in the workflow.
+
+## Globalping — active additional Russian-city checker
+
+The workflow expects a GitHub Actions secret named `GLOBALPING_API_TOKEN`. Authenticated Globalping accounts currently get 500 free measurement tests/hour. Listing online probes and reading current limits do not consume measurement tests; each selected city probe used by a measurement counts as one test. citehttps://github.com/jsdelivr/globalping/blob/master/public/v1/spec.yaml
+
+v3 prefers **Yekaterinburg, Kazan and Novosibirsk** and explicitly excludes Moscow and Saint Petersburg from the recovery set. If a preferred city has no current online probe, another Russian city is used as a fallback. One endpoint normally costs three tests, so the authenticated 500-test hourly budget is sufficient for the current LTE workload when the live remaining budget allows it.
+
+For TCP links, Globalping MTR targets the actual endpoint port with TCP. For Hysteria/Hysteria2/TUIC, it targets the actual port with UDP. A Globalping recovery is only a Russian transport signal; every recovered endpoint is tested again with the exact original link through Xray.
 
 ## host.tools
 
@@ -22,8 +30,9 @@ Xray now tests **every LTE link**, not only Check-Host transport passes. Protoco
 
 1. Check-Host baseline.
 2. Exact-link Xray for all LTE links.
-3. host.tools for TCP endpoints that still have no Xray success.
-4. Any endpoint recovered from a non-core Russian city is tested through Xray once more.
+3. Globalping MTR from three non-core Russian cities for endpoints that still have no Xray success.
+4. Any endpoint recovered by Globalping is tested through Xray once more.
+5. host.tools is optional and off by default.
 
 The broad `locations-lte.txt` is intentionally permissive for the experiment: host.tools recovery is kept even if GitHub's non-Russian Xray runner cannot reproduce the link.
 
