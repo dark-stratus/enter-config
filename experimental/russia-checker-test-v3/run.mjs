@@ -3,6 +3,10 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import crypto from "node:crypto";
+import os from "node:os";
+import net from "node:net";
+import { spawn } from "node:child_process";
+import { parseLink, buildOutbound } from "../../scripts/link-runtime.mjs";
 
 const ROOT = process.cwd();
 const INPUT_FILE = path.resolve(ROOT, process.env.RUSSIA_TEST_INPUT || "config/source-health-candidates.json");
@@ -25,7 +29,7 @@ const CONCURRENCY = Math.max(1, Math.min(3, Number(process.env.RUSSIA_TEST_CONCU
 const RETRIES = Math.max(3, Math.min(8, Number(process.env.RUSSIA_TEST_RETRIES) || 6));
 
 const GLOBALPING_ENABLED = !/^(0|false|no)$/i.test(String(process.env.RUSSIA_TEST_GLOBALPING || "1"));
-const GLOBALPING_RECOVERY_ENABLED = !/^(0|false|no)$/i.test(String(process.env.RUSSIA_TEST_GLOBALPING_RECOVERY || "1"));
+const GLOBALPING_RECOVERY_ENABLED = false; // v3: Globalping measurements are diagnostic-only; active recovery is intentionally disabled.
 const GLOBALPING_BASE = String(process.env.RUSSIA_TEST_GLOBALPING_BASE || "https://api.globalping.io/v1").replace(/\/$/, "");
 const GLOBALPING_TOKEN = String(process.env.RUSSIA_TEST_GLOBALPING_TOKEN || process.env.GLOBALPING_API_TOKEN || "").trim();
 const GLOBALPING_CITY_LIMIT = Math.max(3, Math.min(12, Number(process.env.RUSSIA_TEST_GLOBALPING_CITY_LIMIT) || 9));
@@ -34,6 +38,18 @@ const GLOBALPING_RECOVERY_CONCURRENCY = Math.max(1, Math.min(2, Number(process.e
 const GLOBALPING_POLL_MS = Math.max(500, Number(process.env.RUSSIA_TEST_GLOBALPING_POLL_MS) || 700);
 const GLOBALPING_TIMEOUT_MS = Math.max(10000, Number(process.env.RUSSIA_TEST_GLOBALPING_TIMEOUT_MS) || 30000);
 const GLOBALPING_MTR_TIMEOUT_SECONDS = Math.max(5, Math.min(20, Number(process.env.RUSSIA_TEST_GLOBALPING_MTR_TIMEOUT_SECONDS) || 12));
+const XRAY_ENABLED = !/^(0|false|no)$/i.test(String(process.env.RUSSIA_TEST_XRAY || "1"));
+const XRAY_BIN = path.resolve(ROOT, process.env.RUSSIA_TEST_XRAY_BIN || ".xray/xray");
+const XRAY_START_TIMEOUT_MS = Math.max(5000, Number(process.env.RUSSIA_TEST_XRAY_START_TIMEOUT_MS) || 12000);
+const XRAY_REQUEST_TIMEOUT_MS = Math.max(5000, Number(process.env.RUSSIA_TEST_XRAY_REQUEST_TIMEOUT_MS) || 9000);
+const XRAY_LINK_CONCURRENCY = Math.max(1, Math.min(4, Number(process.env.RUSSIA_TEST_XRAY_LINK_CONCURRENCY) || 3));
+const XRAY_LINK_ATTEMPTS = Math.max(1, Math.min(2, Number(process.env.RUSSIA_TEST_XRAY_LINK_ATTEMPTS) || 2));
+const XRAY_RETRY_DELAY_MS = Math.max(300, Number(process.env.RUSSIA_TEST_XRAY_RETRY_DELAY_MS) || 1200);
+const XRAY_TARGETS = String(
+  process.env.RUSSIA_TEST_XRAY_TARGETS ||
+  "https://www.gstatic.com/generate_204,https://www.cloudflare.com/cdn-cgi/trace"
+).split(/\s*,\s*/).map(v => v.trim()).filter(Boolean);
+const XRAY_ONLY_ON_TRANSPORT_PASS = !/^(0|false|no)$/i.test(String(process.env.RUSSIA_TEST_XRAY_ONLY_ON_TRANSPORT_PASS || "1"));
 
 const PRIORITY_RUSSIA_CITIES = [
   "Moscow", "Saint Petersburg", "Yekaterinburg", "Kazan", "Novosibirsk",
@@ -251,6 +267,7 @@ function isTcpNonPass(result, endpoint) {
 }
 
 let globalpingRecoveryQueue = Promise.resolve();
+const globalpingRecoveryLimiter = fn => fn();
 
 function serializeGlobalpingRecovery(fn) {
   const previous = globalpingRecoveryQueue;
@@ -315,36 +332,264 @@ async function checkEndpoint(endpoint, globalpingContext = null) {
     }
   }
 
-  const needsGlobalping = GLOBALPING_RECOVERY_ENABLED &&
-    ["FAIL", "UNKNOWN", "PASS-PARTIAL"].includes(String(bestResult?.verdict));
-
-  if (needsGlobalping && globalpingContext?.recoveryCities?.length) {
-    const recovery = await serializeGlobalpingRecovery(
-      () => runGlobalpingRecovery(endpoint, globalpingContext)
-    );
-
-    if (recovery?.verdict === "PASS-GLOBALPING") {
-      return {
-        ...bestResult,
-        verdict: "PASS-GLOBALPING",
-        confidence: `globalping-${recovery.reachedCities}/${globalpingContext.recoveryCities.length}`,
-        attempts,
-        globalpingRecovery: recovery,
-      };
-    }
-
-    return {
-      ...bestResult,
-      attempts,
-      globalpingRecovery: recovery,
-    };
-  }
-
   return {
     ...bestResult,
     attempts,
     globalpingRecovery: null,
   };
+}
+
+
+function xrayPassCandidateVerdict(verdict) {
+  return ["PASS", "PASS-PARTIAL", "PASS-GLOBALPING", "PASS-UDP-STRONG", "PASS-UDP-NOT-REFUSED", "DRY-RUN"].includes(String(verdict));
+}
+
+function getFreePort() {
+  return new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      const port = typeof address === "object" && address ? address.port : null;
+      server.close(error => error ? reject(error) : resolve(port));
+    });
+  });
+}
+
+function waitForLocalPort(port) {
+  return new Promise(resolve => {
+    const started = Date.now();
+    const probe = () => {
+      if (Date.now() - started >= XRAY_START_TIMEOUT_MS) return resolve(false);
+      const socket = net.createConnection({ host: "127.0.0.1", port, timeout: 700 });
+      let done = false;
+      const finish = ok => {
+        if (done) return;
+        done = true;
+        socket.destroy();
+        if (ok) return resolve(true);
+        setTimeout(probe, 100);
+      };
+      socket.once("connect", () => finish(true));
+      socket.once("timeout", () => finish(false));
+      socket.once("error", () => finish(false));
+    };
+    probe();
+  });
+}
+
+function buildXrayConfigForLink(link, socksPort) {
+  const server = parseLink(link);
+  const outbound = buildOutbound(server, "proxy");
+  return {
+    log: { loglevel: "none" },
+    inbounds: [{
+      listen: "127.0.0.1",
+      port: socksPort,
+      protocol: "socks",
+      settings: { udp: true },
+      sniffing: { enabled: false },
+      tag: "socks",
+    }],
+    outbounds: [
+      outbound,
+      { protocol: "freedom", tag: "direct" },
+      { protocol: "blackhole", tag: "block" },
+    ],
+  };
+}
+
+async function startXrayForLink(link) {
+  const socksPort = await getFreePort();
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "russia-v3-xray-"));
+  const configPath = path.join(tempDir, "config.json");
+  let child = null;
+  let stderr = "";
+
+  const cleanup = async () => {
+    if (child && !child.killed) {
+      child.kill("SIGTERM");
+      await new Promise(resolve => {
+        const force = setTimeout(() => {
+          try { child.kill("SIGKILL"); } catch {}
+          resolve();
+        }, 1000);
+        child.once("exit", () => {
+          clearTimeout(force);
+          resolve();
+        });
+      });
+    }
+    await fs.rm(tempDir, { recursive: true, force: true });
+  };
+
+  try {
+    const config = buildXrayConfigForLink(link, socksPort);
+    await fs.writeFile(configPath, JSON.stringify(config, null, 2), "utf8");
+
+    child = spawn(XRAY_BIN, ["run", "-c", configPath], {
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+    child.stderr.on("data", chunk => {
+      stderr += String(chunk);
+      if (stderr.length > 4000) stderr = stderr.slice(-4000);
+    });
+
+    const opened = await Promise.race([
+      waitForLocalPort(socksPort),
+      new Promise(resolve => child.once("error", error => resolve({ error }))),
+      new Promise(resolve => child.once("exit", (code, signal) => resolve({ code, signal }))),
+    ]);
+
+    if (opened !== true) {
+      const detail = opened?.error?.message ||
+        (opened && typeof opened === "object" ? `xray exited (${opened.code ?? "?"}${opened.signal ? `/${opened.signal}` : ""})` : "") ||
+        "xray SOCKS port did not open";
+      await cleanup();
+      return { ok: false, error: `${detail}${stderr ? `; ${stderr.trim().slice(-700)}` : ""}`.slice(0, 1400) };
+    }
+
+    return { ok: true, socksPort, cleanup };
+  } catch (error) {
+    await cleanup();
+    return { ok: false, error: error?.message || String(error) };
+  }
+}
+
+function curlViaXrayOnce(socksPort, targetUrl) {
+  return new Promise(resolve => {
+    const startedAt = Date.now();
+    const args = [
+      "--silent", "--show-error", "--fail",
+      "--connect-timeout", "4",
+      "--max-time", String(Math.ceil(XRAY_REQUEST_TIMEOUT_MS / 1000)),
+      "--proxy", `socks5h://127.0.0.1:${socksPort}`,
+      targetUrl,
+      "--output", "/dev/null",
+      "--write-out", "\\n%{http_code}\\n%{time_total}\\n",
+    ];
+    const child = spawn("curl", args, { stdio: ["ignore", "pipe", "pipe"] });
+    let stdout = "", stderr = "";
+    let settled = false;
+    const finish = result => {
+      if (settled) return;
+      settled = true;
+      resolve(result);
+    };
+    const timeout = setTimeout(() => {
+      try { child.kill("SIGKILL"); } catch {}
+      finish({ ok: false, latencyMs: 0, httpCode: 0, error: "curl timeout" });
+    }, XRAY_REQUEST_TIMEOUT_MS + 500);
+    child.stdout.on("data", chunk => { stdout += String(chunk); });
+    child.stderr.on("data", chunk => { stderr += String(chunk); });
+    child.once("error", error => {
+      clearTimeout(timeout);
+      finish({ ok: false, latencyMs: 0, httpCode: 0, error: error?.message || "curl spawn failed" });
+    });
+    child.once("exit", code => {
+      clearTimeout(timeout);
+      const values = stdout.trim().split(/\r?\n/).map(v => v.trim()).filter(Boolean);
+      const latencyMs = Number(values.at(-1)) > 0
+        ? Math.round(Number(values.at(-1)) * 1000)
+        : Math.max(Date.now() - startedAt, 0);
+      const httpCode = Number(values.at(-2)) || 0;
+      finish({
+        ok: code === 0,
+        latencyMs,
+        httpCode,
+        error: code === 0 ? "" : (stderr.trim().slice(0, 500) || `curl exit ${code}`),
+      });
+    });
+  });
+}
+
+async function testExactLinkWithXray(link) {
+  if (!XRAY_ENABLED) return { verdict: "SKIPPED-XRAY", attempts: [], target: "", latencyMs: 0 };
+  const attempts = [];
+  for (let attempt = 1; attempt <= XRAY_LINK_ATTEMPTS; attempt += 1) {
+    const started = Date.now();
+    const xray = await startXrayForLink(link);
+    if (!xray.ok) {
+      const failed = { attempt, ok: false, error: xray.error, targetResults: [] };
+      attempts.push(failed);
+      if (attempt < XRAY_LINK_ATTEMPTS) await sleep(XRAY_RETRY_DELAY_MS);
+      continue;
+    }
+
+    const targetResults = [];
+    try {
+      for (const target of XRAY_TARGETS) {
+        const result = await curlViaXrayOnce(xray.socksPort, target);
+        targetResults.push({ target, ...result });
+        if (result.ok) break;
+      }
+    } finally {
+      await xray.cleanup();
+    }
+
+    const success = targetResults.find(result => result.ok);
+    const row = {
+      attempt,
+      ok: Boolean(success),
+      latencyMs: success?.latencyMs || 0,
+      target: success?.target || "",
+      targetResults,
+      durationMs: Math.max(Date.now() - started, 0),
+    };
+    attempts.push(row);
+    if (success) {
+      return {
+        verdict: "PASS-XRAY",
+        confidence: `xray-${targetResults.length}/${XRAY_TARGETS.length}`,
+        attempts,
+        target: success.target,
+        latencyMs: success.latencyMs,
+      };
+    }
+    if (attempt < XRAY_LINK_ATTEMPTS) await sleep(XRAY_RETRY_DELAY_MS);
+  }
+
+  return {
+    verdict: "FAIL-XRAY",
+    confidence: `xray-${attempts.length}/${XRAY_TARGETS.length || 1}`,
+    attempts,
+    target: "",
+    latencyMs: 0,
+  };
+}
+
+async function runXrayCandidateChecks(items, endpointRows) {
+  if (DRY_RUN || !XRAY_ENABLED) return new Map(items.map(item => [String(item.id), { verdict: "SKIPPED-XRAY" }]));
+  const endpointByKey = new Map(endpointRows.map(row => [row.key, row]));
+  const candidates = [];
+  for (const item of items) {
+    const link = String(item?.link || "").trim();
+    if (!link) continue;
+    let key;
+    try { key = endpointKey(link); } catch { continue; }
+    const endpoint = endpointByKey.get(key);
+    if (!endpoint) continue;
+    if (XRAY_ONLY_ON_TRANSPORT_PASS && !xrayPassCandidateVerdict(endpoint.verdict)) continue;
+    candidates.push({ id: String(item.id), link });
+  }
+
+  const results = new Map();
+  let cursor = 0;
+  const worker = async () => {
+    while (true) {
+      const index = cursor++;
+      if (index >= candidates.length) return;
+      const candidate = candidates[index];
+      try {
+        results.set(candidate.id, await testExactLinkWithXray(candidate.link));
+      } catch (error) {
+        results.set(candidate.id, { verdict: "UNKNOWN-XRAY", attempts: [], error: error?.message || String(error) });
+      }
+      console.log(`RUSSIA TEST V3 XRAY ${index + 1}/${candidates.length}: ${candidate.link.slice(0, 90)}`);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(XRAY_LINK_CONCURRENCY, Math.max(1, candidates.length)) }, worker));
+  return results;
 }
 
 function buildEndpointWorkset(items) {
@@ -679,15 +924,21 @@ function protocolSummary(items) {
 
 function runSelfTest() {
   const samples = [
-    ["vless://u@example.com:443", "vless", "tcp"],
-    ["trojan://p@example.com:443", "trojan", "tcp"],
-    ["hysteria2://p@example.com:443", "hysteria2", "udp"],
-    ["hysteria://p@example.com:443", "hysteria", "udp"],
-    ["tuic://p@example.com:443", "tuic", "udp"],
+    ["vless://11111111-1111-1111-1111-111111111111@example.com:443?security=tls&type=tcp&sni=example.com", "vless", "tcp"],
+    ["trojan://password@example.com:443?sni=example.com", "trojan", "tcp"],
+    ["hysteria2://password@example.com:443?sni=example.com&alpn=h3", "hysteria2", "udp"],
+    ["hysteria://password@example.com:443?sni=example.com&alpn=h3", "hysteria", "udp"],
+    ["tuic://password@example.com:443?sni=example.com", "tuic", "udp"],
   ];
   for (const [link, expectedProtocol, expectedTransport] of samples) {
     const actual = parseUrl(link);
     if (actual.protocol !== expectedProtocol || actual.transport !== expectedTransport) throw new Error(`protocol self-test failed for ${link}`);
+  }
+  const outboundVless = buildOutbound(parseLink(samples[0][0]), "probe-vless");
+  const outboundTrojan = buildOutbound(parseLink(samples[1][0]), "probe-trojan");
+  const outboundHysteria = buildOutbound(parseLink(samples[2][0]), "probe-hysteria");
+  if (outboundVless?.protocol !== "vless" || outboundTrojan?.protocol !== "trojan" || outboundHysteria?.protocol !== "hysteria") {
+    throw new Error("exact-link outbound protocol self-test failed");
   }
   const tcpOk = parseNodeResult([{ time: 0.041, address: "203.0.113.10" }], "ru2", "tcp");
   if (tcpOk.state !== "reachable" || tcpOk.latencyMs <= 0) throw new Error("TCP array parser self-test failed");
@@ -730,6 +981,28 @@ async function main() {
     reports[label] = { candidates: items.length, protocols: protocolSummary(items), uniqueEndpoints: endpoints.length, endpointVerdicts: endpoints.reduce((acc,row) => { acc[row.verdict]=(acc[row.verdict]||0)+1; return acc; }, {}), endpoints };
     lists[label] = expandPassingLinks(items, endpoints);
     await fs.writeFile(path.join(OUT_DIR, `locations-${label}.txt`), lists[label].length ? `${lists[label].join("\n")}\n` : "", "utf8");
+
+    const xrayById = label === "lte"
+      ? await runXrayCandidateChecks(items, endpoints)
+      : new Map();
+    reports[label].xraySummary = [...xrayById.values()].reduce((acc, row) => {
+      const key = String(row?.verdict || "UNKNOWN-XRAY");
+      acc[key] = (acc[key] || 0) + 1;
+      return acc;
+    }, {});
+    reports[label].xrayById = Object.fromEntries(xrayById);
+    const xrayVerifiedLinks = [...new Set(items
+      .filter(item => xrayById.get(String(item.id))?.verdict === "PASS-XRAY")
+      .map(item => String(item.link || "").trim()).filter(Boolean))];
+    const xrayReviewLinks = [...new Set(items
+      .filter(item => ["FAIL-XRAY", "UNKNOWN-XRAY"].includes(xrayById.get(String(item.id))?.verdict))
+      .map(item => String(item.link || "").trim()).filter(Boolean))];
+    if (label === "lte") {
+      await fs.writeFile(path.join(OUT_DIR, "locations-lte-xray-verified.txt"), xrayVerifiedLinks.length ? `${xrayVerifiedLinks.join("\n")}\n` : "", "utf8");
+      await fs.writeFile(path.join(OUT_DIR, "locations-lte-xray-review.txt"), xrayReviewLinks.length ? `${xrayReviewLinks.join("\n")}\n` : "", "utf8");
+      const transportOnlyLinks = [...new Set(lists[label].filter(link => !xrayVerifiedLinks.includes(link)))];
+      await fs.writeFile(path.join(OUT_DIR, "locations-lte-transport-only.txt"), transportOnlyLinks.length ? `${transportOnlyLinks.join("\n")}\n` : "", "utf8");
+    }
     const strongEndpointKeys = new Set(endpoints.filter(e => ["PASS", "PASS-UDP-STRONG"].includes(e.verdict)).map(e => e.key));
     const partialEndpointKeys = new Set(endpoints.filter(e => e.verdict === "PASS-PARTIAL").map(e => e.key));
     const strongLinks = [...new Set(items.filter(item => { try { return strongEndpointKeys.has(endpointKey(item.link)); } catch { return false; } }).map(item => String(item.link).trim()).filter(Boolean))];
@@ -769,19 +1042,27 @@ async function main() {
   await fs.writeFile(path.join(OUT_DIR, "check-host-russia-nodes.json"), `${JSON.stringify(checkHostDiscovery, null, 2)}\n`, "utf8");
 
   const md = [];
-  md.push("# Russia checker experiment v3", "", `Generated: ${new Date().toISOString()}`, `Scope: ${SCOPE}`, `Core Check-Host nodes: ${CORE_NODES.join(', ')}`, `TCP strong threshold: ${STRONG_QUORUM}/${CORE_NODES.length}; TCP minimum threshold: ${MIN_PASS_NODES}/${CORE_NODES.length}; non-pass TCP recheck: ${RECHECK_NONPASS ? "enabled" : "disabled"}`, "");
-  md.push("> Production files are untouched. This experiment uses only source-health-candidates.json + transport checks. No routing, Xray, speed tests, Fast/Gaming logic or production publication are involved.", "");
+  md.push("# Russia checker experiment v3", "", `Generated: ${new Date().toISOString()}`, `Scope: ${SCOPE}`, `Core Check-Host nodes: ${CORE_NODES.join(', ')}`, `TCP strong threshold: ${STRONG_QUORUM}/${CORE_NODES.length}; TCP minimum threshold: ${MIN_PASS_NODES}/${CORE_NODES.length}; non-pass TCP recheck: ${RECHECK_NONPASS ? "enabled" : "disabled"}; exact-link Xray: ${XRAY_ENABLED ? "enabled" : "disabled"}`, "");
+  md.push("> Production files are untouched. This experiment uses source-health-candidates.json + Russian transport checks + an exact-link Xray validation stage. No routing, Fast/Gaming logic or production publication is involved.", "");
   for (const [label, report] of Object.entries(reports)) {
-    md.push(`## ${label.toUpperCase()}`, "", `Candidates: **${report.candidates}**`, `Protocols: ${Object.entries(report.protocols).map(([k,v]) => `**${k}=${v}**`).join(', ') || 'none'}`, `Unique endpoints: **${report.uniqueEndpoints}**`, `Verdicts: ${Object.entries(report.endpointVerdicts).map(([k,v]) => `**${k}=${v}**`).join(', ') || 'none'}`, `HAPP-ready links: **${lists[label].length}**`, `Copy all: [locations-${label}.txt](./locations-${label}.txt)\nStrong only: [locations-${label}-strong.txt](./locations-${label}-strong.txt)\nPartial only: [locations-${label}-partial.txt](./locations-${label}-partial.txt)`, "");
+    md.push(`## ${label.toUpperCase()}`, "", `Candidates: **${report.candidates}**`, `Protocols: ${Object.entries(report.protocols).map(([k,v]) => `**${k}=${v}**`).join(', ') || 'none'}`, `Unique endpoints: **${report.uniqueEndpoints}**`, `Verdicts: ${Object.entries(report.endpointVerdicts).map(([k,v]) => `**${k}=${v}**`).join(', ') || 'none'}`, `HAPP-ready transport links: **${lists[label].length}**`, `Exact-link Xray: ${Object.entries(report.xraySummary || {}).map(([k,v]) => `**${k}=${v}**`).join(', ') || 'not run'}`, label === "lte" ? `Copy all transport candidates: [locations-${label}.txt](./locations-${label}.txt)\nExact-link Xray verified: [locations-lte-xray-verified.txt](./locations-lte-xray-verified.txt)\nNeeds manual review: [locations-lte-xray-review.txt](./locations-lte-xray-review.txt)\nTransport-only remainder: [locations-lte-transport-only.txt](./locations-lte-transport-only.txt)\nStrong only: [locations-${label}-strong.txt](./locations-${label}-strong.txt)\nPartial only: [locations-${label}-partial.txt](./locations-${label}-partial.txt)` : `Copy all: [locations-${label}.txt](./locations-${label}.txt)`, "");
   }
   md.push("## Why v3 should recover VLESS/Trojan", "", "The previous v2 parser treated Check-Host TCP results of the documented form [{\"time\":0.03,\"address\":\"...\"}] as non-reachable because it expected an object with .time directly. v3 parses the first result object correctly.", "", "The experiment also keeps protocol schemes unchanged: vless:// stays VLESS, trojan:// stays Trojan, hysteria2:// stays Hysteria2, etc.", "");
   md.push("## Recheck strategy", "", "Every non-passing TCP endpoint gets one second Check-Host measurement. A server can therefore recover from a transient timeout or asymmetric first measurement. The report keeps both attempts.", "", "For production later, we can choose whether to publish all TCP 1/3+ results or only the stronger subset after your HAPP test.", "");
-  md.push("## Hysteria / UDP", "", "Hysteria/Hysteria2/TUIC are detected from the URI scheme and checked with Check-Host UDP, never TCP. The original link is copied to the output unchanged; no Hysteria link is converted to VLESS.", "", "`PASS-UDP-*` means the Russian gate did not receive an explicit UDP refusal. Check-Host itself documents the silent UDP state as `Open or filtered`, so this is a transport screening result, not proof of a successful Hysteria/QUIC handshake. Those links are deliberately left in the HAPP test list for manual verification.", "");
+  md.push("## Hysteria / UDP", "", "Hysteria/Hysteria2/TUIC are detected from the URI scheme and checked with Check-Host UDP, never TCP. The original link is copied to the output unchanged; no Hysteria link is converted to VLESS.", "", "`PASS-UDP-*` means the Russian gate did not receive an explicit UDP refusal. Check-Host itself documents the silent UDP state as `Open or filtered`, so this is a transport screening result, not proof of a successful Hysteria/QUIC handshake.", "", "The exact-link Xray stage uses the real parsed protocol from `scripts/link-runtime.mjs` and therefore keeps Hysteria2 as Hysteria2 instead of coercing it into VLESS.");
   md.push("## Check-Host Russia nodes", "", checkHostDiscovery.nodes?.length ? checkHostDiscovery.nodes.map(n => `- ${n.id}: ${n.city}`).join("\n") : (checkHostDiscovery.error || "No nodes discovered."), "");
-  md.push("## Globalping secondary Russian source", "", globalping.error ? `Probe discovery error: ${globalping.error}` : `Online Russian probes discovered: **${globalping.probesInRussia ?? 0}**`, globalping.cities?.length ? `Diagnostic cities: ${globalping.cities.map(c => `${c.city} (${c.count}; eyeball=${c.eyeball}; dc=${c.datacenter})`).join(', ')}` : "Diagnostic cities: none", globalping.recoveryCities?.length ? `Recovery cities: ${globalping.recoveryCities.map(c => `${c.city} (${c.count} probes)`).join(', ')}` : "Recovery cities: none", "", "For endpoints without a normal Check-Host PASS, v3 performs an independent Globalping MTR from up to three additional Russian cities. At least one reached target city is enough to recover the endpoint into the broad LTE list. This remains a transport/network check, not a proxy-protocol handshake.", "");
+  md.push("## Globalping diagnostic-only",
+    "",
+    globalping.error ? `Probe discovery error: ${globalping.error}` : `Online Russian probes discovered: **${globalping.probesInRussia ?? 0}**`,
+    globalping.cities?.length ? `Diagnostic cities: ${globalping.cities.map(c => `${c.city} (${c.count}; eyeball=${c.eyeball}; dc=${c.datacenter})`).join(', ')}` : "Diagnostic cities: none",
+    "",
+    "No Globalping measurements are created by v3; it is inventory-only. This avoids burning the 250 unauthenticated tests/hour budget on a recovery pass.",
+    "The active Russian reachability gate remains Check-Host. Exact-link Xray runs from the GitHub runner and is a protocol/configuration validation layer, not a substitute for a Russian vantage point.",
+    ""
+  );
   md.push("## Files for your manual test", "", "- `locations-lte.txt` — broad LTE test list: normal Check-Host passes plus Globalping-recovered endpoints.", "- `locations-lte-strong.txt` — stronger Check-Host subset.", "- `locations-lte-partial.txt` — exactly-1/3 Check-Host TCP subset.", "- `locations-lte-globalping-recovered.txt` — endpoints recovered specifically by the second Russian source.", "- `lte-hysteria-all.txt` — all original Hysteria/Hysteria2/TUIC LTE candidates.", "- `lte-hysteria-passing.txt` — UDP transport-screened Hysteria/Hysteria2/TUIC links.", "- `globalping-city-diagnostic.json` — current Russian probe inventory and recovery cities.", "- `check-host-russia-nodes.json` — current Check-Host Russian nodes.", "");
   await fs.writeFile(path.join(OUT_DIR, "results.md"), `${md.join("\n")}\n`, "utf8");
-  await fs.writeFile(path.join(OUT_DIR, "results.json"), `${JSON.stringify({ generatedAt:new Date().toISOString(), scope:SCOPE, coreNodes:CORE_NODES, strongQuorum:STRONG_QUORUM, minPassNodes:MIN_PASS_NODES, recheckNonPass:RECHECK_NONPASS, globalpingRecoveryEnabled:GLOBALPING_RECOVERY_ENABLED, reports, globalping, checkHostDiscovery, inputSha256:hash(await fs.readFile(INPUT_FILE)) }, null, 2)}\n`, "utf8");
+  await fs.writeFile(path.join(OUT_DIR, "results.json"), `${JSON.stringify({ generatedAt:new Date().toISOString(), scope:SCOPE, coreNodes:CORE_NODES, strongQuorum:STRONG_QUORUM, minPassNodes:MIN_PASS_NODES, recheckNonPass:RECHECK_NONPASS, globalpingRecoveryEnabled:false, xrayEnabled:XRAY_ENABLED, xrayTargets:XRAY_TARGETS, reports, globalping, checkHostDiscovery, inputSha256:hash(await fs.readFile(INPUT_FILE)) }, null, 2)}\n`, "utf8");
   console.log("RUSSIA CHECKER V3 COMPLETE");
 }
 
