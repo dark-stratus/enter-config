@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       globalping:
-        description: "Collect Globalping Russian probe inventory (no measurements)"
+        description: "Run the capped additional Russian-city transport check"
         required: true
         default: true
         type: boolean
@@ -44,7 +44,7 @@ jobs:
         env:
           RUSSIA_TEST_SCOPE: lte
           RUSSIA_TEST_GLOBALPING: ${{ inputs.globalping && '1' || '0' }}
-          RUSSIA_TEST_GLOBALPING_RECOVERY: "0"
+          RUSSIA_TEST_GLOBALPING_RECOVERY: "1"
           RUSSIA_TEST_CORE_NODES: ru1.node.check-host.net,ru2.node.check-host.net,ru3.node.check-host.net
           RUSSIA_TEST_STRONG_QUORUM: "2"
           RUSSIA_TEST_MIN_PASS_NODES: "1"
@@ -55,11 +55,19 @@ jobs:
           RUSSIA_TEST_POLL_MS: "1200"
           RUSSIA_TEST_RETRIES: "5"
           RUSSIA_TEST_GLOBALPING_CITY_LIMIT: "9"
+          RUSSIA_TEST_GLOBALPING_RECOVERY_CITY_LIMIT: "4"
+          RUSSIA_TEST_GLOBALPING_MAX_RECOVERY_ENDPOINTS: "45"
+          RUSSIA_TEST_GLOBALPING_RESERVE_TESTS: "10"
+          RUSSIA_TEST_GLOBALPING_TOKEN: ${{ secrets.GLOBALPING_API_TOKEN }}
           RUSSIA_TEST_XRAY: "1"
           RUSSIA_TEST_XRAY_LINK_CONCURRENCY: "3"
           RUSSIA_TEST_XRAY_LINK_ATTEMPTS: "2"
           RUSSIA_TEST_XRAY_RETRY_DELAY_MS: "1200"
           RUSSIA_TEST_XRAY_TARGETS: "https://www.gstatic.com/generate_204,https://www.cloudflare.com/cdn-cgi/trace"
+          RUSSIA_TEST_XRAY_SPEED_FALLBACK: "1"
+          RUSSIA_TEST_XRAY_SPEED_TIMEOUT_MS: "9000"
+          RUSSIA_TEST_XRAY_SPEED_MIN_BYTES: "262144"
+          RUSSIA_TEST_XRAY_SPEED_MIN_KBPS: "1024"
         run: node experimental/russia-checker-test-v3/run.mjs
       - name: Show results
         run: cat experimental/russia-checker-test-v3/results/results.md
