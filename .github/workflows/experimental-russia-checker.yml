@@ -1,0 +1,71 @@
+name: "EXPERIMENTAL — Russia checker"
+
+on:
+  workflow_dispatch:
+    inputs:
+      scope:
+        description: "Which candidates to check"
+        required: true
+        default: all
+        type: choice
+        options:
+          - all
+          - lte
+          - regular
+      globalping:
+        description: "Run diagnostic-only Globalping city checks"
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: experimental-russia-checker
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      - name: Run isolated Russia transport checker
+        env:
+          RUSSIA_TEST_SCOPE: ${{ inputs.scope }}
+          RUSSIA_TEST_GLOBALPING: ${{ inputs.globalping && '1' || '0' }}
+          RUSSIA_TEST_CHECK_HOST_NODES: ru2.node.check-host.net,ru3.node.check-host.net
+          RUSSIA_TEST_CHECK_HOST_QUORUM: "2"
+          RUSSIA_TEST_CONCURRENCY: "4"
+          RUSSIA_TEST_CREATE_INTERVAL_MS: "400"
+          RUSSIA_TEST_MAX_POLL_MS: "7000"
+          RUSSIA_TEST_GLOBALPING_SAMPLE: "12"
+        run: node experimental/russia-checker-test/run.mjs
+
+      - name: Show result summary
+        run: cat experimental/russia-checker-test/results/results.md
+
+      - name: Publish experiment results to repository
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add experimental/russia-checker-test/results/
+          if git diff --cached --quiet; then
+            echo "No result changes to commit."
+            exit 0
+          fi
+          git commit -m "test: experimental Russia checker results"
+          git push
