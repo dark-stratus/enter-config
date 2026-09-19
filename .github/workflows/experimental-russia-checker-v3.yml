@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       globalping:
-        description: "Use Globalping as an independent Russian-city recovery checker"
+        description: "Collect Globalping Russian probe inventory (no measurements)"
         required: true
         default: true
         type: boolean
@@ -27,6 +27,15 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 24
+      - name: Install Xray
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .xray
+          curl -fsSL --retry 4 --retry-all-errors             https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-64.zip             -o /tmp/xray.zip
+          unzip -oq /tmp/xray.zip -d .xray
+          chmod +x .xray/xray
+          .xray/xray version
       - name: Self-test protocol and TCP parsers
         env:
           RUSSIA_TEST_SELF_TEST: "1"
@@ -35,8 +44,7 @@ jobs:
         env:
           RUSSIA_TEST_SCOPE: lte
           RUSSIA_TEST_GLOBALPING: ${{ inputs.globalping && '1' || '0' }}
-          RUSSIA_TEST_GLOBALPING_RECOVERY: "1"
-          RUSSIA_TEST_GLOBALPING_RECOVERY_CITY_LIMIT: "3"
+          RUSSIA_TEST_GLOBALPING_RECOVERY: "0"
           RUSSIA_TEST_CORE_NODES: ru1.node.check-host.net,ru2.node.check-host.net,ru3.node.check-host.net
           RUSSIA_TEST_STRONG_QUORUM: "2"
           RUSSIA_TEST_MIN_PASS_NODES: "1"
@@ -47,6 +55,11 @@ jobs:
           RUSSIA_TEST_POLL_MS: "1200"
           RUSSIA_TEST_RETRIES: "5"
           RUSSIA_TEST_GLOBALPING_CITY_LIMIT: "9"
+          RUSSIA_TEST_XRAY: "1"
+          RUSSIA_TEST_XRAY_LINK_CONCURRENCY: "3"
+          RUSSIA_TEST_XRAY_LINK_ATTEMPTS: "2"
+          RUSSIA_TEST_XRAY_RETRY_DELAY_MS: "1200"
+          RUSSIA_TEST_XRAY_TARGETS: "https://www.gstatic.com/generate_204,https://www.cloudflare.com/cdn-cgi/trace"
         run: node experimental/russia-checker-test-v3/run.mjs
       - name: Show results
         run: cat experimental/russia-checker-test-v3/results/results.md
