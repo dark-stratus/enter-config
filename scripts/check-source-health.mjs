@@ -5354,15 +5354,16 @@ async function main() {
         );
 
     const selectedRegularIds =
-        new Set(
-            healthResults
+        new Set([
+            ...featuredFastIds,
+            ...healthResults
                 .filter(result =>
                     result.ok &&
                     !result.whiteList &&
                     selectedRegularFingerprints.has(result.linkFingerprint)
                 )
                 .map(result => result.id)
-        );
+        ]);
 
     const selectedWhiteListIds =
         new Set(
