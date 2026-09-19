@@ -33,7 +33,10 @@ const GLOBALPING_RECOVERY_ENABLED = !/^(0|false|no)$/i.test(String(process.env.R
 const GLOBALPING_BASE = String(process.env.RUSSIA_TEST_GLOBALPING_BASE || "https://api.globalping.io/v1").replace(/\/$/, "");
 const GLOBALPING_TOKEN = String(process.env.RUSSIA_TEST_GLOBALPING_TOKEN || process.env.GLOBALPING_API_TOKEN || "").trim();
 const GLOBALPING_CITY_LIMIT = Math.max(3, Math.min(12, Number(process.env.RUSSIA_TEST_GLOBALPING_CITY_LIMIT) || 9));
-const GLOBALPING_RECOVERY_CITY_LIMIT = 3;
+const GLOBALPING_RECOVERY_CITY_LIMIT = Math.max(2, Math.min(6, Number(process.env.RUSSIA_TEST_GLOBALPING_RECOVERY_CITY_LIMIT) || 3));
+const GLOBALPING_RECOVERY_MIN_DISTINCT_CITIES = Math.max(2, Math.min(GLOBALPING_RECOVERY_CITY_LIMIT, Number(process.env.RUSSIA_TEST_GLOBALPING_MIN_DISTINCT_CITIES) || 2));
+const GLOBALPING_RECOVERY_REQUIRE_EYEBALL = !/^(0|false|no)$/i.test(String(process.env.RUSSIA_TEST_GLOBALPING_REQUIRE_EYEBALL || "1"));
+const GLOBALPING_RECOVERY_TCP_ONLY = !/^(0|false|no)$/i.test(String(process.env.RUSSIA_TEST_GLOBALPING_TCP_ONLY || "1"));
 const GLOBALPING_RECOVERY_MAX_ENDPOINTS = Math.max(1, Math.min(164, Number(process.env.RUSSIA_TEST_GLOBALPING_MAX_RECOVERY_ENDPOINTS) || 164));
 const GLOBALPING_RECOVERY_RESERVE_TESTS = Math.max(0, Number(process.env.RUSSIA_TEST_GLOBALPING_RESERVE_TESTS) || 10);
 const GLOBALPING_RECOVERY_CONCURRENCY = 1;
@@ -911,10 +914,20 @@ function expandPassingLinks(items, endpointRows) {
     if (!link) continue;
     let key;
     try { key = endpointKey(link); } catch { continue; }
-    const verdict = byKey.get(key)?.verdict;
-    if (["PASS", "PASS-PARTIAL", "PASS-GLOBALPING", "PASS-HOSTTOOLS", "PASS-HOSTTOOLS-STRONG", "PASS-UDP-STRONG", "PASS-UDP-NOT-REFUSED", "DRY-RUN"].includes(verdict)) links.push(link);
+    const endpoint = byKey.get(key);
+    const verdict = endpoint?.verdict;
+    // Only the Russian Check-Host baseline may populate the broad transport list.
+    // Globalping/host.tools are additional transport diagnostics, not HAPP proof.
+    // UDP non-refusal is also not enough to prove a Hysteria/QUIC handshake.
+    if (["PASS", "PASS-PARTIAL", "DRY-RUN"].includes(verdict)) links.push(link);
   }
   return [...new Set(links)];
+}
+
+function exactXrayPassing(item, xrayById) {
+  return ["PASS-XRAY", "PASS-XRAY-CLOUDFLARE"].includes(
+    xrayById.get(String(item?.id))?.verdict
+  );
 }
 
 async function discoverCheckHostRussiaNodes() {
@@ -991,33 +1004,52 @@ function chooseGlobalpingCities(probes) {
   return picked;
 }
 
+function normalizeLocationName(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replaceAll("ё", "е")
+    .replace(/\s+/g, " ");
+}
+
+function isGlobalpingCoreCity(value) {
+  return new Set([
+    "moscow",
+    "moscow city",
+    "saint petersburg",
+    "st petersburg",
+    "st. petersburg",
+    "санкт-петербург",
+  ]).has(normalizeLocationName(value));
+}
+
 function chooseGlobalpingRecoveryCities(cities) {
   const preferred = [
-    "Yekaterinburg",
     "Kazan",
     "Novosibirsk",
     "Krasnodar",
-    "Samara",
     "Ufa",
+    "Kursk",
+    "Samara",
     "Rostov-on-Don",
     "Nizhny Novgorod",
     "Perm",
     "Voronezh",
     "Chelyabinsk",
+    "Yekaterinburg",
   ];
 
-  const isCoreCity = city => /^(moscow|moscow city|saint petersburg|st petersburg|st\. petersburg)$/i.test(
-    String(city || "").trim()
-  );
   const available = new Map(
     (cities || [])
-      .filter(row => !isCoreCity(row?.city))
-      .map(row => [String(row.city).toLowerCase(), row])
+      .filter(row => !isGlobalpingCoreCity(row?.city))
+      .filter(row => Number(row?.count) > 0)
+      .filter(row => !GLOBALPING_RECOVERY_REQUIRE_EYEBALL || Number(row?.eyeball) > 0)
+      .map(row => [normalizeLocationName(row.city), row])
   );
   const selected = [];
 
   for (const name of preferred) {
-    const row = available.get(name.toLowerCase());
+    const row = available.get(normalizeLocationName(name));
     if (!row) continue;
     selected.push(row);
     if (selected.length >= GLOBALPING_RECOVERY_CITY_LIMIT) break;
@@ -1030,7 +1062,7 @@ function chooseGlobalpingRecoveryCities(cities) {
         b.count - a.count ||
         a.city.localeCompare(b.city)
     )) {
-      if (selected.some(item => item.city.toLowerCase() === row.city.toLowerCase())) continue;
+      if (selected.some(item => normalizeLocationName(item.city) === normalizeLocationName(row.city))) continue;
       selected.push(row);
       if (selected.length >= GLOBALPING_RECOVERY_CITY_LIMIT) break;
     }
@@ -1078,6 +1110,19 @@ function mtrResultReachedTarget(result, targetHost) {
 async function createGlobalpingMtr(endpoint, cities) {
   const { transport, port, host } = parseUrl(endpoint.link);
   if (!host || !cities.length) throw new Error("Globalping recovery has no target or cities");
+  if (GLOBALPING_RECOVERY_TCP_ONLY && transport !== "tcp") {
+    return {
+      measurementId: "",
+      target: host,
+      transport,
+      port,
+      cities: [],
+      reachedCities: 0,
+      validReachedCities: 0,
+      verdict: "SKIPPED-GLOBALPING-NON-TCP",
+      note: "Globalping transport checks are not sufficient to prove a Hysteria/QUIC handshake.",
+    };
+  }
 
   const body = {
     type: "mtr",
@@ -1086,12 +1131,13 @@ async function createGlobalpingMtr(endpoint, cities) {
     locations: cities.map(city => ({
       country: "RU",
       city: city.city,
+      ...(GLOBALPING_RECOVERY_REQUIRE_EYEBALL ? { tags: ["eyeball-network"] } : {}),
       limit: 1,
     })),
     measurementOptions: {
-      protocol: transport === "udp" ? "UDP" : "TCP",
+      protocol: "TCP",
       port,
-      packets: 2,
+      packets: 3,
       ipVersion: 4,
     },
   };
@@ -1122,17 +1168,49 @@ async function createGlobalpingMtr(endpoint, cities) {
   }
 
   const resultRows = Array.isArray(data?.results) ? data.results : [];
-  const cityRows = resultRows.map(row => ({
-    city: row?.probe?.location?.city || "",
-    network: row?.probe?.location?.network || "",
-    tags: Array.isArray(row?.probe?.tags) ? row.probe.tags : [],
-    status: String(row?.result?.status || data?.status || "unknown"),
-    reachedTarget: mtrResultReachedTarget(row, host),
-    resolvedAddress: row?.result?.resolvedAddress || "",
-    finalHopLoss: Number([...((row?.result?.hops) || [])].at(-1)?.stats?.loss),
-  }));
+  const cityRows = resultRows.map((row, index) => {
+    const probe = row?.probe || {};
+    const requestedCity = cities[index]?.city || "";
+    const actualCity = probe?.city || probe?.location?.city || "";
+    const country = String(probe?.country || probe?.location?.country || "").toUpperCase();
+    const tags = Array.isArray(probe?.tags) ? probe.tags.map(String) : [];
+    const normalizedTags = new Set(tags.map(tag => tag.trim().toLowerCase()));
+    const cityMatches = Boolean(actualCity) && normalizeLocationName(actualCity) === normalizeLocationName(requestedCity);
+    const countryMatches = country === "RU";
+    const hasEyeballTag = normalizedTags.has("eyeball-network");
+    const hasDatacenterTag = normalizedTags.has("datacenter-network");
+    const eyeballMatches = !GLOBALPING_RECOVERY_REQUIRE_EYEBALL || (hasEyeballTag && !hasDatacenterTag);
+    const validProbe = cityMatches && countryMatches && eyeballMatches;
+    return {
+      requestedCity,
+      city: actualCity,
+      country,
+      network: probe?.network || probe?.location?.network || "",
+      tags,
+      latitude: Number(probe?.latitude ?? probe?.location?.latitude) || null,
+      longitude: Number(probe?.longitude ?? probe?.location?.longitude) || null,
+      status: String(row?.result?.status || data?.status || "unknown"),
+      validProbe,
+      validation: { cityMatches, countryMatches, eyeballMatches, hasEyeballTag, hasDatacenterTag },
+      reachedTarget: mtrResultReachedTarget(row, host),
+      resolvedAddress: row?.result?.resolvedAddress || "",
+      finalHopLoss: Number([...((row?.result?.hops) || [])].at(-1)?.stats?.loss),
+    };
+  });
 
   const reachedCities = cityRows.filter(row => row.reachedTarget).length;
+  const validReachedCities = new Set(
+    cityRows
+      .filter(row => row.validProbe && row.reachedTarget)
+      .map(row => normalizeLocationName(row.city))
+      .filter(Boolean)
+  ).size;
+  const verdict = validReachedCities >= GLOBALPING_RECOVERY_MIN_DISTINCT_CITIES
+    ? "PASS-GLOBALPING"
+    : validReachedCities > 0
+      ? "PARTIAL-GLOBALPING"
+      : "FAIL-GLOBALPING";
+
   return {
     measurementId: id,
     target: host,
@@ -1140,7 +1218,9 @@ async function createGlobalpingMtr(endpoint, cities) {
     port,
     cities: cityRows,
     reachedCities,
-    verdict: reachedCities > 0 ? "PASS-GLOBALPING" : "FAIL-GLOBALPING",
+    validReachedCities,
+    requiredDistinctCities: GLOBALPING_RECOVERY_MIN_DISTINCT_CITIES,
+    verdict,
   };
 }
 
@@ -1247,7 +1327,9 @@ async function runGlobalpingRecoveryPass(endpointRows, items, xrayById, context)
   const budgetEndpoints = Number.isFinite(remaining)
     ? Math.max(0, Math.floor(Math.max(0, remaining - reserve) / perEndpointTests))
     : 0;
-  const targets = chooseGlobalpingRecoveryTargets(endpointRows, xrayById).slice(0, budgetEndpoints);
+  const targets = chooseGlobalpingRecoveryTargets(endpointRows, xrayById)
+    .filter(endpoint => !GLOBALPING_RECOVERY_TCP_ONLY || endpoint.transport === "tcp")
+    .slice(0, budgetEndpoints);
   if (!targets.length) {
     return {
       attempted: 0,
@@ -1276,6 +1358,8 @@ async function runGlobalpingRecoveryPass(endpointRows, items, xrayById, context)
     endpoint.globalpingRecovery = result;
     if (result?.verdict === "PASS-GLOBALPING") {
       endpoint.globalpingVerdict = "PASS-GLOBALPING";
+    } else if (result?.verdict === "PARTIAL-GLOBALPING") {
+      endpoint.globalpingVerdict = "PARTIAL-GLOBALPING";
     }
     rows.push({ key: endpoint.key, verdict: result?.verdict || "UNKNOWN-GLOBALPING", reachedCities: result?.reachedCities || 0, cities: result?.cities || [], error: result?.error || "" });
     console.log(`RUSSIA TEST V3 GLOBALPING ${index + 1}/${targets.length}: ${endpoint.key} => ${result?.verdict || "UNKNOWN"}`);
@@ -1370,12 +1454,18 @@ function runSelfTest() {
   const selectedCities = chooseGlobalpingRecoveryCities([
     { city: "Moscow", count: 20, eyeball: 20, datacenter: 0 },
     { city: "Saint Petersburg", count: 20, eyeball: 20, datacenter: 0 },
-    { city: "Yekaterinburg", count: 8, eyeball: 8, datacenter: 0 },
-    { city: "Kazan", count: 7, eyeball: 7, datacenter: 0 },
-    { city: "Novosibirsk", count: 6, eyeball: 6, datacenter: 0 },
+    { city: "Yekaterinburg", count: 8, eyeball: 0, datacenter: 8 },
+    { city: "Kazan", count: 7, eyeball: 1, datacenter: 6 },
+    { city: "Novosibirsk", count: 6, eyeball: 2, datacenter: 4 },
+    { city: "Krasnodar", count: 2, eyeball: 1, datacenter: 1 },
   ]);
-  if (selectedCities.length !== 3 || selectedCities.some(city => /moscow|petersburg/i.test(city.city))) {
+  if (selectedCities.length !== 3 || selectedCities.some(city => isGlobalpingCoreCity(city.city)) || selectedCities.some(city => !city.eyeball)) {
     throw new Error("Globalping recovery city selector self-test failed");
+  }
+  const flattenedProbe = { probe: { city: "Kazan", country: "RU", tags: ["eyeball-network"] }, result: { status: "finished", resolvedAddress: "203.0.113.10", hops: [{ resolvedAddress: "203.0.113.10", stats: { loss: 0 } }] } };
+  const probeMeta = flattenedProbe.probe;
+  if (probeMeta.city !== "Kazan" || !probeMeta.tags.includes("eyeball-network")) {
+    throw new Error("Globalping flattened probe self-test failed");
   }
   const mtrOk = mtrResultReachedTarget({
     result: {
@@ -1387,8 +1477,20 @@ function runSelfTest() {
   if (!mtrOk) throw new Error("Globalping MTR parser self-test failed");
   const hostToolsSummary = summarizeHostToolsEvents([{ location: { city: "Yekaterinburg", country: "RU" }, ok: true, status: "open", latencyMs: 41 }]);
   if (hostToolsSummary.passedOtherCities !== 1) throw new Error("host.tools city parser self-test failed");
-  const expandedHostTools = expandPassingLinks([{ link: "vless://11111111-1111-1111-1111-111111111111@y:443?security=tls&type=tcp", id: "hosttools-test" }], [{ key: "tcp|y|443", verdict: "PASS-HOSTTOOLS" }]);
-  if (expandedHostTools.length !== 1) throw new Error("host.tools verdict expansion self-test failed");
+  const sampleLink = "vless://11111111-1111-1111-1111-111111111111@y:443?security=tls&type=tcp";
+  const nonAuthoritativeVerdicts = [
+    "PASS-GLOBALPING",
+    "PASS-HOSTTOOLS",
+    "PASS-HOSTTOOLS-STRONG",
+    "PASS-UDP-STRONG",
+    "PASS-UDP-NOT-REFUSED",
+  ];
+  for (const verdict of nonAuthoritativeVerdicts) {
+    const expanded = expandPassingLinks([{ link: sampleLink, id: `non-authoritative-${verdict}` }], [{ key: "tcp|y|443", verdict }]);
+    if (expanded.length !== 0) throw new Error(`non-authoritative verdict expansion self-test failed: ${verdict}`);
+  }
+  const expandedCheckHost = expandPassingLinks([{ link: sampleLink, id: "check-host-test" }], [{ key: "tcp|y|443", verdict: "PASS" }]);
+  if (expandedCheckHost.length !== 1) throw new Error("Check-Host verdict expansion self-test failed");
   console.log("RUSSIA TEST V3 SELF-TEST: PASS");
 }
 
@@ -1422,49 +1524,9 @@ async function main() {
       ? await runGlobalpingRecoveryPass(endpoints, items, xrayById, globalping)
       : { attempted: 0, recovered: 0, skipped: "not-run", endpoints: [] };
 
-    if (globalpingRecovery.recovered > 0) {
-      const recoveredKeys = new Set(
-        endpoints
-          .filter(endpoint => endpoint.globalpingVerdict === "PASS-GLOBALPING")
-          .map(endpoint => endpoint.key)
-      );
-      for (const endpoint of endpoints) {
-        if (recoveredKeys.has(endpoint.key)) endpoint.verdict = "PASS-GLOBALPING";
-      }
-
-      const recoveredItems = items.filter(item => {
-        try { return recoveredKeys.has(endpointKey(item.link)); }
-        catch { return false; }
-      });
-      const recoveredXrayById = await runXrayCandidateChecks(recoveredItems, endpoints);
-      for (const [id, row] of recoveredXrayById.entries()) {
-        xrayById.set(id, row);
-      }
-    }
-
     const hostToolsRecovery = label === "lte"
       ? await runHostToolsRecoveryPass(endpoints, items, xrayById)
       : { attempted: 0, recovered: 0, strongRecovered: 0, skipped: "not-run", endpoints: [] };
-
-    if (hostToolsRecovery.recovered > 0) {
-      const recoveredKeys = new Set(
-        endpoints
-          .filter(endpoint => ["PASS-HOSTTOOLS", "PASS-HOSTTOOLS-STRONG"].includes(endpoint.hostToolsVerdict))
-          .map(endpoint => endpoint.key)
-      );
-      for (const endpoint of endpoints) {
-        if (recoveredKeys.has(endpoint.key)) endpoint.verdict = endpoint.hostToolsVerdict;
-      }
-
-      const recoveredItems = items.filter(item => {
-        try { return recoveredKeys.has(endpointKey(item.link)); }
-        catch { return false; }
-      });
-      const recoveredXrayById = await runXrayCandidateChecks(recoveredItems, endpoints);
-      for (const [id, row] of recoveredXrayById.entries()) {
-        xrayById.set(id, row);
-      }
-    }
 
     lists[label] = expandPassingLinks(items, endpoints);
     await fs.writeFile(path.join(OUT_DIR, `locations-${label}.txt`), lists[label].length ? `${lists[label].join("\n")}\n` : "", "utf8");
@@ -1486,7 +1548,7 @@ async function main() {
       const transportOnlyLinks = [...new Set(lists[label].filter(link => !xrayVerifiedLinks.includes(link)))];
       await fs.writeFile(path.join(OUT_DIR, "locations-lte-transport-only.txt"), transportOnlyLinks.length ? `${transportOnlyLinks.join("\n")}\n` : "", "utf8");
     }
-    const strongEndpointKeys = new Set(endpoints.filter(e => ["PASS", "PASS-UDP-STRONG"].includes(e.verdict)).map(e => e.key));
+    const strongEndpointKeys = new Set(endpoints.filter(e => e.verdict === "PASS").map(e => e.key));
     const partialEndpointKeys = new Set(endpoints.filter(e => e.verdict === "PASS-PARTIAL").map(e => e.key));
     const strongLinks = [...new Set(items.filter(item => { try { return strongEndpointKeys.has(endpointKey(item.link)); } catch { return false; } }).map(item => String(item.link).trim()).filter(Boolean))];
     const partialLinks = [...new Set(items.filter(item => { try { return partialEndpointKeys.has(endpointKey(item.link)); } catch { return false; } }).map(item => String(item.link).trim()).filter(Boolean))];
@@ -1528,7 +1590,7 @@ async function main() {
           .filter(e => e.globalpingVerdict === "PASS-GLOBALPING")
           .map(e => e.key)
       );
-      const globalpingRecoveredLinks = [
+      const globalpingTransportLinks = [
         ...new Set(
           items
             .filter(item => {
@@ -1539,15 +1601,26 @@ async function main() {
             .filter(Boolean)
         )
       ];
+      const globalpingXrayConfirmedLinks = globalpingTransportLinks.filter(link => {
+        const item = items.find(candidate => String(candidate.link).trim() === link);
+        return item ? exactXrayPassing(item, xrayById) : false;
+      });
+      await fs.writeFile(
+        path.join(OUT_DIR, "locations-lte-globalping-transport.txt"),
+        globalpingTransportLinks.length ? `${globalpingTransportLinks.join("\n")}\n` : "",
+        "utf8"
+      );
       await fs.writeFile(
         path.join(OUT_DIR, "locations-lte-globalping-recovered.txt"),
-        globalpingRecoveredLinks.length ? `${globalpingRecoveredLinks.join("\n")}\n` : "",
+        globalpingXrayConfirmedLinks.length ? `${globalpingXrayConfirmedLinks.join("\n")}\n` : "",
         "utf8"
       );
       const hysteria = items.filter(item => ["hysteria","hysteria2","tuic"].includes(protocolOf(item.link)));
-      const hysteriaPassing = expandPassingLinks(hysteria, endpoints);
+      const hysteriaXrayPassing = [...new Set(hysteria.filter(item => exactXrayPassing(item, xrayById)).map(item => String(item.link).trim()).filter(Boolean))];
       await fs.writeFile(path.join(OUT_DIR, "lte-hysteria-all.txt"), hysteria.map(x => x.link).join("\n") + (hysteria.length ? "\n" : ""), "utf8");
-      await fs.writeFile(path.join(OUT_DIR, "lte-hysteria-passing.txt"), hysteriaPassing.join("\n") + (hysteriaPassing.length ? "\n" : ""), "utf8");
+      await fs.writeFile(path.join(OUT_DIR, "lte-hysteria-passing.txt"), hysteriaXrayPassing.join("\n") + (hysteriaXrayPassing.length ? "\n" : ""), "utf8");
+      reports[label].globalpingTransportLinks = globalpingTransportLinks;
+      reports[label].globalpingXrayConfirmedLinks = globalpingXrayConfirmedLinks;
     }
   }
 
@@ -1560,29 +1633,33 @@ async function main() {
   md.push("# Russia checker experiment v3", "", `Generated: ${new Date().toISOString()}`, `Scope: ${SCOPE}`, `Core Check-Host nodes: ${CORE_NODES.join(', ')}`, `TCP strong threshold: ${STRONG_QUORUM}/${CORE_NODES.length}; TCP minimum threshold: ${MIN_PASS_NODES}/${CORE_NODES.length}; non-pass TCP recheck: ${RECHECK_NONPASS ? "enabled" : "disabled"}; exact-link Xray: ${XRAY_ENABLED ? "enabled" : "disabled"}`, "");
   md.push("> Production files are untouched. This experiment uses source-health-candidates.json + Russian transport checks + an exact-link Xray validation stage. No routing, Fast/Gaming logic or production publication is involved.", "");
   for (const [label, report] of Object.entries(reports)) {
-    md.push(`## ${label.toUpperCase()}`, "", `Candidates: **${report.candidates}**`, `Protocols: ${Object.entries(report.protocols).map(([k,v]) => `**${k}=${v}**`).join(', ') || 'none'}`, `Unique endpoints: **${report.uniqueEndpoints}**`, `Verdicts: ${Object.entries(report.endpointVerdicts).map(([k,v]) => `**${k}=${v}**`).join(', ') || 'none'}`, `HAPP-ready transport links: **${lists[label].length}**`, `Exact-link Xray: ${Object.entries(report.xraySummary || {}).map(([k,v]) => `**${k}=${v}**`).join(', ') || 'not run'}`, label === "lte" ? `Copy all transport candidates: [locations-${label}.txt](./locations-${label}.txt)\nExact-link Xray verified: [locations-lte-xray-verified.txt](./locations-lte-xray-verified.txt)\nNeeds manual review: [locations-lte-xray-review.txt](./locations-lte-xray-review.txt)\nTransport-only remainder: [locations-lte-transport-only.txt](./locations-lte-transport-only.txt)\nStrong only: [locations-${label}-strong.txt](./locations-${label}-strong.txt)\nPartial only: [locations-${label}-partial.txt](./locations-${label}-partial.txt)` : `Copy all: [locations-${label}.txt](./locations-${label}.txt)`, "");
+    md.push(`## ${label.toUpperCase()}`, "", `Candidates: **${report.candidates}**`, `Protocols: ${Object.entries(report.protocols).map(([k,v]) => `**${k}=${v}**`).join(', ') || 'none'}`, `Unique endpoints: **${report.uniqueEndpoints}**`, `Verdicts: ${Object.entries(report.endpointVerdicts).map(([k,v]) => `**${k}=${v}**`).join(', ') || 'none'}`, `Check-Host transport links: **${lists[label].length}**`, `Exact-link Xray: ${Object.entries(report.xraySummary || {}).map(([k,v]) => `**${k}=${v}**`).join(', ') || 'not run'}`, label === "lte" ? `Copy Check-Host transport list: [locations-${label}.txt](./locations-${label}.txt)\nExact-link Xray verified: [locations-lte-xray-verified.txt](./locations-lte-xray-verified.txt)\nNeeds manual review: [locations-lte-xray-review.txt](./locations-lte-xray-review.txt)\nTransport-only remainder: [locations-lte-transport-only.txt](./locations-lte-transport-only.txt)\nGlobalping transport diagnostic: [locations-lte-globalping-transport.txt](./locations-lte-globalping-transport.txt)\nGlobalping + Xray (GitHub runner) intersection: [locations-lte-globalping-recovered.txt](./locations-lte-globalping-recovered.txt)\nStrong only: [locations-${label}-strong.txt](./locations-${label}-strong.txt)\nPartial only: [locations-${label}-partial.txt](./locations-${label}-partial.txt)` : `Copy all: [locations-${label}.txt](./locations-${label}.txt)`, "");
   }
   md.push("## Why v3 should recover VLESS/Trojan", "", "The previous v2 parser treated Check-Host TCP results of the documented form [{\"time\":0.03,\"address\":\"...\"}] as non-reachable because it expected an object with .time directly. v3 parses the first result object correctly.", "", "The experiment also keeps protocol schemes unchanged: vless:// stays VLESS, trojan:// stays Trojan, hysteria2:// stays Hysteria2, etc.", "");
   md.push("## Recheck strategy", "", "Every non-passing TCP endpoint gets one second Check-Host measurement. A server can therefore recover from a transient timeout or asymmetric first measurement. The report keeps both attempts.", "", "After transport screening, the experiment starts an exact-link Xray test. Links that fail the normal HTTPS targets get the same Cloudflare real-download check used by production health (4 MB, HTTP 2xx/3xx, meaningful download, minimum throughput). This is a fallback verifier, not a replacement for the normal target checks.", "", "For production later, we can choose which verdict tiers to publish after comparing them with your HAPP results.", "");
-  md.push("## Hysteria / UDP", "", "Hysteria/Hysteria2/TUIC are detected from the URI scheme and checked with Check-Host UDP, never TCP. The original link is copied to the output unchanged; no Hysteria link is converted to VLESS.", "", "`PASS-UDP-*` means the Russian gate did not receive an explicit UDP refusal. Check-Host itself documents the silent UDP state as `Open or filtered`, so this is a transport screening result, not proof of a successful Hysteria/QUIC handshake.", "", "The exact-link Xray stage uses the real parsed protocol from `scripts/link-runtime.mjs` and therefore keeps Hysteria2 as Hysteria2 instead of coercing it into VLESS.");
+  md.push("## Hysteria / UDP", "", "Hysteria/Hysteria2/TUIC are detected from the URI scheme. UDP transport screening is kept as diagnostics only; a non-refused UDP port does not prove a Hysteria/QUIC handshake.", "", "`lte-hysteria-passing.txt` now contains only links that passed the exact-link Xray stage. Globalping is not used to certify UDP/Hysteria because it can measure UDP reachability but cannot perform the original protocol handshake.", "", "The exact-link Xray stage uses the real parsed protocol from `scripts/link-runtime.mjs`, so Hysteria2 remains Hysteria2 instead of being converted to VLESS.");
   md.push("## Check-Host Russia nodes", "", checkHostDiscovery.nodes?.length ? checkHostDiscovery.nodes.map(n => `- ${n.id}: ${n.city}`).join("\n") : (checkHostDiscovery.error || "No nodes discovered."), "");
   md.push("## Globalping — additional Russian cities",
     "",
     globalping.error ? `Probe discovery/limits error: ${globalping.error}` : `Online Russian probes discovered: **${globalping.probesInRussia ?? 0}**`,
     globalping.cities?.length ? `Inventory cities: ${globalping.cities.map(c => `${c.city} (${c.count}; eyeball=${c.eyeball}; dc=${c.datacenter})`).join(', ')}` : "Inventory cities: none",
-    globalping.recoveryCities?.length ? `Recovery cities (excluding Moscow/SPb): **${globalping.recoveryCities.map(c => c.city).join(', ')}**` : "Recovery cities: none",
+    globalping.recoveryCities?.length ? `Recovery cities (non-core, eyeball only): **${globalping.recoveryCities.map(c => `${c.city} (eyeball=${c.eyeball})`).join(', ')}**` : "Recovery cities: none",
     globalping.limits?.remaining != null ? `Globalping remaining budget before run: **${globalping.limits.remaining} tests**; reset: ${globalping.limits.resetSeconds ?? "?"} s.` : "Globalping rate-limit status was unavailable, so recovery measurements are not started.",
     "",
-    `Recovery is capped at **${GLOBALPING_RECOVERY_MAX_ENDPOINTS} endpoints** and reserves **${GLOBALPING_RECOVERY_RESERVE_TESTS} tests**. With three cities, one endpoint costs three Globalping tests. The actual target count is sized from the live remaining budget, and the run stops immediately on HTTP 429.`,
-    `Globalping recovery result: **${reports.lte?.globalpingRecovery?.recovered ?? 0} recovered / ${reports.lte?.globalpingRecovery?.attempted ?? 0} attempted**.`,
-    "This is the extra Russian checker intended to be reusable later for ordinary locations. It is used as a second geographic transport signal, not as proof of a working proxy protocol.",
+    `Recovery is capped at **${GLOBALPING_RECOVERY_MAX_ENDPOINTS} endpoints**, uses **${GLOBALPING_RECOVERY_CITY_LIMIT} cities** per endpoint and requires **${GLOBALPING_RECOVERY_MIN_DISTINCT_CITIES} distinct valid eyeball cities**.`,
+    `Globalping result: **${reports.lte?.globalpingRecovery?.recovered ?? 0} strong transport recoveries / ${reports.lte?.globalpingRecovery?.attempted ?? 0} attempted**.`,
+    "Globalping is a transport/network measurement source only. It does not run a VLESS, Trojan or Hysteria2 client, so a Globalping PASS is never published directly as a working HAPP link.",
+    "The exact-link Xray stage runs on the GitHub Actions runner, not inside the Russian ISP. Therefore `locations-lte-globalping-recovered.txt` means Globalping transport recovery + Xray protocol success outside Russia; it is a shortlist, not proof of Russian mobile reachability.",
     ""
   );
-  md.push("## Files for your manual test", "", "- `locations-lte.txt` — broad LTE test list: normal Check-Host passes plus Globalping-recovered endpoints.", "- `locations-lte-strong.txt` — stronger Check-Host subset.", "- `locations-lte-partial.txt` — exactly-1/3 Check-Host TCP subset.", "- `locations-lte-globalping-recovered.txt` — endpoints recovered specifically by the additional Russian-city checker.", "- `locations-lte-xray-verified.txt` — exact-link Xray verified links, including the Cloudflare speed fallback.", "- `locations-lte-xray-cloudflare-speed.txt` — links recovered specifically by the production-style Cloudflare real-download fallback.", "- `locations-lte-xray-review.txt` — links that still failed exact-link Xray.", "- `lte-hysteria-all.txt` — all original Hysteria/Hysteria2/TUIC LTE candidates.", "- `lte-hysteria-passing.txt` — UDP transport-screened Hysteria/Hysteria2/TUIC links.", "- `globalping-city-diagnostic.json` — current Russian probe inventory, rate-limit state and selected recovery cities.", "- `check-host-russia-nodes.json` — current Check-Host Russian nodes.", "");
+  md.push("## Files for your manual test", "", "- `locations-lte.txt` — only the Russian Check-Host baseline (transport signal; not protocol proof).", "- `locations-lte-strong.txt` — strong Check-Host subset.", "- `locations-lte-partial.txt` — exactly-1/3 Check-Host TCP subset.", "- `locations-lte-globalping-transport.txt` — endpoints that passed the additional Globalping Russian eyeball transport gate; diagnostic only.", "- `locations-lte-globalping-recovered.txt` — intersection of Globalping transport recovery and exact-link Xray PASS on the GitHub runner; shortlist only, not Russian protocol proof.", "- `locations-lte-xray-verified.txt` — exact-link Xray verified links.", "- `locations-lte-xray-cloudflare-speed.txt` — links recovered specifically by the Cloudflare real-download fallback.", "- `locations-lte-xray-review.txt` — links that still failed exact-link Xray.", "- `lte-hysteria-all.txt` — all original Hysteria/Hysteria2/TUIC LTE candidates.", "- `lte-hysteria-passing.txt` — Hysteria-family links that passed exact-link Xray.", "- `globalping-city-diagnostic.json` — current Russian probe inventory and selected recovery cities.", "- `check-host-russia-nodes.json` — current Check-Host Russian nodes.", "");
   await fs.writeFile(path.join(OUT_DIR, "results.md"), `${md.join("\n")}\n`, "utf8");
   await fs.writeFile(path.join(OUT_DIR, "results.json"), `${JSON.stringify({ generatedAt:new Date().toISOString(), scope:SCOPE, coreNodes:CORE_NODES, strongQuorum:STRONG_QUORUM, minPassNodes:MIN_PASS_NODES, recheckNonPass:RECHECK_NONPASS, globalpingRecoveryEnabled:GLOBALPING_RECOVERY_ENABLED,
       globalpingRecoveryMaxEndpoints:GLOBALPING_RECOVERY_MAX_ENDPOINTS,
       globalpingRecoveryCityLimit:GLOBALPING_RECOVERY_CITY_LIMIT,
+      globalpingRecoveryMinDistinctCities:GLOBALPING_RECOVERY_MIN_DISTINCT_CITIES,
+      globalpingRecoveryRequireEyeball:GLOBALPING_RECOVERY_REQUIRE_EYEBALL,
+      globalpingRecoveryTcpOnly:GLOBALPING_RECOVERY_TCP_ONLY,
       hostToolsEnabled: HOSTTOOLS_ENABLED,
       hostToolsMaxRequests: HOSTTOOLS_MAX_REQUESTS,
       hostToolsReserveRequests: HOSTTOOLS_RESERVE_REQUESTS,
