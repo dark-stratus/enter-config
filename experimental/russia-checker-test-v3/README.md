@@ -4,125 +4,41 @@ This is the single experimental v3 path. Do not create v4/v5: edit these files i
 
 ## Purpose
 
-Test LTE/whitelist links without changing production files.
+Test LTE/whitelist links without changing production. The experiment uses three layers: Check-Host for the Russian transport baseline, exact-link Xray for the original proxy protocol, and host.tools as an independent multi-region TCP source. Globalping is not used by the main test.
 
-The experiment answers three separate questions:
+## host.tools
 
-1. **Russian transport reachability** — Check-Host from the currently configured Russian nodes (`ru1`, `ru2`, `ru3`).
-2. **Additional Russian geography** — a capped Globalping MTR check from Russian cities other than Moscow and Saint Petersburg.
-3. **Exact-link protocol validation** — Xray builds the exact VLESS/Trojan/Hysteria2 link from `scripts/link-runtime.mjs` and tests real HTTP traffic through that tunnel.
+host.tools exposes a public `/api/v1/network/tcp` endpoint with no API key. The tool is multi-region and reports TCP open/closed/filtered state per region; the free API is limited to 100 requests/hour. v3 caps itself at 80 requests and reserves 15. citehttps://host.tools/api-docs
 
-The Xray stage runs on GitHub Actions, so it is **not itself a Russian vantage point**. It validates the exact link/protocol/configuration from the runner.
+Only **Russian cities other than Moscow and Saint Petersburg** can produce a host.tools recovery verdict. One passing city gives `PASS-HOSTTOOLS`; two or more distinct non-core Russian cities give `PASS-HOSTTOOLS-STRONG`. A host.tools failure never removes a server. citehttps://host.tools/network/tcp
 
-## Protocol handling
+The host.tools stage is used for TCP endpoints only. Hysteria/Hysteria2/TUIC remain UDP-screened and then go through exact-link Xray.
 
-Protocol schemes are never rewritten:
+## Exact-link Xray
 
-- `vless://` stays VLESS.
-- `trojan://` stays Trojan.
-- `hysteria2://` stays Hysteria2.
-- Hysteria-family links are screened with UDP, never with a TCP pre-check.
-
-The Xray verifier uses the actual parser/builder from `scripts/link-runtime.mjs`.
-
-Some source links contain `extra=null` on VLESS xhttp. The experiment normalizes only that test input before building the Xray probe config so the shared runtime does not dereference `null.mode`. The original published link is never changed.
-
-## Exact-link Xray verification
-
-The normal Xray test tries the configured public HTTPS targets.
-
-If those targets fail, v3 runs the same type of **real Cloudflare download check already used by production health**:
-
-- Cloudflare download endpoint
-- HTTP 2xx/3xx
-- at least 256 KiB downloaded
-- at least 1024 KB/s
-- up to 9 seconds
-
-This is a fallback verifier only. It is deliberately not a global speed gate for every link.
-
-Output:
-
-`results/locations-lte-xray-verified.txt` — links that pass either the normal exact-link Xray test or the Cloudflare speed fallback.
-
-`results/locations-lte-xray-cloudflare-speed.txt` — links recovered specifically by the Cloudflare download fallback.
-
-`results/locations-lte-xray-review.txt` — links that still fail exact-link Xray.
-
-## Additional Russian-city check
-
-Globalping is used as a second Russian geographic source, not as a replacement for Check-Host.
-
-The experiment discovers currently online Russian probes and then chooses up to four cities, excluding Moscow and Saint Petersburg. The preferred cities are:
-
-1. Yekaterinburg
-2. Kazan
-3. Novosibirsk
-4. Krasnodar
-
-If one of those is unavailable, another non-Moscow/non-SPb Russian city with an online probe is selected.
-
-For a candidate endpoint, v3 performs one MTR measurement using the selected cities and the correct transport:
-
-- TCP endpoints → TCP MTR to the endpoint port.
-- Hysteria/Hysteria2/TUIC endpoints → UDP MTR to the endpoint port.
-
-A Globalping result is considered a **transport recovery**, not proof that the proxy protocol itself works in HAPP.
-
-The anonymous Globalping API allows 250 measurement tests/hour and up to 50 probes per measurement. v3 therefore:
-
-- checks `/limits` before starting recovery,
-- uses at most 45 endpoints per run,
-- uses four city probes at most (about 180 tests),
-- keeps a reserve of 10 tests,
-- stops immediately on HTTP 429.
-
-An API token can be supplied through the GitHub secret `GLOBALPING_API_TOKEN` for the higher authenticated allowance.
+Xray now tests **every LTE link**, not only Check-Host transport passes. Protocol schemes are never rewritten: VLESS stays VLESS, Trojan stays Trojan, Hysteria2 stays Hysteria2, TUIC stays TUIC. The existing Cloudflare download fallback remains enabled. The lightweight `cp.cloudflare.com/generate_204` target is also included because it is already used by production health-check logic.
 
 ## Recovery order
 
-Globalping recovery runs after the first Check-Host pass and exact-link Xray stage.
+1. Check-Host baseline.
+2. Exact-link Xray for all LTE links.
+3. host.tools for TCP endpoints that still have no Xray success.
+4. Any endpoint recovered from a non-core Russian city is tested through Xray once more.
 
-The highest priority goes to:
-
-1. endpoints that failed/are unknown in Check-Host,
-2. partial Check-Host endpoints,
-3. endpoints where all available exact-link Xray candidates failed.
-
-If Globalping reaches the endpoint from at least one selected Russian city, the endpoint is temporarily admitted as `PASS-GLOBALPING` for the experiment and its links are tested through Xray once more.
-
-This gives us a useful three-way comparison:
-
-`Russia transport` + `other Russian city transport` + `exact link through Xray`.
+The broad `locations-lte.txt` is intentionally permissive for the experiment: host.tools recovery is kept even if GitHub's non-Russian Xray runner cannot reproduce the link.
 
 ## Outputs
 
-`results/locations-lte.txt` — broad HAPP test list, including endpoints recovered by Globalping.
-
-`results/locations-lte-strong.txt` — links from strong Check-Host endpoint results.
-
-`results/locations-lte-partial.txt` — links from partial Check-Host TCP results.
-
-`results/locations-lte-globalping-recovered.txt` — links recovered specifically by the additional Russian-city checker.
-
-`results/locations-lte-xray-verified.txt` — exact-link Xray verified links, including Cloudflare-speed fallback successes.
-
-`results/locations-lte-xray-cloudflare-speed.txt` — Cloudflare-speed fallback successes only.
-
-`results/locations-lte-xray-review.txt` — links that still fail or remain inconclusive under exact-link Xray.
-
-`results/locations-lte-transport-only.txt` — transport candidates not confirmed by exact-link Xray.
-
-`results/lte-hysteria-all.txt` — all original Hysteria/Hysteria2/TUIC LTE candidates, unchanged.
-
-`results/lte-hysteria-passing.txt` — Hysteria-family links that pass the UDP transport screen. This does not prove the QUIC/application handshake.
-
-`results/globalping-city-diagnostic.json` — current Russian Globalping probe inventory, selected recovery cities and rate-limit state.
-
-`results/check-host-russia-nodes.json` — current Check-Host Russian nodes.
+- `results/locations-lte.txt` — broad HAPP test list.
+- `results/locations-lte-xray-verified.txt` — exact-link Xray verified links.
+- `results/locations-lte-xray-review.txt` — Xray failures/inconclusive links.
+- `results/locations-lte-hosttools-recovered.txt` — links whose TCP endpoint was reachable from at least one non-core Russian city according to host.tools.
+- `results/hosttools-russia-diagnostic.json` — per-endpoint host.tools results and city observations.
+- `results/locations-lte-strong.txt` / `partial.txt` — Check-Host strength buckets.
+- `results/lte-hysteria-all.txt` — all original Hysteria/Hysteria2/TUIC links unchanged.
+- `results/lte-hysteria-passing.txt` — Hysteria-family UDP non-refusal screen.
+- `results/results.md` — human-readable report.
 
 ## Production boundary
 
-No production routing, publication, Fast/Gaming logic, or production health files are changed by this experiment.
-
-The eventual production Russia checker can reuse the additional-city mechanism, but publication criteria should be chosen only after comparing these experimental lists with real HAPP results in Russia.
+No production routing, publication, Fast/Gaming logic or production health files are changed.

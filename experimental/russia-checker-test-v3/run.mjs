@@ -28,7 +28,7 @@ const CREATE_INTERVAL_MS = Math.max(800, Number(process.env.RUSSIA_TEST_CREATE_I
 const CONCURRENCY = Math.max(1, Math.min(3, Number(process.env.RUSSIA_TEST_CONCURRENCY) || 2));
 const RETRIES = Math.max(3, Math.min(8, Number(process.env.RUSSIA_TEST_RETRIES) || 6));
 
-const GLOBALPING_ENABLED = !/^(0|false|no)$/i.test(String(process.env.RUSSIA_TEST_GLOBALPING || "1"));
+const GLOBALPING_ENABLED = !/^(0|false|no)$/i.test(String(process.env.RUSSIA_TEST_GLOBALPING || "0"));
 const GLOBALPING_RECOVERY_ENABLED = !/^(0|false|no)$/i.test(String(process.env.RUSSIA_TEST_GLOBALPING_RECOVERY || "1"));
 const GLOBALPING_BASE = String(process.env.RUSSIA_TEST_GLOBALPING_BASE || "https://api.globalping.io/v1").replace(/\/$/, "");
 const GLOBALPING_TOKEN = String(process.env.RUSSIA_TEST_GLOBALPING_TOKEN || process.env.GLOBALPING_API_TOKEN || "").trim();
@@ -40,6 +40,14 @@ const GLOBALPING_RECOVERY_CONCURRENCY = 1;
 const GLOBALPING_POLL_MS = Math.max(500, Number(process.env.RUSSIA_TEST_GLOBALPING_POLL_MS) || 700);
 const GLOBALPING_TIMEOUT_MS = Math.max(10000, Number(process.env.RUSSIA_TEST_GLOBALPING_TIMEOUT_MS) || 30000);
 const GLOBALPING_MTR_TIMEOUT_SECONDS = Math.max(5, Math.min(20, Number(process.env.RUSSIA_TEST_GLOBALPING_MTR_TIMEOUT_SECONDS) || 12));
+const HOSTTOOLS_ENABLED = !/^(0|false|no)$/i.test(String(process.env.RUSSIA_TEST_HOSTTOOLS || "1"));
+const HOSTTOOLS_BASE = String(process.env.RUSSIA_TEST_HOSTTOOLS_BASE || "https://host.tools").replace(/\/$/, "");
+const HOSTTOOLS_MAX_REQUESTS = Math.max(1, Math.min(90, Number(process.env.RUSSIA_TEST_HOSTTOOLS_MAX_REQUESTS) || 80));
+const HOSTTOOLS_RESERVE_REQUESTS = Math.max(0, Math.min(20, Number(process.env.RUSSIA_TEST_HOSTTOOLS_RESERVE_REQUESTS) || 15));
+const HOSTTOOLS_REQUEST_INTERVAL_MS = Math.max(350, Number(process.env.RUSSIA_TEST_HOSTTOOLS_REQUEST_INTERVAL_MS) || 650);
+const HOSTTOOLS_TIMEOUT_MS = Math.max(7000, Number(process.env.RUSSIA_TEST_HOSTTOOLS_TIMEOUT_MS) || 15000);
+const HOSTTOOLS_RU_STRONG_CITIES = Math.max(2, Number(process.env.RUSSIA_TEST_HOSTTOOLS_RU_STRONG_CITIES) || 2);
+const HOSTTOOLS_EXCLUDE_CITIES = new Set(["moscow", "saint petersburg", "st petersburg", "st. petersburg", "санкт-петербург"]);
 const XRAY_ENABLED = !/^(0|false|no)$/i.test(String(process.env.RUSSIA_TEST_XRAY || "1"));
 const XRAY_BIN = path.resolve(ROOT, process.env.RUSSIA_TEST_XRAY_BIN || ".xray/xray");
 const XRAY_START_TIMEOUT_MS = Math.max(5000, Number(process.env.RUSSIA_TEST_XRAY_START_TIMEOUT_MS) || 12000);
@@ -164,6 +172,156 @@ async function withRetry(fn, attempts = RETRIES) {
     }
   }
   throw lastError || new Error("retry failed");
+}
+
+let lastHostToolsRequestAt = 0;
+let hostToolsRequestsUsed = 0;
+async function throttleHostToolsRequest() {
+  const wait = HOSTTOOLS_REQUEST_INTERVAL_MS - (Date.now() - lastHostToolsRequestAt);
+  if (wait > 0) await sleep(wait);
+  lastHostToolsRequestAt = Date.now();
+}
+
+async function fetchHostToolsStream(url, timeoutMs = HOSTTOOLS_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, {
+      signal: controller.signal,
+      headers: authHeaders({ accept: "text/event-stream, application/json" }),
+    });
+    const text = await response.text();
+    const retryAfterMs = Number(response.headers.get("retry-after")) * 1000 || 0;
+    if (!response.ok) {
+      const error = new Error(`HTTP ${response.status}`);
+      error.status = response.status;
+      error.retryAfterMs = retryAfterMs;
+      throw error;
+    }
+    try {
+      const body = JSON.parse(text);
+      return { envelope: body, events: [body] };
+    } catch {}
+    const events = [];
+    let current = [];
+    const flush = () => {
+      if (!current.length) return;
+      const dataText = current.filter(line => line.startsWith("data:")).map(line => line.slice(5).trim()).join("\n");
+      if (dataText) {
+        try { events.push(JSON.parse(dataText)); } catch {}
+      }
+      current = [];
+    };
+    for (const line of text.split(/\r?\n/)) {
+      if (line === "") flush();
+      else if (!line.startsWith(":")) current.push(line);
+    }
+    flush();
+    if (!events.length) throw new Error("host.tools returned no JSON/SSE events");
+    return { envelope: events[0], events };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+const HOSTTOOLS_KNOWN_RU_CITIES = [
+  "Yekaterinburg", "Ekaterinburg", "Екатеринбург", "Kazan", "Казань", "Novosibirsk", "Новосибирск",
+  "Krasnodar", "Краснодар", "Rostov-on-Don", "Ростов-на-Дону", "Ufa", "Уфа", "Perm", "Пермь",
+  "Nizhny Novgorod", "Нizhny Novgorod", "Нижний Новгород", "Samara", "Самара", "Voronezh", "Воронеж",
+  "Chelyabinsk", "Челябинск", "Omsk", "Омск", "Vladivostok", "Владивосток", "Irkutsk", "Иркутск",
+  "Krasnoyarsk", "Красноярск", "Tyumen", "Тюмень", "Saratov", "Саратов", "Volgograd", "Волгоград",
+  "Tomsk", "Томск", "Barnaul", "Барнаул", "Naberezhnye Chelny", "Набережные Челны",
+];
+function hostToolsLocationText(value) {
+  if (typeof value === "string") return value;
+  if (!value || typeof value !== "object") return "";
+  return [value.name, value.city, value.region, value.country, value.location, value.probe, value.provider]
+    .filter(v => typeof v === "string").join(" ");
+}
+function hostToolsCountry(value, locationText = "") {
+  const text = `${String(value || "")} ${locationText}`.trim().toLowerCase();
+  if (/\b(?:ru|rus|russia|russian federation)\b|росси|рф/.test(text)) return true;
+  return HOSTTOOLS_KNOWN_RU_CITIES.some(city => text.includes(city.toLowerCase()));
+}
+function hostToolsCity(value, locationText = "") {
+  const explicit = String(value || "").trim().replace(/\s+/g, " ");
+  if (explicit) return explicit;
+  const text = String(locationText || "").replace(/\s+/g, " ");
+  for (const city of HOSTTOOLS_KNOWN_RU_CITIES) if (text.toLowerCase().includes(city.toLowerCase())) return city;
+  return text.split(",")[0]?.trim() || text.trim();
+}
+function hostToolsObservationRows(value, rows = [], seen = new Set(), depth = 0) {
+  if (depth > 6 || value == null || typeof value !== "object" || seen.has(value)) return rows;
+  seen.add(value);
+  if (Array.isArray(value)) { for (const item of value) hostToolsObservationRows(item, rows, seen, depth + 1); return rows; }
+  const location = value.location && typeof value.location === "object" ? value.location : null;
+  const locationText = hostToolsLocationText(value.location) || hostToolsLocationText(value);
+  const city = hostToolsCity(value.city ?? location?.city ?? value.region?.city ?? value.place?.city, locationText);
+  const country = String(value.country ?? location?.country ?? value.region?.country ?? value.place?.country ?? "");
+  const combined = `${locationText} ${hostToolsLocationText(value)}`.trim();
+  const status = String(value.status ?? value.state ?? value.verdict ?? value.result ?? value.outcome ?? value.portStatus ?? "").trim().toLowerCase();
+  const ok = value.ok === true || value.success === true || value.reachable === true || value.open === true || value.connected === true;
+  if (city && hostToolsCountry(country, combined)) rows.push({ city, country: country || "RU", ok, status, latencyMs: Number(value.latencyMs ?? value.latency ?? value.rtt ?? value.connectMs ?? 0) || 0, raw: value });
+  for (const nested of Object.values(value)) if (nested && typeof nested === "object") hostToolsObservationRows(nested, rows, seen, depth + 1);
+  return rows;
+}
+function hostToolsRowPassed(row) {
+  const status = String(row?.status || "").toLowerCase();
+  if (row?.ok === true) return true;
+  return /\b(open|opened|reachable|success|successful|up|connected|ok)\b/.test(status);
+}
+function summarizeHostToolsEvents(events) {
+  const byCity = new Map();
+  for (const row of hostToolsObservationRows(events)) {
+    const key = row.city.toLowerCase();
+    const current = byCity.get(key) || { city: row.city, attempts: 0, passed: 0, bestLatencyMs: 0, statuses: [] };
+    current.attempts += 1;
+    if (hostToolsRowPassed(row)) { current.passed += 1; if (!current.bestLatencyMs || (row.latencyMs > 0 && row.latencyMs < current.bestLatencyMs)) current.bestLatencyMs = row.latencyMs; }
+    if (row.status) current.statuses.push(row.status);
+    byCity.set(key, current);
+  }
+  const cities = [...byCity.values()].map(row => ({ ...row, passed: row.passed > 0, nonCore: !HOSTTOOLS_EXCLUDE_CITIES.has(row.city.toLowerCase()) }));
+  const russianPassedCities = cities.filter(row => row.nonCore && row.passed);
+  return { cities: cities.sort((a,b) => Number(b.passed)-Number(a.passed) || a.city.localeCompare(b.city)), russianPassedCities, passedOtherCities: russianPassedCities.length };
+}
+async function runHostToolsTcp(endpoint) {
+  if (!HOSTTOOLS_ENABLED || DRY_RUN) return { verdict: "SKIPPED-HOSTTOOLS", endpoint: endpoint.key };
+  if (endpoint.transport !== "tcp") return { verdict: "SKIPPED-HOSTTOOLS-UDP", endpoint: endpoint.key, cities: [] };
+  const { host, port } = parseUrl(endpoint.link);
+  const target = host.includes(":") ? `[${host}]:${port}` : `${host}:${port}`;
+  const url = `${HOSTTOOLS_BASE}/api/v1/network/tcp?q=${encodeURIComponent(target)}`;
+  if (hostToolsRequestsUsed >= Math.max(0, HOSTTOOLS_MAX_REQUESTS - HOSTTOOLS_RESERVE_REQUESTS)) return { verdict: "SKIPPED-HOSTTOOLS-BUDGET", endpoint: endpoint.key, url, cities: [], passedOtherCities: 0 };
+  await throttleHostToolsRequest();
+  hostToolsRequestsUsed += 1;
+  try {
+    const payload = await fetchHostToolsStream(url, HOSTTOOLS_TIMEOUT_MS);
+    const summary = summarizeHostToolsEvents(payload.events || [payload.envelope]);
+    const verdict = summary.passedOtherCities >= HOSTTOOLS_RU_STRONG_CITIES ? "PASS-HOSTTOOLS-STRONG" : summary.passedOtherCities >= 1 ? "PASS-HOSTTOOLS" : "FAIL-HOSTTOOLS";
+    return { verdict, endpoint: endpoint.key, url, cities: summary.cities, russianPassedCities: summary.russianPassedCities, passedOtherCities: summary.passedOtherCities, source: "host.tools" };
+  } catch (error) {
+    return { verdict: Number(error?.status || 0) === 429 ? "RATE-LIMIT-HOSTTOOLS" : "UNKNOWN-HOSTTOOLS", endpoint: endpoint.key, url, status: Number(error?.status || 0), error: error?.message || String(error), cities: [], russianPassedCities: [], passedOtherCities: 0 };
+  }
+}
+function chooseHostToolsRecoveryTargets(endpointRows, xrayById) {
+  return [...endpointRows].filter(endpoint => endpoint.transport === "tcp").filter(endpoint => !endpoint.members.some(member => ["PASS-XRAY", "PASS-XRAY-CLOUDFLARE"].includes(xrayById.get(String(member.id))?.verdict))).sort((a,b) => {
+    const rank = endpoint => ({ FAIL:4, UNKNOWN:3, "PASS-PARTIAL":2 }[String(endpoint.verdict)] || 1);
+    return rank(b)-rank(a) || a.key.localeCompare(b.key);
+  });
+}
+async function runHostToolsRecoveryPass(endpointRows, items, xrayById) {
+  if (!HOSTTOOLS_ENABLED || DRY_RUN) return { attempted: 0, recovered: 0, strongRecovered: 0, skipped: "disabled", endpoints: [] };
+  const budget = Math.max(0, Math.min(endpointRows.filter(e => e.transport === "tcp").length, HOSTTOOLS_MAX_REQUESTS - HOSTTOOLS_RESERVE_REQUESTS));
+  const targets = chooseHostToolsRecoveryTargets(endpointRows, xrayById).slice(0, budget);
+  const rows = []; let rateLimited = false;
+  for (let index=0; index<targets.length; index++) {
+    const result = await runHostToolsTcp(targets[index]);
+    targets[index].hostToolsRecovery = result;
+    if (["PASS-HOSTTOOLS","PASS-HOSTTOOLS-STRONG"].includes(result.verdict)) targets[index].hostToolsVerdict = result.verdict;
+    rows.push({ key: targets[index].key, verdict: result.verdict, passedOtherCities: result.passedOtherCities || 0, cities: result.cities || [], error: result.error || "" });
+    console.log(`RUSSIA TEST V3 HOSTTOOLS ${index+1}/${targets.length}: ${targets[index].key} => ${result.verdict} (${result.passedOtherCities||0} other-RU cities)`);
+    if (result.verdict === "RATE-LIMIT-HOSTTOOLS") { rateLimited=true; break; }
+  }
+  return { attempted: rows.length, recovered: rows.filter(r => ["PASS-HOSTTOOLS","PASS-HOSTTOOLS-STRONG"].includes(r.verdict)).length, strongRecovered: rows.filter(r=>r.verdict==="PASS-HOSTTOOLS-STRONG").length, skipped: rateLimited ? "stopped-on-rate-limit" : "", endpoints: rows, maxRequests: HOSTTOOLS_MAX_REQUESTS, reserveRequests: HOSTTOOLS_RESERVE_REQUESTS, requestsUsed: hostToolsRequestsUsed, rateLimited };
 }
 
 let lastCreateAt = 0;
@@ -358,7 +516,7 @@ async function checkEndpoint(endpoint, globalpingContext = null) {
 
 
 function xrayPassCandidateVerdict(verdict) {
-  return ["PASS", "PASS-PARTIAL", "PASS-GLOBALPING", "PASS-UDP-STRONG", "PASS-UDP-NOT-REFUSED", "DRY-RUN"].includes(String(verdict));
+  return ["PASS", "PASS-PARTIAL", "PASS-GLOBALPING", "PASS-HOSTTOOLS", "PASS-HOSTTOOLS-STRONG", "PASS-UDP-STRONG", "PASS-UDP-NOT-REFUSED", "DRY-RUN"].includes(String(verdict));
 }
 
 function getFreePort() {
@@ -744,7 +902,7 @@ function expandPassingLinks(items, endpointRows) {
     let key;
     try { key = endpointKey(link); } catch { continue; }
     const verdict = byKey.get(key)?.verdict;
-    if (["PASS", "PASS-PARTIAL", "PASS-GLOBALPING", "PASS-UDP-STRONG", "PASS-UDP-NOT-REFUSED", "DRY-RUN"].includes(verdict)) links.push(link);
+    if (["PASS", "PASS-PARTIAL", "PASS-GLOBALPING", "PASS-HOSTTOOLS", "PASS-HOSTTOOLS-STRONG", "PASS-UDP-STRONG", "PASS-UDP-NOT-REFUSED", "DRY-RUN"].includes(verdict)) links.push(link);
   }
   return [...new Set(links)];
 }
@@ -1191,6 +1349,10 @@ function runSelfTest() {
     }
   }, "203.0.113.10");
   if (!mtrOk) throw new Error("Globalping MTR parser self-test failed");
+  const hostToolsSummary = summarizeHostToolsEvents([{ location: { city: "Yekaterinburg", country: "RU" }, ok: true, status: "open", latencyMs: 41 }]);
+  if (hostToolsSummary.passedOtherCities !== 1) throw new Error("host.tools city parser self-test failed");
+  const expandedHostTools = expandPassingLinks([{ link: "vless://11111111-1111-1111-1111-111111111111@y:443?security=tls&type=tcp", id: "hosttools-test" }], [{ key: "tcp|y|443", verdict: "PASS-HOSTTOOLS" }]);
+  if (expandedHostTools.length !== 1) throw new Error("host.tools verdict expansion self-test failed");
   console.log("RUSSIA TEST V3 SELF-TEST: PASS");
 }
 
@@ -1220,18 +1382,18 @@ async function main() {
       ? await runXrayCandidateChecks(items, endpoints)
       : new Map();
 
-    const globalpingRecovery = label === "lte"
-      ? await runGlobalpingRecoveryPass(endpoints, items, xrayById, globalping)
-      : { attempted: 0, recovered: 0, skipped: "not-run", endpoints: [] };
+    const hostToolsRecovery = label === "lte"
+      ? await runHostToolsRecoveryPass(endpoints, items, xrayById)
+      : { attempted: 0, recovered: 0, strongRecovered: 0, skipped: "not-run", endpoints: [] };
 
-    if (globalpingRecovery.recovered > 0) {
+    if (hostToolsRecovery.recovered > 0) {
       const recoveredKeys = new Set(
         endpoints
-          .filter(endpoint => endpoint.globalpingVerdict === "PASS-GLOBALPING")
+          .filter(endpoint => ["PASS-HOSTTOOLS", "PASS-HOSTTOOLS-STRONG"].includes(endpoint.hostToolsVerdict))
           .map(endpoint => endpoint.key)
       );
       for (const endpoint of endpoints) {
-        if (recoveredKeys.has(endpoint.key)) endpoint.verdict = "PASS-GLOBALPING";
+        if (recoveredKeys.has(endpoint.key)) endpoint.verdict = endpoint.hostToolsVerdict;
       }
 
       const recoveredItems = items.filter(item => {
@@ -1280,30 +1442,27 @@ async function main() {
         cloudflareSpeedLinks.length ? `${cloudflareSpeedLinks.join("\n")}\n` : "",
         "utf8"
       );
-      reports[label].globalpingRecovery = globalpingRecovery;
+      reports[label].hostToolsRecovery = hostToolsRecovery;
+      reports[label].globalpingRecovery = { attempted: 0, recovered: 0, skipped: "replaced-by-host-tools" };
     }
     if (label === "lte") {
-      const globalpingRecoveredKeys = new Set(
+      const hostToolsRecoveredKeys = new Set(
         endpoints
-          .filter(e => e.verdict === "PASS-GLOBALPING")
+          .filter(e => ["PASS-HOSTTOOLS", "PASS-HOSTTOOLS-STRONG"].includes(e.verdict))
           .map(e => e.key)
       );
-      const globalpingRecoveredLinks = [
+      const hostToolsRecoveredLinks = [
         ...new Set(
           items
             .filter(item => {
-              try { return globalpingRecoveredKeys.has(endpointKey(item.link)); }
+              try { return hostToolsRecoveredKeys.has(endpointKey(item.link)); }
               catch { return false; }
             })
             .map(item => String(item.link).trim())
             .filter(Boolean)
         )
       ];
-      await fs.writeFile(
-        path.join(OUT_DIR, "locations-lte-globalping-recovered.txt"),
-        globalpingRecoveredLinks.length ? `${globalpingRecoveredLinks.join("\n")}\n` : "",
-        "utf8"
-      );
+      await fs.writeFile(path.join(OUT_DIR, "locations-lte-hosttools-recovered.txt"), hostToolsRecoveredLinks.length ? `${hostToolsRecoveredLinks.join("\n")}\n` : "", "utf8");
       const hysteria = items.filter(item => ["hysteria","hysteria2","tuic"].includes(protocolOf(item.link)));
       const hysteriaPassing = expandPassingLinks(hysteria, endpoints);
       await fs.writeFile(path.join(OUT_DIR, "lte-hysteria-all.txt"), hysteria.map(x => x.link).join("\n") + (hysteria.length ? "\n" : ""), "utf8");
@@ -1311,6 +1470,8 @@ async function main() {
     }
   }
 
+  const hostToolsDiagnostics = { enabled: HOSTTOOLS_ENABLED, maxRequests: HOSTTOOLS_MAX_REQUESTS, reserveRequests: HOSTTOOLS_RESERVE_REQUESTS, strongCities: HOSTTOOLS_RU_STRONG_CITIES, requestsUsed: hostToolsRequestsUsed, results: Object.fromEntries(Object.entries(reports).map(([label, report]) => [label, report.hostToolsRecovery || null])) };
+  await fs.writeFile(path.join(OUT_DIR, "hosttools-russia-diagnostic.json"), `${JSON.stringify(hostToolsDiagnostics, null, 2)}\n`, "utf8");
   await fs.writeFile(path.join(OUT_DIR, "globalping-city-diagnostic.json"), `${JSON.stringify(globalping, null, 2)}\n`, "utf8");
   await fs.writeFile(path.join(OUT_DIR, "check-host-russia-nodes.json"), `${JSON.stringify(checkHostDiscovery, null, 2)}\n`, "utf8");
 
@@ -1340,6 +1501,9 @@ async function main() {
   await fs.writeFile(path.join(OUT_DIR, "results.json"), `${JSON.stringify({ generatedAt:new Date().toISOString(), scope:SCOPE, coreNodes:CORE_NODES, strongQuorum:STRONG_QUORUM, minPassNodes:MIN_PASS_NODES, recheckNonPass:RECHECK_NONPASS, globalpingRecoveryEnabled:GLOBALPING_RECOVERY_ENABLED,
       globalpingRecoveryMaxEndpoints:GLOBALPING_RECOVERY_MAX_ENDPOINTS,
       globalpingRecoveryCityLimit:GLOBALPING_RECOVERY_CITY_LIMIT,
+      hostToolsEnabled: HOSTTOOLS_ENABLED,
+      hostToolsMaxRequests: HOSTTOOLS_MAX_REQUESTS,
+      hostToolsReserveRequests: HOSTTOOLS_RESERVE_REQUESTS,
       xraySpeedFallbackEnabled:XRAY_SPEED_FALLBACK_ENABLED,
       xraySpeedFallbackUrl:XRAY_SPEED_FALLBACK_URL,
       xraySpeedFallbackMinKbps:XRAY_SPEED_FALLBACK_MIN_KBPS,
