@@ -303,7 +303,17 @@ async function runHostToolsTcp(endpoint) {
   }
 }
 function chooseHostToolsRecoveryTargets(endpointRows, xrayById) {
-  return [...endpointRows].filter(endpoint => endpoint.transport === "tcp").filter(endpoint => !endpoint.members.some(member => ["PASS-XRAY", "PASS-XRAY-CLOUDFLARE"].includes(xrayById.get(String(member.id))?.verdict))).sort((a,b) => {
+  return [...endpointRows]
+    .filter(endpoint => endpoint.transport === "tcp")
+    .filter(endpoint => {
+      const members = Array.isArray(endpoint?.members) ? endpoint.members : [];
+      return !members.some(member =>
+        ["PASS-XRAY", "PASS-XRAY-CLOUDFLARE"].includes(
+          xrayById.get(String(member?.id))?.verdict
+        )
+      );
+    })
+    .sort((a,b) => {
     const rank = endpoint => ({ FAIL:4, UNKNOWN:3, "PASS-PARTIAL":2 }[String(endpoint.verdict)] || 1);
     return rank(b)-rank(a) || a.key.localeCompare(b.key);
   });
