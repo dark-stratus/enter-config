@@ -1,6 +1,6 @@
 # Russia checker experiment v3
 
-Generated: 2026-09-19T17:02:56.979Z
+Generated: 2026-09-19T17:37:57.394Z
 Scope: lte
 Core Check-Host nodes: ru1.node.check-host.net, ru2.node.check-host.net, ru3.node.check-host.net
 TCP strong threshold: 2/3; TCP minimum threshold: 1/3; non-pass TCP recheck: enabled
@@ -12,8 +12,8 @@ TCP strong threshold: 2/3; TCP minimum threshold: 1/3; non-pass TCP recheck: ena
 Candidates: **164**
 Protocols: **vless=152**, **hysteria2=12**
 Unique endpoints: **65**
-Verdicts: **PASS=52**, **UNKNOWN=6**, **PASS-PARTIAL=1**, **FAIL=1**, **PASS-UDP-STRONG=5**
-HAPP-ready links: **146**
+Verdicts: **PASS=49**, **UNKNOWN=11**, **PASS-UDP-STRONG=5**
+HAPP-ready links: **139**
 Copy all: [locations-lte.txt](./locations-lte.txt)
 Strong only: [locations-lte-strong.txt](./locations-lte-strong.txt)
 Partial only: [locations-lte-partial.txt](./locations-lte-partial.txt)
@@ -42,20 +42,22 @@ Hysteria/Hysteria2/TUIC are detected from the URI scheme and checked with Check-
 - ru2.node.check-host.net: Moscow
 - ru3.node.check-host.net: Saint Petersburg
 
-## Globalping city diagnostic
+## Globalping secondary Russian source
 
-Online Russian probes discovered: **166**
-Selected cities: Moscow (101 probes), Saint Petersburg (20 probes), Yekaterinburg (2 probes), Kazan (2 probes), Novosibirsk (9 probes), Samara (1 probes), Krasnodar (2 probes), Ufa (1 probes), Kursk (2 probes)
+Online Russian probes discovered: **167**
+Diagnostic cities: Moscow (103; eyeball=11; dc=92), Saint Petersburg (20; eyeball=2; dc=18), Yekaterinburg (2; eyeball=0; dc=2), Kazan (2; eyeball=1; dc=1), Novosibirsk (8; eyeball=2; dc=6), Samara (1; eyeball=0; dc=1), Krasnodar (2; eyeball=1; dc=1), Ufa (1; eyeball=1; dc=0), Kursk (2; eyeball=2; dc=0)
+Recovery cities: Yekaterinburg (2 probes), Kazan (2 probes), Novosibirsk (8 probes)
 
-This diagnostic is independent of the candidate verdicts. It exists to answer which Russian cities Globalping can currently source probes from; the city checks use TCP/443 to check-host.net only to verify that the selected probe can execute a measurement.
+For endpoints without a normal Check-Host PASS, v3 performs an independent Globalping MTR from up to three additional Russian cities. At least one reached target city is enough to recover the endpoint into the broad LTE list. This remains a transport/network check, not a proxy-protocol handshake.
 
 ## Files for your manual test
 
-- `locations-lte.txt` — broad LTE test list: TCP endpoints with at least 1/3 Russian TCP confirmations, plus UDP endpoints that are not explicitly refused.
-- `locations-lte-strong.txt` — stronger subset: TCP 2/3+; UDP 2/3+ non-refused.
-- `locations-lte-partial.txt` — TCP endpoints confirmed by exactly 1/3 nodes (useful for testing asymmetric routes).
-- `lte-hysteria-all.txt` — every Hysteria/Hysteria2/TUIC LTE candidate before filtering.
-- `lte-hysteria-passing.txt` — Hysteria/Hysteria2/TUIC links that passed the UDP transport screen.
-- `globalping-city-diagnostic.json` — live Globalping Russian-city inventory + city probes.
-- `check-host-russia-nodes.json` — live Check-Host Russian node inventory.
+- `locations-lte.txt` — broad LTE test list: normal Check-Host passes plus Globalping-recovered endpoints.
+- `locations-lte-strong.txt` — stronger Check-Host subset.
+- `locations-lte-partial.txt` — exactly-1/3 Check-Host TCP subset.
+- `locations-lte-globalping-recovered.txt` — endpoints recovered specifically by the second Russian source.
+- `lte-hysteria-all.txt` — all original Hysteria/Hysteria2/TUIC LTE candidates.
+- `lte-hysteria-passing.txt` — UDP transport-screened Hysteria/Hysteria2/TUIC links.
+- `globalping-city-diagnostic.json` — current Russian probe inventory and recovery cities.
+- `check-host-russia-nodes.json` — current Check-Host Russian nodes.
 
