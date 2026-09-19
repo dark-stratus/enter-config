@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       globalping:
-        description: "Run diagnostic-only Globalping city discovery/tests"
+        description: "Use Globalping as an independent Russian-city recovery checker"
         required: true
-        default: false
+        default: true
         type: boolean
 
 permissions:
@@ -35,6 +35,8 @@ jobs:
         env:
           RUSSIA_TEST_SCOPE: lte
           RUSSIA_TEST_GLOBALPING: ${{ inputs.globalping && '1' || '0' }}
+          RUSSIA_TEST_GLOBALPING_RECOVERY: "1"
+          RUSSIA_TEST_GLOBALPING_RECOVERY_CITY_LIMIT: "3"
           RUSSIA_TEST_CORE_NODES: ru1.node.check-host.net,ru2.node.check-host.net,ru3.node.check-host.net
           RUSSIA_TEST_STRONG_QUORUM: "2"
           RUSSIA_TEST_MIN_PASS_NODES: "1"
