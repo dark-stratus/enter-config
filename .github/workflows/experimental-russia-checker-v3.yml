@@ -1,0 +1,63 @@
+name: "EXPERIMENTAL — Russia checker v3 (LTE only)"
+
+on:
+  workflow_dispatch:
+    inputs:
+      globalping:
+        description: "Run diagnostic-only Globalping city discovery/tests"
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: experimental-russia-checker-v3-lte
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - name: Self-test protocol and TCP parsers
+        env:
+          RUSSIA_TEST_SELF_TEST: "1"
+        run: node experimental/russia-checker-test-v3/run.mjs
+      - name: Run LTE-only Russia checker v3
+        env:
+          RUSSIA_TEST_SCOPE: lte
+          RUSSIA_TEST_GLOBALPING: ${{ inputs.globalping && '1' || '0' }}
+          RUSSIA_TEST_CORE_NODES: ru1.node.check-host.net,ru2.node.check-host.net,ru3.node.check-host.net
+          RUSSIA_TEST_STRONG_QUORUM: "2"
+          RUSSIA_TEST_MIN_PASS_NODES: "1"
+          RUSSIA_TEST_RECHECK_NONPASS: "1"
+          RUSSIA_TEST_CONCURRENCY: "2"
+          RUSSIA_TEST_CREATE_INTERVAL_MS: "1800"
+          RUSSIA_TEST_MAX_POLL_MS: "16000"
+          RUSSIA_TEST_POLL_MS: "1200"
+          RUSSIA_TEST_RETRIES: "5"
+          RUSSIA_TEST_GLOBALPING_CITY_LIMIT: "9"
+        run: node experimental/russia-checker-test-v3/run.mjs
+      - name: Show results
+        run: cat experimental/russia-checker-test-v3/results/results.md
+      - name: Publish isolated results
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add experimental/russia-checker-test-v3/results/
+          if git diff --cached --quiet; then
+            echo "No result changes to commit."
+            exit 0
+          fi
+          git commit -m "test: LTE Russia checker v3 results"
+          git push
