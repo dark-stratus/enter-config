@@ -25,11 +25,15 @@ const CONCURRENCY = Math.max(1, Math.min(3, Number(process.env.RUSSIA_TEST_CONCU
 const RETRIES = Math.max(3, Math.min(8, Number(process.env.RUSSIA_TEST_RETRIES) || 6));
 
 const GLOBALPING_ENABLED = !/^(0|false|no)$/i.test(String(process.env.RUSSIA_TEST_GLOBALPING || "1"));
+const GLOBALPING_RECOVERY_ENABLED = !/^(0|false|no)$/i.test(String(process.env.RUSSIA_TEST_GLOBALPING_RECOVERY || "1"));
 const GLOBALPING_BASE = String(process.env.RUSSIA_TEST_GLOBALPING_BASE || "https://api.globalping.io/v1").replace(/\/$/, "");
 const GLOBALPING_TOKEN = String(process.env.RUSSIA_TEST_GLOBALPING_TOKEN || process.env.GLOBALPING_API_TOKEN || "").trim();
 const GLOBALPING_CITY_LIMIT = Math.max(3, Math.min(12, Number(process.env.RUSSIA_TEST_GLOBALPING_CITY_LIMIT) || 9));
+const GLOBALPING_RECOVERY_CITY_LIMIT = Math.max(1, Math.min(3, Number(process.env.RUSSIA_TEST_GLOBALPING_RECOVERY_CITY_LIMIT) || 3));
+const GLOBALPING_RECOVERY_CONCURRENCY = Math.max(1, Math.min(2, Number(process.env.RUSSIA_TEST_GLOBALPING_RECOVERY_CONCURRENCY) || 1));
 const GLOBALPING_POLL_MS = Math.max(500, Number(process.env.RUSSIA_TEST_GLOBALPING_POLL_MS) || 700);
 const GLOBALPING_TIMEOUT_MS = Math.max(10000, Number(process.env.RUSSIA_TEST_GLOBALPING_TIMEOUT_MS) || 30000);
+const GLOBALPING_MTR_TIMEOUT_SECONDS = Math.max(5, Math.min(20, Number(process.env.RUSSIA_TEST_GLOBALPING_MTR_TIMEOUT_SECONDS) || 12));
 
 const PRIORITY_RUSSIA_CITIES = [
   "Moscow", "Saint Petersburg", "Yekaterinburg", "Kazan", "Novosibirsk",
@@ -246,20 +250,101 @@ function isTcpNonPass(result, endpoint) {
   return endpoint.transport === "tcp" && !["PASS", "PASS-PARTIAL", "DRY-RUN"].includes(result?.verdict);
 }
 
-async function checkEndpoint(endpoint) {
-  if (DRY_RUN) return { verdict: "DRY-RUN", confidence: "not-tested", requestId: "", attempts: [], nodes: CORE_NODES.map(node => ({ node, state: "dry-run", latencyMs: 0 })) };
+let globalpingRecoveryQueue = Promise.resolve();
+
+function serializeGlobalpingRecovery(fn) {
+  const previous = globalpingRecoveryQueue;
+  let release;
+  globalpingRecoveryQueue = new Promise(resolve => { release = resolve; });
+  return previous
+    .catch(() => {})
+    .then(fn)
+    .finally(() => release());
+}
+
+async function checkEndpoint(endpoint, globalpingContext = null) {
+  if (DRY_RUN) {
+    return {
+      verdict: "DRY-RUN",
+      confidence: "not-tested",
+      requestId: "",
+      attempts: [],
+      nodes: CORE_NODES.map(node => ({ node, state: "dry-run", latencyMs: 0 })),
+      globalpingRecovery: null,
+    };
+  }
+
   const first = await checkEndpointOnce(endpoint);
   const shouldRecheck = RECHECK_NONPASS && isTcpNonPass(first, endpoint);
-  if (!shouldRecheck) return { ...first, attempts: [first] };
-  const second = await checkEndpointOnce(endpoint);
-  const firstReachable = reachableCount(first);
-  const secondReachable = reachableCount(second);
-  const best = Math.max(firstReachable, secondReachable);
-  let verdict = "FAIL";
-  let confidence = `tcp-recheck-${firstReachable}/${secondReachable}`;
-  if (best >= STRONG_QUORUM) { verdict = "PASS"; confidence = `tcp-recheck-strong-best-${best}/${CORE_NODES.length}`; }
-  else if (best >= MIN_PASS_NODES) { verdict = "PASS-PARTIAL"; confidence = `tcp-recheck-partial-best-${best}/${CORE_NODES.length}`; }
-  return { ...second, verdict, confidence, attempts: [first, second], rechecked: true, bestReachable: best };
+
+  let bestResult = first;
+  let attempts = [first];
+
+  if (shouldRecheck) {
+    const second = await checkEndpointOnce(endpoint);
+    attempts = [first, second];
+
+    const firstReachable = reachableCount(first);
+    const secondReachable = reachableCount(second);
+    const best = Math.max(firstReachable, secondReachable);
+
+    if (best >= STRONG_QUORUM) {
+      bestResult = {
+        ...second,
+        verdict: "PASS",
+        confidence: `tcp-recheck-strong-best-${best}/${CORE_NODES.length}`,
+        rechecked: true,
+        bestReachable: best,
+      };
+    } else if (best >= MIN_PASS_NODES) {
+      bestResult = {
+        ...second,
+        verdict: "PASS-PARTIAL",
+        confidence: `tcp-recheck-partial-best-${best}/${CORE_NODES.length}`,
+        rechecked: true,
+        bestReachable: best,
+      };
+    } else {
+      bestResult = {
+        ...second,
+        verdict: "FAIL",
+        confidence: `tcp-recheck-${firstReachable}/${secondReachable}`,
+        rechecked: true,
+        bestReachable: best,
+      };
+    }
+  }
+
+  const needsGlobalping = GLOBALPING_RECOVERY_ENABLED &&
+    ["FAIL", "UNKNOWN", "PASS-PARTIAL"].includes(String(bestResult?.verdict));
+
+  if (needsGlobalping && globalpingContext?.recoveryCities?.length) {
+    const recovery = await serializeGlobalpingRecovery(
+      () => runGlobalpingRecovery(endpoint, globalpingContext)
+    );
+
+    if (recovery?.verdict === "PASS-GLOBALPING") {
+      return {
+        ...bestResult,
+        verdict: "PASS-GLOBALPING",
+        confidence: `globalping-${recovery.reachedCities}/${globalpingContext.recoveryCities.length}`,
+        attempts,
+        globalpingRecovery: recovery,
+      };
+    }
+
+    return {
+      ...bestResult,
+      attempts,
+      globalpingRecovery: recovery,
+    };
+  }
+
+  return {
+    ...bestResult,
+    attempts,
+    globalpingRecovery: null,
+  };
 }
 
 function buildEndpointWorkset(items) {
@@ -287,7 +372,7 @@ async function runPool(items, fn) {
       if (index >= items.length) return;
       try { out[index] = await fn(items[index]); }
       catch (error) { out[index] = { verdict: "UNKNOWN", confidence: "checker-error", nodes: [], error: error?.message || String(error) }; }
-      if ((index + 1) % 10 === 0 || index + 1 === items.length) console.log(`RUSSIA TEST V2 PROGRESS ${index + 1}/${items.length}`);
+      if ((index + 1) % 10 === 0 || index + 1 === items.length) console.log(`RUSSIA TEST V3 PROGRESS ${index + 1}/${items.length}`);
     }
   };
   await Promise.all(Array.from({ length: Math.min(CONCURRENCY, Math.max(1, items.length)) }, worker));
@@ -303,7 +388,7 @@ function expandPassingLinks(items, endpointRows) {
     let key;
     try { key = endpointKey(link); } catch { continue; }
     const verdict = byKey.get(key)?.verdict;
-    if (["PASS", "PASS-PARTIAL", "PASS-UDP-STRONG", "PASS-UDP-NOT-REFUSED", "DRY-RUN"].includes(verdict)) links.push(link);
+    if (["PASS", "PASS-PARTIAL", "PASS-GLOBALPING", "PASS-UDP-STRONG", "PASS-UDP-NOT-REFUSED", "DRY-RUN"].includes(verdict)) links.push(link);
   }
   return [...new Set(links)];
 }
@@ -324,7 +409,13 @@ async function discoverCheckHostRussiaNodes() {
 
 async function getGlobalpingProbes() {
   if (!GLOBALPING_ENABLED || DRY_RUN) return [];
-  const data = await withRetry(() => fetchJson(`${GLOBALPING_BASE}/probes`, GLOBALPING_TOKEN ? { headers: { authorization: `Bearer ${GLOBALPING_TOKEN}` } } : {}, GLOBALPING_TIMEOUT_MS));
+  const data = await withRetry(() => fetchJson(
+    `${GLOBALPING_BASE}/probes`,
+    GLOBALPING_TOKEN
+      ? { headers: { authorization: `Bearer ${GLOBALPING_TOKEN}` } }
+      : {},
+    GLOBALPING_TIMEOUT_MS
+  ));
   return Array.isArray(data) ? data : (Array.isArray(data?.probes) ? data.probes : []);
 }
 
@@ -336,71 +427,245 @@ function chooseGlobalpingCities(probes) {
     const city = String(location.city || "").trim();
     if (!city) continue;
     const key = city.toLowerCase();
-    const row = byCity.get(key) || { city, count: 0, eyeball: 0, datacenter: 0 };
+    const row = byCity.get(key) || {
+      city,
+      count: 0,
+      eyeball: 0,
+      datacenter: 0,
+    };
     row.count += 1;
     const tags = new Set(Array.isArray(probe?.tags) ? probe.tags.map(String) : []);
     if (tags.has("eyeball-network")) row.eyeball += 1;
     if (tags.has("datacenter-network")) row.datacenter += 1;
     byCity.set(key, row);
   }
-  const picked = [], used = new Set();
+
+  const picked = [];
+  const used = new Set();
   for (const city of PRIORITY_RUSSIA_CITIES) {
     const row = byCity.get(city.toLowerCase());
-    if (row) { picked.push(row); used.add(city.toLowerCase()); }
-    if (picked.length >= GLOBALPING_CITY_LIMIT) return picked;
-  }
-  for (const row of [...byCity.values()].sort((a, b) => b.eyeball - a.eyeball || b.count - a.count || a.city.localeCompare(b.city))) {
-    if (used.has(row.city.toLowerCase())) continue;
-    picked.push(row); used.add(row.city.toLowerCase());
+    if (!row) continue;
+    picked.push(row);
+    used.add(city.toLowerCase());
     if (picked.length >= GLOBALPING_CITY_LIMIT) break;
   }
+
+  if (picked.length < GLOBALPING_CITY_LIMIT) {
+    for (const row of [...byCity.values()].sort(
+      (a, b) =>
+        b.eyeball - a.eyeball ||
+        b.count - a.count ||
+        a.city.localeCompare(b.city)
+    )) {
+      if (used.has(row.city.toLowerCase())) continue;
+      picked.push(row);
+      used.add(row.city.toLowerCase());
+      if (picked.length >= GLOBALPING_CITY_LIMIT) break;
+    }
+  }
+
   return picked;
 }
 
-async function runGlobalpingCityDiagnostics() {
-  if (!GLOBALPING_ENABLED) return { enabled: false, reason: "disabled" };
-  if (DRY_RUN) return { enabled: true, dryRun: true, cities: [], results: [] };
-  let probes;
-  try { probes = await getGlobalpingProbes(); }
-  catch (error) { return { enabled: true, error: `probe discovery failed: ${error?.message || String(error)}`, cities: [], results: [] }; }
+function chooseGlobalpingRecoveryCities(cities) {
+  const preferred = [
+    "Yekaterinburg",
+    "Kazan",
+    "Novosibirsk",
+    "Samara",
+    "Krasnodar",
+    "Ufa",
+    "Kursk",
+    "Rostov-on-Don",
+    "Nizhny Novgorod",
+    "Perm",
+    "Voronezh",
+  ];
 
-  const cities = chooseGlobalpingCities(probes);
-  const results = [];
-  for (const city of cities) {
-    try {
-      const body = {
-        type: "ping",
-        target: "check-host.net",
-        locations: [{ country: "RU", city: city.city, limit: 1 }],
-        timeout: 10,
-        measurementOptions: { packets: 2, protocol: "TCP", port: 443 },
-      };
-      const created = await withRetry(() => fetchJson(`${GLOBALPING_BASE}/measurements`, {
-        method: "POST",
-        headers: { "content-type": "application/json", ...(GLOBALPING_TOKEN ? { authorization: `Bearer ${GLOBALPING_TOKEN}` } : {}) },
-        body: JSON.stringify(body),
-      }, GLOBALPING_TIMEOUT_MS), 4);
-      const id = String(created?.id || "").trim();
-      if (!id) throw new Error("Globalping response has no measurement id");
-      const started = Date.now();
-      let data = null;
-      while (Date.now() - started <= GLOBALPING_TIMEOUT_MS) {
-        await sleep(GLOBALPING_POLL_MS);
-        data = await getGlobalpingMeasurement(id);
-        if (String(data?.status || "").toLowerCase() !== "in-progress") break;
-      }
-      const rows = Array.isArray(data?.results) ? data.results : [];
-      const finished = rows.filter(row => String(row?.result?.status || "").toLowerCase() === "finished");
-      results.push({ city: city.city, probeCount: rows.length, status: finished.length ? "reachable" : String(data?.status || "unknown"), probes: finished.map(row => ({ city: row?.probe?.location?.city || city.city, network: row?.probe?.location?.network || row?.probe?.network || "", avgMs: Number(row?.result?.stats?.avg), loss: Number(row?.result?.stats?.loss), tags: row?.probe?.tags || [] })), measurementId: id });
-    } catch (error) {
-      results.push({ city: city.city, status: "error", error: error?.message || String(error) });
+  const available = new Map(
+    (cities || []).map(row => [String(row.city).toLowerCase(), row])
+  );
+  const selected = [];
+
+  for (const name of preferred) {
+    const row = available.get(name.toLowerCase());
+    if (!row) continue;
+    selected.push(row);
+    if (selected.length >= GLOBALPING_RECOVERY_CITY_LIMIT) break;
+  }
+
+  if (selected.length < GLOBALPING_RECOVERY_CITY_LIMIT) {
+    for (const row of [...available.values()].sort(
+      (a, b) =>
+        b.eyeball - a.eyeball ||
+        b.count - a.count ||
+        a.city.localeCompare(b.city)
+    )) {
+      if (/^(moscow|saint petersburg)$/i.test(row.city)) continue;
+      if (selected.some(item => item.city.toLowerCase() === row.city.toLowerCase())) continue;
+      selected.push(row);
+      if (selected.length >= GLOBALPING_RECOVERY_CITY_LIMIT) break;
     }
   }
-  return { enabled: true, probesInRussia: probes.filter(p => String(p?.location?.country || "").toUpperCase() === "RU").length, cities, results, purpose: "diagnostic-only; never affects candidate verdicts or output link lists" };
+
+  return selected;
+}
+
+function mtrResultReachedTarget(result, targetHost) {
+  const probeResult = result?.result || {};
+  if (String(probeResult.status || "").toLowerCase() !== "finished") return false;
+
+  const target = String(probeResult.resolvedAddress || targetHost || "").trim().toLowerCase();
+  const hops = Array.isArray(probeResult.hops) ? probeResult.hops : [];
+  if (!target || !hops.length) return false;
+
+  const finalHop = [...hops].reverse().find(hop => {
+    const address = String(hop?.resolvedAddress || "").trim().toLowerCase();
+    return address && address === target;
+  });
+  if (!finalHop) return false;
+
+  const loss = Number(finalHop?.stats?.loss);
+  if (Number.isFinite(loss) && loss >= 100) return false;
+
+  const raw = String(probeResult.rawOutput || "");
+  if (/destination host unreachable|network unreachable|no route to host/i.test(raw)) return false;
+
+  return true;
+}
+
+async function createGlobalpingMtr(endpoint, cities) {
+  const { transport, port, host } = parseUrl(endpoint.link);
+  if (!host || !cities.length) throw new Error("Globalping recovery has no target or cities");
+
+  const body = {
+    type: "mtr",
+    target: host,
+    timeout: GLOBALPING_MTR_TIMEOUT_SECONDS,
+    locations: cities.map(city => ({
+      country: "RU",
+      city: city.city,
+      limit: 1,
+    })),
+    measurementOptions: {
+      protocol: transport === "udp" ? "UDP" : "TCP",
+      port,
+      packets: 2,
+      ipVersion: 4,
+    },
+  };
+
+  const created = await withRetry(
+    () => fetchJson(
+      `${GLOBALPING_BASE}/measurements`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          ...(GLOBALPING_TOKEN ? { authorization: `Bearer ${GLOBALPING_TOKEN}` } : {}),
+        },
+        body: JSON.stringify(body),
+      },
+      GLOBALPING_TIMEOUT_MS
+    ),
+    6
+  );
+
+  const id = String(created?.id || "").trim();
+  if (!id) throw new Error("Globalping recovery response has no measurement id");
+
+  const started = Date.now();
+  let data = null;
+  while (Date.now() - started <= GLOBALPING_TIMEOUT_MS) {
+    await sleep(GLOBALPING_POLL_MS);
+    data = await getGlobalpingMeasurement(id);
+    const status = String(data?.status || "").toLowerCase();
+    if (status && status !== "in-progress") break;
+  }
+
+  const resultRows = Array.isArray(data?.results) ? data.results : [];
+  const cityRows = resultRows.map(row => ({
+    city: row?.probe?.location?.city || "",
+    network: row?.probe?.location?.network || "",
+    tags: Array.isArray(row?.probe?.tags) ? row.probe.tags : [],
+    status: String(row?.result?.status || data?.status || "unknown"),
+    reachedTarget: mtrResultReachedTarget(row, host),
+    resolvedAddress: row?.result?.resolvedAddress || "",
+    finalHopLoss: Number([...((row?.result?.hops) || [])].at(-1)?.stats?.loss),
+  }));
+
+  const reachedCities = cityRows.filter(row => row.reachedTarget).length;
+  return {
+    measurementId: id,
+    target: host,
+    transport,
+    port,
+    cities: cityRows,
+    reachedCities,
+    verdict: reachedCities > 0 ? "PASS-GLOBALPING" : "FAIL-GLOBALPING",
+  };
 }
 
 async function getGlobalpingMeasurement(id) {
-  return fetchJson(`${GLOBALPING_BASE}/measurements/${encodeURIComponent(id)}`, GLOBALPING_TOKEN ? { headers: { authorization: `Bearer ${GLOBALPING_TOKEN}` } } : {}, GLOBALPING_TIMEOUT_MS);
+  return fetchJson(
+    `${GLOBALPING_BASE}/measurements/${encodeURIComponent(id)}`,
+    GLOBALPING_TOKEN
+      ? { headers: { authorization: `Bearer ${GLOBALPING_TOKEN}` } }
+      : {},
+    GLOBALPING_TIMEOUT_MS
+  );
+}
+
+async function runGlobalpingRecovery(endpoint, context) {
+  if (!GLOBALPING_ENABLED || !GLOBALPING_RECOVERY_ENABLED || DRY_RUN) return null;
+  if (!context?.recoveryCities?.length) return null;
+
+  return globalpingRecoveryLimiter(async () => {
+    try {
+      return await createGlobalpingMtr(endpoint, context.recoveryCities);
+    } catch (error) {
+      return {
+        verdict: "UNKNOWN-GLOBALPING",
+        error: error?.message || String(error),
+        cities: [],
+        reachedCities: 0,
+      };
+    }
+  });
+}
+
+async function prepareGlobalpingContext() {
+  if (!GLOBALPING_ENABLED || DRY_RUN) {
+    return {
+      enabled: false,
+      probesInRussia: 0,
+      cities: [],
+      recoveryCities: [],
+    };
+  }
+
+  try {
+    const probes = await getGlobalpingProbes();
+    const cities = chooseGlobalpingCities(probes);
+    const recoveryCities = chooseGlobalpingRecoveryCities(cities);
+
+    return {
+      enabled: true,
+      probesInRussia: probes.filter(
+        probe => String(probe?.location?.country || "").toUpperCase() === "RU"
+      ).length,
+      cities,
+      recoveryCities,
+    };
+  } catch (error) {
+    return {
+      enabled: true,
+      probesInRussia: 0,
+      cities: [],
+      recoveryCities: [],
+      error: `probe discovery failed: ${error?.message || String(error)}`,
+    };
+  }
 }
 
 function protocolSummary(items) {
@@ -430,6 +695,14 @@ function runSelfTest() {
   const refused = parseNodeResult([{ error: "Connection refused" }], "ru2", "udp");
   if (filtered.state !== "udp-filtered" || refused.state !== "refused") throw new Error("UDP parser self-test failed");
   if (decide([{state:"udp-filtered"},{state:"udp-filtered"}], "udp").verdict !== "PASS-UDP-STRONG") throw new Error("UDP decision self-test failed");
+  const mtrOk = mtrResultReachedTarget({
+    result: {
+      status: "finished",
+      resolvedAddress: "203.0.113.10",
+      hops: [{ resolvedAddress: "203.0.113.10", stats: { loss: 0 } }]
+    }
+  }, "203.0.113.10");
+  if (!mtrOk) throw new Error("Globalping MTR parser self-test failed");
   console.log("RUSSIA TEST V3 SELF-TEST: PASS");
 }
 
@@ -446,12 +719,13 @@ async function main() {
   if (SCOPE !== 'lte') console.warn(`RUSSIA TEST V3: regular candidates are intentionally skipped; requested scope=${SCOPE} ignored in favor of LTE-only experiment`);
 
   const checkHostDiscovery = await discoverCheckHostRussiaNodes();
+  const globalping = await prepareGlobalpingContext();
   const reports = {}, lists = {};
 
   for (const [label, items] of work) {
     const endpointWorkset = buildEndpointWorkset(items);
-    console.log(`${label.toUpperCase()} V2 WORKSET: candidates=${items.length}; uniqueEndpoints=${endpointWorkset.length}; protocols=${JSON.stringify(protocolSummary(items))}`);
-    const rawResults = await runPool(endpointWorkset, checkEndpoint);
+    console.log(`${label.toUpperCase()} V3 WORKSET: candidates=${items.length}; uniqueEndpoints=${endpointWorkset.length}; protocols=${JSON.stringify(protocolSummary(items))}`);
+    const rawResults = await runPool(endpointWorkset, endpoint => checkEndpoint(endpoint, globalping));
     const endpoints = rawResults.map((result, i) => ({ key: endpointWorkset[i].key, link: endpointWorkset[i].link, protocol: endpointWorkset[i].protocol, transport: endpointWorkset[i].transport, ...result, candidateIds: endpointWorkset[i].members.map(m => m.id), remarks: endpointWorkset[i].members.map(m => m.remarks).filter(Boolean).slice(0,3) }));
     reports[label] = { candidates: items.length, protocols: protocolSummary(items), uniqueEndpoints: endpoints.length, endpointVerdicts: endpoints.reduce((acc,row) => { acc[row.verdict]=(acc[row.verdict]||0)+1; return acc; }, {}), endpoints };
     lists[label] = expandPassingLinks(items, endpoints);
@@ -463,6 +737,27 @@ async function main() {
     await fs.writeFile(path.join(OUT_DIR, `locations-${label}-strong.txt`), strongLinks.length ? `${strongLinks.join("\n")}\n` : "", "utf8");
     await fs.writeFile(path.join(OUT_DIR, `locations-${label}-partial.txt`), partialLinks.length ? `${partialLinks.join("\n")}\n` : "", "utf8");
     if (label === "lte") {
+      const globalpingRecoveredKeys = new Set(
+        endpoints
+          .filter(e => e.verdict === "PASS-GLOBALPING")
+          .map(e => e.key)
+      );
+      const globalpingRecoveredLinks = [
+        ...new Set(
+          items
+            .filter(item => {
+              try { return globalpingRecoveredKeys.has(endpointKey(item.link)); }
+              catch { return false; }
+            })
+            .map(item => String(item.link).trim())
+            .filter(Boolean)
+        )
+      ];
+      await fs.writeFile(
+        path.join(OUT_DIR, "locations-lte-globalping-recovered.txt"),
+        globalpingRecoveredLinks.length ? `${globalpingRecoveredLinks.join("\n")}\n` : "",
+        "utf8"
+      );
       const hysteria = items.filter(item => ["hysteria","hysteria2","tuic"].includes(protocolOf(item.link)));
       const hysteriaPassing = expandPassingLinks(hysteria, endpoints);
       await fs.writeFile(path.join(OUT_DIR, "lte-hysteria-all.txt"), hysteria.map(x => x.link).join("\n") + (hysteria.length ? "\n" : ""), "utf8");
@@ -470,7 +765,6 @@ async function main() {
     }
   }
 
-  const globalping = await runGlobalpingCityDiagnostics();
   await fs.writeFile(path.join(OUT_DIR, "globalping-city-diagnostic.json"), `${JSON.stringify(globalping, null, 2)}\n`, "utf8");
   await fs.writeFile(path.join(OUT_DIR, "check-host-russia-nodes.json"), `${JSON.stringify(checkHostDiscovery, null, 2)}\n`, "utf8");
 
@@ -484,10 +778,10 @@ async function main() {
   md.push("## Recheck strategy", "", "Every non-passing TCP endpoint gets one second Check-Host measurement. A server can therefore recover from a transient timeout or asymmetric first measurement. The report keeps both attempts.", "", "For production later, we can choose whether to publish all TCP 1/3+ results or only the stronger subset after your HAPP test.", "");
   md.push("## Hysteria / UDP", "", "Hysteria/Hysteria2/TUIC are detected from the URI scheme and checked with Check-Host UDP, never TCP. The original link is copied to the output unchanged; no Hysteria link is converted to VLESS.", "", "`PASS-UDP-*` means the Russian gate did not receive an explicit UDP refusal. Check-Host itself documents the silent UDP state as `Open or filtered`, so this is a transport screening result, not proof of a successful Hysteria/QUIC handshake. Those links are deliberately left in the HAPP test list for manual verification.", "");
   md.push("## Check-Host Russia nodes", "", checkHostDiscovery.nodes?.length ? checkHostDiscovery.nodes.map(n => `- ${n.id}: ${n.city}`).join("\n") : (checkHostDiscovery.error || "No nodes discovered."), "");
-  md.push("## Globalping city diagnostic", "", globalping.error ? `Error: ${globalping.error}` : `Online Russian probes discovered: **${globalping.probesInRussia ?? 0}**`, globalping.cities?.length ? `Selected cities: ${globalping.cities.map(c => `${c.city} (${c.count} probes)`).join(', ')}` : "Selected cities: none", "", "This diagnostic is independent of the candidate verdicts. It exists to answer which Russian cities Globalping can currently source probes from; the city checks use TCP/443 to check-host.net only to verify that the selected probe can execute a measurement.", "");
-  md.push("## Files for your manual test", "", "- `locations-lte.txt` — broad LTE test list: TCP endpoints with at least 1/3 Russian TCP confirmations, plus UDP endpoints that are not explicitly refused.", "- `locations-lte-strong.txt` — stronger subset: TCP 2/3+; UDP 2/3+ non-refused.", "- `locations-lte-partial.txt` — TCP endpoints confirmed by exactly 1/3 nodes (useful for testing asymmetric routes).", "- `lte-hysteria-all.txt` — every Hysteria/Hysteria2/TUIC LTE candidate before filtering.", "- `lte-hysteria-passing.txt` — Hysteria/Hysteria2/TUIC links that passed the UDP transport screen.", "- `globalping-city-diagnostic.json` — live Globalping Russian-city inventory + city probes.", "- `check-host-russia-nodes.json` — live Check-Host Russian node inventory.", "");
+  md.push("## Globalping secondary Russian source", "", globalping.error ? `Probe discovery error: ${globalping.error}` : `Online Russian probes discovered: **${globalping.probesInRussia ?? 0}**`, globalping.cities?.length ? `Diagnostic cities: ${globalping.cities.map(c => `${c.city} (${c.count}; eyeball=${c.eyeball}; dc=${c.datacenter})`).join(', ')}` : "Diagnostic cities: none", globalping.recoveryCities?.length ? `Recovery cities: ${globalping.recoveryCities.map(c => `${c.city} (${c.count} probes)`).join(', ')}` : "Recovery cities: none", "", "For endpoints without a normal Check-Host PASS, v3 performs an independent Globalping MTR from up to three additional Russian cities. At least one reached target city is enough to recover the endpoint into the broad LTE list. This remains a transport/network check, not a proxy-protocol handshake.", "");
+  md.push("## Files for your manual test", "", "- `locations-lte.txt` — broad LTE test list: normal Check-Host passes plus Globalping-recovered endpoints.", "- `locations-lte-strong.txt` — stronger Check-Host subset.", "- `locations-lte-partial.txt` — exactly-1/3 Check-Host TCP subset.", "- `locations-lte-globalping-recovered.txt` — endpoints recovered specifically by the second Russian source.", "- `lte-hysteria-all.txt` — all original Hysteria/Hysteria2/TUIC LTE candidates.", "- `lte-hysteria-passing.txt` — UDP transport-screened Hysteria/Hysteria2/TUIC links.", "- `globalping-city-diagnostic.json` — current Russian probe inventory and recovery cities.", "- `check-host-russia-nodes.json` — current Check-Host Russian nodes.", "");
   await fs.writeFile(path.join(OUT_DIR, "results.md"), `${md.join("\n")}\n`, "utf8");
-  await fs.writeFile(path.join(OUT_DIR, "results.json"), `${JSON.stringify({ generatedAt:new Date().toISOString(), scope:SCOPE, coreNodes:CORE_NODES, strongQuorum:STRONG_QUORUM, minPassNodes:MIN_PASS_NODES, recheckNonPass:RECHECK_NONPASS, reports, globalping, checkHostDiscovery, inputSha256:hash(await fs.readFile(INPUT_FILE)) }, null, 2)}\n`, "utf8");
+  await fs.writeFile(path.join(OUT_DIR, "results.json"), `${JSON.stringify({ generatedAt:new Date().toISOString(), scope:SCOPE, coreNodes:CORE_NODES, strongQuorum:STRONG_QUORUM, minPassNodes:MIN_PASS_NODES, recheckNonPass:RECHECK_NONPASS, globalpingRecoveryEnabled:GLOBALPING_RECOVERY_ENABLED, reports, globalping, checkHostDiscovery, inputSha256:hash(await fs.readFile(INPUT_FILE)) }, null, 2)}\n`, "utf8");
   console.log("RUSSIA CHECKER V3 COMPLETE");
 }
 

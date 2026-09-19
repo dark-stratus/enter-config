@@ -1,29 +1,54 @@
 # Russia checker experiment v3 — LTE only
 
-This folder is fully isolated from production. It does not modify or invoke the production health gate, routing, Xray, Fast/Gaming selection, or publication pipeline.
+This folder is the isolated LTE experiment. No production files are changed.
 
-## What changed from v2
+## Goal
 
-1. **Fixed Check-Host TCP parsing.** Check-Host documents TCP results as an array such as `[{"time":0.03,"address":"..."}]`. v2 incorrectly treated the whole array as the node result, so successful VLESS/Trojan TCP endpoints became `FAIL`. v3 parses the result object correctly.
-2. **All protocols are preserved.** URI scheme is never rewritten. VLESS, Trojan, Hysteria/Hysteria2, TUIC, and other schemes are emitted unchanged.
-3. **Three Russian Check-Host nodes.** `ru1`, `ru2`, `ru3`. This adds independent Russian observation without pretending they are three cities: ru1/ru2 are Moscow; ru3 is Saint Petersburg.
-4. **TCP tiers.** `2/3+` is strong. `1/3` is partial and is also emitted into the broad list for manual HAPP testing.
-5. **One TCP recheck.** Non-passing TCP endpoints are measured a second time, so a transient timeout or asymmetric first result can recover.
-6. **UDP stays explicitly provisional.** Check-Host UDP can tell us that a port was not explicitly refused, but it cannot prove a Hysteria/QUIC application handshake.
+Find LTE endpoints that are actually reachable from Russia without destroying protocol identity.
 
-## Important limitation for Hysteria
+`vless://` stays VLESS, `trojan://` stays Trojan, `hysteria://` / `hysteria2://` stay Hysteria, and `tuic://` stays TUIC.
 
-There is no reliable application-level Hysteria handshake check through the public Globalping API used here. Globalping currently supports ping/traceroute/MTR/DNS/HTTP measurements, not a generic TCP/UDP service check. Therefore v3 does **not** pretend that a UDP `open or filtered` result proves Hysteria works. Those links remain in the manual HAPP test list.
+## Russian checks
 
-## Outputs
+### Check-Host
 
-- `results/locations-lte.txt` — broad manual test list.
-- `results/locations-lte-strong.txt` — stronger 2/3+ subset.
-- `results/locations-lte-partial.txt` — exactly 1/3 TCP-confirmed subset.
-- `results/lte-hysteria-all.txt` — all Hysteria-family LTE candidates.
-- `results/lte-hysteria-passing.txt` — UDP-screened Hysteria-family candidates.
-- `results/globalping-city-diagnostic.json` — diagnostic-only Russian city inventory.
+TCP endpoints use the three currently available Russian Check-Host nodes:
 
-## Why the old result was misleading
+- Moscow (`ru1`)
+- Moscow (`ru2`)
+- Saint Petersburg (`ru3`)
 
-The saved v2 result contained `580 regular` candidates and `164 LTE` candidates, with LTE represented as `152 VLESS + 12 Hysteria2`. After replaying the saved TCP node payloads with the corrected parser, the LTE set contains many successful TCP observations that v2 falsely called unreachable. The v3 live run is the authoritative test; the replay is only evidence of the parser defect.
+TCP non-passes are rechecked once to recover transient failures.
+
+Hysteria/Hysteria2/TUIC are checked as UDP, never TCP.
+
+### Globalping recovery
+
+Globalping is now an **active secondary Russian source**, not just a city diagnostic. Its public API supports MTR measurements with TCP or UDP and an explicit destination port. The current public API also exposes a large live probe inventory and location targeting by city/country. citeturn858787search0turn858787search5
+
+The experiment discovers Russian probes and selects up to three additional cities, preferring:
+
+1. Yekaterinburg
+2. Kazan
+3. Novosibirsk
+
+with automatic fallback to other currently available Russian cities.
+
+For an endpoint that did not get a normal Check-Host PASS, v3 runs one Globalping MTR measurement from those cities. If at least one city reaches the endpoint, the endpoint is recovered into `locations-lte.txt`.
+
+Globalping recovery is therefore a **network/transport recovery source**, not proof of a successful VLESS/Trojan/Hysteria handshake. MTR supports TCP/UDP port probing but does not implement the proxy application protocol itself. citeturn858787search4turn668036search0
+
+## Output
+
+- `locations-lte.txt` — broad HAPP test list, including Globalping recoveries.
+- `locations-lte-globalping-recovered.txt` — only endpoints recovered by Globalping.
+- `locations-lte-strong.txt` — strict Check-Host subset.
+- `locations-lte-partial.txt` — exactly-1/3 TCP subset.
+- `lte-hysteria-all.txt` — every original Hysteria/Hysteria2/TUIC candidate.
+- `lte-hysteria-passing.txt` — UDP-screened Hysteria/Hysteria2/TUIC list.
+- `results.md` / `results.json` — full verdicts and provenance.
+- `globalping-city-diagnostic.json` — current Russian probes/cities and the selected recovery cities.
+
+## Rate limits
+
+Globalping documents 250 free tests/hour for unauthenticated requests and up to 50 probes per measurement. Recovery is serialized and uses at most three Russian probes per endpoint, while city discovery itself is a no-cost probe listing call. citeturn858787search0
