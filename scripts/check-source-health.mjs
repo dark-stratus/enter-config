@@ -1016,7 +1016,17 @@ function parseCheckHostNode(raw, node, transport = "tcp") {
         }
 
         const error = String(first.error || first.message || "").trim();
-        if (transport === "udp" && /open or filtered|filtered|timeout|timed? out/i.test(error)) {
+        const hasUdpTimeout =
+            transport === "udp" &&
+            (first.timeout === true || Number(first.timeout) > 0);
+
+        // Check-Host's UDP result may encode a non-refused probe as a raw
+        // object like { address: "…", timeout: 1 } without an `error` field.
+        // The experimental LTE checker intentionally treated that state as
+        // "open or filtered"/UDP-usable and left the real protocol proof to
+        // Xray. Preserve the same semantics in the production gate so
+        // Hysteria2/TUIC candidates are not discarded before Xray.
+        if (transport === "udp" && (hasUdpTimeout || /open or filtered|filtered|timeout|timed? out/i.test(error))) {
             return {
                 node,
                 reachable: false,
