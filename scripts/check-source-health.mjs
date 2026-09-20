@@ -5055,6 +5055,7 @@ async function main() {
             continue;
         }
 
+        const sourceMeta = candidateMap[fp] || null;
         const resolvedCountry = sourceMeta?.country || String(item.remarks || "").replace(/^\S+\s*/, "").replace(/\s+\d+$/, "");
         healthResults.push({
             id: item.id, remarks: item.remarks || "", link: String(item.link || "").trim(),
