@@ -1172,6 +1172,23 @@ async function createGlobalpingMtr(endpoint, cities) {
     if (status && status !== "in-progress") break;
   }
 
+  const finalStatus = String(data?.status || "").toLowerCase();
+  if (finalStatus === "in-progress" || finalStatus === "pending") {
+    return {
+      measurementId: id,
+      target: host,
+      transport,
+      port,
+      cities: [],
+      reachedCities: 0,
+      validReachedCities: 0,
+      requiredDistinctCities: GLOBALPING_RECOVERY_MIN_DISTINCT_CITIES,
+      verdict: "UNKNOWN-GLOBALPING",
+      error: `Globalping measurement ${id} did not finish before timeout`,
+      measurementFailure: true,
+    };
+  }
+
   const resultRows = Array.isArray(data?.results) ? data.results : [];
   const cityRows = resultRows.map((row, index) => {
     const probe = row?.probe || {};
@@ -1241,7 +1258,16 @@ async function getGlobalpingMeasurement(id) {
 
 async function runGlobalpingGate(endpoint, context) {
   if (!GLOBALPING_ENABLED || !GLOBALPING_RECOVERY_ENABLED || DRY_RUN) return null;
-  if (!context?.gateCities?.length) return null;
+  if (!context?.gateCities?.length) {
+    return {
+      verdict: "UNKNOWN-GLOBALPING",
+      error: context?.error || "Globalping has no selected Russian gate cities",
+      cities: [],
+      reachedCities: 0,
+      validReachedCities: 0,
+      serviceFailure: true,
+    };
+  }
 
   return serializeGlobalpingRecovery(async () => {
     try {
@@ -1253,6 +1279,8 @@ async function runGlobalpingGate(endpoint, context) {
         error: error?.message || String(error),
         cities: [],
         reachedCities: 0,
+        validReachedCities: 0,
+        serviceFailure: true,
       };
     }
   });
@@ -1315,18 +1343,40 @@ function chooseGlobalpingGateTargets(endpointRows, xrayById) {
 
 async function runGlobalpingGatePass(endpointRows, items, xrayById, context) {
   if (!GLOBALPING_ENABLED || !GLOBALPING_RECOVERY_ENABLED || DRY_RUN) {
-    return { attempted: 0, passed: 0, skipped: "disabled", endpoints: [] };
+    return { attempted: 0, passed: 0, skipped: "disabled", serviceAvailable: false, failOpen: true, endpoints: [] };
   }
   const cities = Array.isArray(context?.gateCities) ? context.gateCities : [];
-  if (cities.length < 2) return { attempted: 0, passed: 0, skipped: "not-enough-russian-cities", endpoints: [] };
+  if (cities.length !== 3) {
+    return {
+      attempted: 0,
+      passed: 0,
+      skipped: cities.length ? `need-3-russian-cities-got-${cities.length}` : "not-enough-russian-cities",
+      serviceAvailable: false,
+      failOpen: true,
+      endpoints: [],
+      limits: context?.limits || null,
+    };
+  }
 
   const limits = context?.limits || await getGlobalpingLimits();
   const remaining = Number(limits?.remaining);
   const reserve = GLOBALPING_RECOVERY_RESERVE_TESTS;
-  const perEndpointTests = cities.length;
+  const perEndpointTests = cities.length; // one probe/test per requested city
   const budgetEndpoints = Number.isFinite(remaining)
     ? Math.max(0, Math.floor(Math.max(0, remaining - reserve) / perEndpointTests))
     : 0;
+  if (!Number.isFinite(remaining)) {
+    return {
+      attempted: 0,
+      passed: 0,
+      skipped: "globalping-limit-unavailable",
+      serviceAvailable: false,
+      failOpen: true,
+      endpoints: [],
+      limits,
+    };
+  }
+
   const targets = chooseGlobalpingGateTargets(endpointRows, xrayById)
     .filter(endpoint => !GLOBALPING_RECOVERY_TCP_ONLY || endpoint.transport === "tcp")
     .slice(0, budgetEndpoints);
@@ -1334,7 +1384,9 @@ async function runGlobalpingGatePass(endpointRows, items, xrayById, context) {
     return {
       attempted: 0,
       passed: 0,
-      skipped: Number.isFinite(remaining) ? `budget-${remaining}-tests` : "no-targets",
+      skipped: Number.isFinite(remaining) ? `budget-${remaining}-tests-or-no-targets` : "no-targets",
+      serviceAvailable: budgetEndpoints > 0 || remaining > reserve,
+      failOpen: true,
       endpoints: [],
       limits,
     };
@@ -1342,6 +1394,7 @@ async function runGlobalpingGatePass(endpointRows, items, xrayById, context) {
 
   const rows = [];
   let stoppedOnRateLimit = false;
+  let serviceFailure = false;
   for (let index = 0; index < targets.length; index += 1) {
     const endpoint = targets[index];
     let result;
@@ -1353,6 +1406,8 @@ async function runGlobalpingGatePass(endpointRows, items, xrayById, context) {
         error: error?.message || String(error),
         cities: [],
         reachedCities: 0,
+        validReachedCities: 0,
+        serviceFailure: true,
       };
     }
     endpoint.globalpingGate = result;
@@ -1361,11 +1416,22 @@ async function runGlobalpingGatePass(endpointRows, items, xrayById, context) {
     } else if (result?.verdict === "PARTIAL-GLOBALPING") {
       endpoint.globalpingVerdict = "PARTIAL-GLOBALPING";
     }
-    rows.push({ key: endpoint.key, verdict: result?.verdict || "UNKNOWN-GLOBALPING", reachedCities: result?.reachedCities || 0, cities: result?.cities || [], error: result?.error || "" });
-    console.log(`RUSSIA TEST V3 GLOBALPING ${index + 1}/${targets.length}: ${endpoint.key} => ${result?.verdict || "UNKNOWN"}`);
+    rows.push({
+      key: endpoint.key,
+      verdict: result?.verdict || "UNKNOWN-GLOBALPING",
+      reachedCities: result?.reachedCities || 0,
+      validReachedCities: result?.validReachedCities || 0,
+      requiredDistinctCities: result?.requiredDistinctCities || 2,
+      cities: result?.cities || [],
+      error: result?.error || "",
+      serviceFailure: Boolean(result?.serviceFailure),
+    });
+    console.log(`RUSSIA TEST V3 GLOBALPING ${index + 1}/${targets.length}: ${endpoint.key} => ${result?.verdict || "UNKNOWN"} (${result?.validReachedCities || 0}/3)`);
 
+    if (result?.serviceFailure) serviceFailure = true;
     if (result?.status === 429 || /(^|\b)HTTP 429\b|rate.?limit/i.test(String(result?.error || ""))) {
       stoppedOnRateLimit = true;
+      serviceFailure = true;
       break;
     }
   }
@@ -1373,10 +1439,14 @@ async function runGlobalpingGatePass(endpointRows, items, xrayById, context) {
   return {
     attempted: rows.length,
     passed: rows.filter(row => row.verdict === "PASS-GLOBALPING").length,
+    passed2of3: rows.filter(row => Number(row.validReachedCities) >= 2).length,
+    passed3of3: rows.filter(row => Number(row.validReachedCities) >= 3).length,
     skipped: stoppedOnRateLimit ? "stopped-on-rate-limit" : "",
     endpoints: rows,
     limits,
     stoppedOnRateLimit,
+    serviceAvailable: !serviceFailure,
+    failOpen: serviceFailure || stoppedOnRateLimit || rows.length === 0,
   };
 }
 
@@ -1404,6 +1474,7 @@ async function prepareGlobalpingContext() {
       cities,
       gateCities,
       limits,
+      readyForThreeCityGate: gateCities.length === 3 && Number.isFinite(Number(limits?.remaining)),
     };
   } catch (error) {
     return {
@@ -1411,6 +1482,8 @@ async function prepareGlobalpingContext() {
       probesInRussia: 0,
       cities: [],
       gateCities: [],
+      limits: null,
+      readyForThreeCityGate: false,
       error: `probe discovery failed: ${error?.message || String(error)}`,
     };
   }
@@ -1509,7 +1582,85 @@ function runSelfTest() {
   }
   const expandedCheckHost = expandPassingLinks([{ link: sampleLink, id: "check-host-test" }], [{ key: "tcp|y|443", verdict: "PASS" }]);
   if (expandedCheckHost.length !== 1) throw new Error("Check-Host verdict expansion self-test failed");
+
+  const gpItems = [
+    { id: "gp-a", link: sampleLink },
+    { id: "gp-b", link: "vless://22222222-2222-2222-2222-222222222222@z:443?security=tls&type=tcp" },
+  ];
+  const gpXray = new Map([
+    ["gp-a", { verdict: "PASS-XRAY" }],
+    ["gp-b", { verdict: "PASS-XRAY" }],
+  ]);
+  const gpEndpoints = new Map([
+    ["tcp|y|443", { key: "tcp|y|443", transport: "tcp", globalpingGate: { verdict: "PASS-GLOBALPING", validReachedCities: 2 } }],
+    ["tcp|z|443", { key: "tcp|z|443", transport: "tcp", globalpingGate: { verdict: "PASS-GLOBALPING", validReachedCities: 3 } }],
+  ]);
+  if (globalpingStrictLinks(gpItems, gpXray, gpEndpoints, 2).length !== 2) throw new Error("Globalping 2/3 self-test failed");
+  if (globalpingStrictLinks(gpItems, gpXray, gpEndpoints, 3).length !== 1) throw new Error("Globalping 3/3 self-test failed");
+  const safeWhenDown = buildGlobalpingSafeLinks(gpItems, gpXray, gpEndpoints, { attempted: 0, serviceAvailable: false, failOpen: true });
+  if (safeWhenDown.length !== 2) throw new Error("Globalping fail-open self-test failed");
+  gpEndpoints.get("tcp|y|443").globalpingGate = { verdict: "FAIL-GLOBALPING", validReachedCities: 0 };
+  const safeAfterRealFail = buildGlobalpingSafeLinks(gpItems, gpXray, gpEndpoints, { attempted: 2, serviceAvailable: true, failOpen: false });
+  if (safeAfterRealFail.length !== 1 || !safeAfterRealFail.includes(gpItems[1].link)) throw new Error("Globalping real-fail filtering self-test failed");
   console.log("RUSSIA TEST V3 SELF-TEST: PASS");
+}
+
+function getXrayVerifiedLinks(items, xrayById) {
+  return [...new Set(items
+    .filter(item => exactXrayPassing(item, xrayById))
+    .map(item => String(item.link || "").trim())
+    .filter(Boolean))];
+}
+
+function linkEndpointRow(link, endpointByKey) {
+  try { return endpointByKey.get(endpointKey(link)) || null; }
+  catch { return null; }
+}
+
+function globalpingStrictLinks(items, xrayById, endpointByKey, minimumCities) {
+  return [...new Set(items
+    .filter(item => exactXrayPassing(item, xrayById))
+    .filter(item => {
+      const endpoint = linkEndpointRow(String(item.link || "").trim(), endpointByKey);
+      if (!endpoint || endpoint.transport !== "tcp") return false;
+      const reached = Number(endpoint?.globalpingGate?.validReachedCities);
+      return Number.isFinite(reached) && reached >= minimumCities && reached <= 3;
+    })
+    .map(item => String(item.link || "").trim())
+    .filter(Boolean))];
+}
+
+function buildGlobalpingSafeLinks(items, xrayById, endpointByKey, globalpingGate) {
+  const baseline = getXrayVerifiedLinks(items, xrayById);
+  if (!baseline.length) return [];
+
+  const serviceUnavailable = !globalpingGate?.attempted || globalpingGate?.serviceAvailable === false || globalpingGate?.failOpen === true;
+  if (serviceUnavailable) return baseline;
+
+  return baseline.filter(link => {
+    const endpoint = linkEndpointRow(link, endpointByKey);
+    if (!endpoint) return true;
+    if (endpoint.transport !== "tcp") return true; // Globalping TCP gate does not certify UDP/Hysteria.
+    const result = endpoint.globalpingGate;
+    if (!result) return true; // Not tested because of budget/rate-limit: fail-open for this endpoint.
+    if (result.verdict === "UNKNOWN-GLOBALPING") return true; // Service/measurement failure: fail-open.
+    return Number(result.validReachedCities) >= 2;
+  });
+}
+
+function globalpingFilesSummary(beforeLinks, twoOfThreeLinks, threeOfThreeLinks, safeLinks, gate) {
+  return {
+    beforeGlobalping: beforeLinks.length,
+    strict2of3: twoOfThreeLinks.length,
+    strict3of3: threeOfThreeLinks.length,
+    safeAfterGlobalping: safeLinks.length,
+    removedByStrict2of3: Math.max(0, beforeLinks.filter(Boolean).length - twoOfThreeLinks.length),
+    attemptedEndpoints: gate?.attempted || 0,
+    tested2of3: gate?.passed2of3 || 0,
+    tested3of3: gate?.passed3of3 || 0,
+    failOpen: Boolean(gate?.failOpen),
+    serviceAvailable: gate?.serviceAvailable !== false,
+  };
 }
 
 async function main() {
@@ -1565,16 +1716,14 @@ async function main() {
       return acc;
     }, {});
     reports[label].xrayById = Object.fromEntries(xrayById);
-    const xrayVerifiedLinks = [...new Set(items
-      .filter(item => ["PASS-XRAY", "PASS-XRAY-CLOUDFLARE"].includes(xrayById.get(String(item.id))?.verdict))
-      .map(item => String(item.link || "").trim()).filter(Boolean))];
+    const verifiedLinksBeforeGlobalping = getXrayVerifiedLinks(items, xrayById);
     const xrayReviewLinks = [...new Set(items
       .filter(item => ["FAIL-XRAY", "UNKNOWN-XRAY"].includes(xrayById.get(String(item.id))?.verdict))
       .map(item => String(item.link || "").trim()).filter(Boolean))];
     if (label === "lte") {
-      await fs.writeFile(path.join(OUT_DIR, "locations-lte-xray-verified.txt"), xrayVerifiedLinks.length ? `${xrayVerifiedLinks.join("\n")}\n` : "", "utf8");
+      await fs.writeFile(path.join(OUT_DIR, "locations-lte-xray-verified.txt"), verifiedLinksBeforeGlobalping.length ? `${verifiedLinksBeforeGlobalping.join("\n")}\n` : "", "utf8");
       await fs.writeFile(path.join(OUT_DIR, "locations-lte-xray-review.txt"), xrayReviewLinks.length ? `${xrayReviewLinks.join("\n")}\n` : "", "utf8");
-      const transportOnlyLinks = [...new Set(lists[label].filter(link => !xrayVerifiedLinks.includes(link)))];
+      const transportOnlyLinks = [...new Set(lists[label].filter(link => !verifiedLinksBeforeGlobalping.includes(link)))];
       await fs.writeFile(path.join(OUT_DIR, "locations-lte-transport-only.txt"), transportOnlyLinks.length ? `${transportOnlyLinks.join("\n")}\n` : "", "utf8");
     }
     const strongEndpointKeys = new Set(endpoints.filter(e => e.verdict === "PASS").map(e => e.key));
@@ -1614,42 +1763,48 @@ async function main() {
         )
       ];
       await fs.writeFile(path.join(OUT_DIR, "locations-lte-hosttools-recovered.txt"), hostToolsRecoveredLinks.length ? `${hostToolsRecoveredLinks.join("\n")}\n` : "", "utf8");
-      const globalpingRecoveredKeys = new Set(
-        endpoints
-          .filter(e => e.globalpingVerdict === "PASS-GLOBALPING")
-          .map(e => e.key)
+      const endpointByKey = new Map(endpoints.map(endpoint => [endpoint.key, endpoint]));
+      const beforeGlobalpingLinks = verifiedLinksBeforeGlobalping;
+      const globalping2of3Links = globalpingStrictLinks(items, xrayById, endpointByKey, 2);
+      const globalping3of3Links = globalpingStrictLinks(items, xrayById, endpointByKey, 3);
+      const safeGlobalpingLinks = buildGlobalpingSafeLinks(items, xrayById, endpointByKey, globalpingGate);
+
+      await fs.writeFile(
+        path.join(OUT_DIR, "locations-lte-before-globalping.txt"),
+        beforeGlobalpingLinks.length ? `${beforeGlobalpingLinks.join("\n")}\n` : "",
+        "utf8"
       );
-      const globalpingTransportLinks = [
-        ...new Set(
-          items
-            .filter(item => {
-              try { return globalpingRecoveredKeys.has(endpointKey(item.link)); }
-              catch { return false; }
-            })
-            .map(item => String(item.link).trim())
-            .filter(Boolean)
-        )
-      ];
-      const globalpingXrayConfirmedLinks = globalpingTransportLinks.filter(link => {
-        const item = items.find(candidate => String(candidate.link).trim() === link);
-        return item ? exactXrayPassing(item, xrayById) : false;
-      });
+      await fs.writeFile(
+        path.join(OUT_DIR, "locations-lte-globalping-2of3.txt"),
+        globalping2of3Links.length ? `${globalping2of3Links.join("\n")}\n` : "",
+        "utf8"
+      );
+      await fs.writeFile(
+        path.join(OUT_DIR, "locations-lte-globalping-3of3.txt"),
+        globalping3of3Links.length ? `${globalping3of3Links.join("\n")}\n` : "",
+        "utf8"
+      );
       await fs.writeFile(
         path.join(OUT_DIR, "locations-lte-globalping-transport.txt"),
-        globalpingTransportLinks.length ? `${globalpingTransportLinks.join("\n")}\n` : "",
+        globalping2of3Links.length ? `${globalping2of3Links.join("\n")}\n` : "",
         "utf8"
       );
       await fs.writeFile(
         path.join(OUT_DIR, "locations-lte-globalping-recovered.txt"),
-        globalpingXrayConfirmedLinks.length ? `${globalpingXrayConfirmedLinks.join("\n")}\n` : "",
+        safeGlobalpingLinks.length ? `${safeGlobalpingLinks.join("\n")}\n` : "",
         "utf8"
       );
+      reports[label].globalping2of3Links = globalping2of3Links;
+      reports[label].globalping3of3Links = globalping3of3Links;
+      reports[label].beforeGlobalpingLinks = beforeGlobalpingLinks;
+      reports[label].globalpingSafeLinks = safeGlobalpingLinks;
+      reports[label].globalpingFiles = globalpingFilesSummary(beforeGlobalpingLinks, globalping2of3Links, globalping3of3Links, safeGlobalpingLinks, globalpingGate);
       const hysteria = items.filter(item => ["hysteria","hysteria2","tuic"].includes(protocolOf(item.link)));
       const hysteriaXrayPassing = [...new Set(hysteria.filter(item => exactXrayPassing(item, xrayById)).map(item => String(item.link).trim()).filter(Boolean))];
       await fs.writeFile(path.join(OUT_DIR, "lte-hysteria-all.txt"), hysteria.map(x => x.link).join("\n") + (hysteria.length ? "\n" : ""), "utf8");
       await fs.writeFile(path.join(OUT_DIR, "lte-hysteria-passing.txt"), hysteriaXrayPassing.join("\n") + (hysteriaXrayPassing.length ? "\n" : ""), "utf8");
-      reports[label].globalpingTransportLinks = globalpingTransportLinks;
-      reports[label].globalpingXrayConfirmedLinks = globalpingXrayConfirmedLinks;
+      reports[label].globalpingTransportLinks = globalping2of3Links;
+      reports[label].globalpingXrayConfirmedLinks = safeGlobalpingLinks;
     }
   }
 
@@ -1675,18 +1830,22 @@ async function main() {
     globalping.gateCities?.length ? `Gate cities (non-core, eyeball only): **${globalping.gateCities.map(c => `${c.city} (eyeball=${c.eyeball})`).join(', ')}**` : "Gate cities: none",
     globalping.limits?.remaining != null ? `Globalping remaining budget before run: **${globalping.limits.remaining} tests**; reset: ${globalping.limits.resetSeconds ?? "?"} s.` : "Globalping rate-limit status was unavailable, so gate measurements are not started.",
     "",
-    `Globalping gate is capped at **${GLOBALPING_RECOVERY_MAX_ENDPOINTS} endpoints**, uses **${GLOBALPING_RECOVERY_CITY_LIMIT} cities** per endpoint and requires **${GLOBALPING_RECOVERY_MIN_DISTINCT_CITIES} distinct valid eyeball cities**.`,
-    `Globalping result: **${reports.lte?.globalpingGate?.passed ?? 0} strong transport passes / ${reports.lte?.globalpingGate?.attempted ?? 0} attempted**.`,
+    `Globalping gate is capped at **${GLOBALPING_RECOVERY_MAX_ENDPOINTS} endpoints**, uses exactly **3 non-core Russian eyeball cities** per endpoint and accepts **2/3** as the normal strict gate.`,
+    `Globalping result: **${reports.lte?.globalpingGate?.passed2of3 ?? 0} strict 2/3 endpoint passes / ${reports.lte?.globalpingGate?.attempted ?? 0} attempted**; **${reports.lte?.globalpingGate?.passed3of3 ?? 0}** reached all 3 cities.`,
+    `Comparison files: \`locations-lte-before-globalping.txt\` = exact-link Xray PASS before Globalping; \`locations-lte-globalping-2of3.txt\` = strict TCP endpoints with at least 2/3 Globalping city passes; \`locations-lte-globalping-3of3.txt\` = strict TCP endpoints with 3/3 passes.`,
     "Globalping is a transport/network gate only. It does not run a VLESS, Trojan or Hysteria2 client, so Globalping PASS is never sufficient by itself to publish a working HAPP link.",
-    "The exact-link Xray stage runs on the GitHub Actions runner, not inside the Russian ISP. Therefore `locations-lte-globalping-recovered.txt` means Xray PASS followed by strong Globalping Russian-eyeball transport PASS; it is a shortlist, not proof of Russian mobile protocol reachability.",
+    "Hysteria/Hysteria2/TUIC links that passed exact-link Xray are kept in the safe result because the Globalping gate is intentionally TCP-only.",
+    "Fallback protection is fail-open: a Globalping API/limit/measurement outage, rate-limit stop, or untested endpoint keeps the pre-Globalping Xray-passing link instead of deleting it. A real Globalping FAIL is still excluded from the safe result.",
+    "The exact-link Xray stage runs on the GitHub Actions runner, not inside the Russian ISP. Therefore the strict Globalping files are transport evidence from additional Russian eyeball probes, while `locations-lte-globalping-recovered.txt` is the safe post-GP shortlist with fail-open protection.",
     ""
   );
-  md.push("## Files for your manual test", "", "- `locations-lte.txt` — only the Russian Check-Host baseline (transport signal; not protocol proof).", "- `locations-lte-strong.txt` — strong Check-Host subset.", "- `locations-lte-partial.txt` — exactly-1/3 Check-Host TCP subset.", "- `locations-lte-globalping-transport.txt` — endpoints that passed the additional Globalping Russian eyeball transport gate; diagnostic only.", "- `locations-lte-globalping-recovered.txt` — intersection of Globalping transport PASS and exact-link Xray PASS on the GitHub runner; shortlist only, not Russian protocol proof.", "- `locations-lte-xray-verified.txt` — exact-link Xray verified links.", "- `locations-lte-xray-cloudflare-speed.txt` — links recovered specifically by the Cloudflare real-download fallback.", "- `locations-lte-xray-review.txt` — links that still failed exact-link Xray.", "- `lte-hysteria-all.txt` — all original Hysteria/Hysteria2/TUIC LTE candidates.", "- `lte-hysteria-passing.txt` — Hysteria-family links that passed exact-link Xray.", "- `globalping-city-diagnostic.json` — current Russian probe inventory and selected recovery cities.", "- `check-host-russia-nodes.json` — current Check-Host Russian nodes.", "");
+  md.push("## Files for your manual test", "", "- `locations-lte.txt` — Russian Check-Host baseline (transport signal; not protocol proof).", "- `locations-lte-xray-verified.txt` — exact-link Xray verified links.", "- `locations-lte-before-globalping.txt` — the same Xray-passing links immediately before the Globalping stage; use this to measure what Globalping actually removes.", "- `locations-lte-globalping-2of3.txt` — strict TCP Globalping pass from at least 2 of 3 selected non-Moscow/non-Saint-Petersburg Russian eyeball cities.", "- `locations-lte-globalping-3of3.txt` — strict TCP Globalping pass from all 3 selected cities.", "- `locations-lte-globalping-recovered.txt` — safe post-Globalping result: strict 2/3 passes plus fail-open links when Globalping was unavailable, rate-limited, or did not return a result; UDP/Hysteria Xray-passing links are retained because Globalping is TCP-only.", "- `locations-lte-xray-cloudflare-speed.txt` — links recovered specifically by the Cloudflare real-download fallback.", "- `locations-lte-xray-review.txt` — links that still failed exact-link Xray.", "- `lte-hysteria-all.txt` — all original Hysteria/Hysteria2/TUIC LTE candidates.", "- `lte-hysteria-passing.txt` — Hysteria-family links that passed exact-link Xray.", "- `globalping-city-diagnostic.json` — current Russian probe inventory and selected gate cities.", "- `check-host-russia-nodes.json` — current Check-Host Russian nodes.", "");
   await fs.writeFile(path.join(OUT_DIR, "results.md"), `${md.join("\n")}\n`, "utf8");
   await fs.writeFile(path.join(OUT_DIR, "results.json"), `${JSON.stringify({ generatedAt:new Date().toISOString(), scope:SCOPE, coreNodes:CORE_NODES, strongQuorum:STRONG_QUORUM, minPassNodes:MIN_PASS_NODES, recheckNonPass:RECHECK_NONPASS, globalpingGateEnabled:GLOBALPING_RECOVERY_ENABLED,
       globalpingGateMaxEndpoints:GLOBALPING_RECOVERY_MAX_ENDPOINTS,
       globalpingGateCityLimit:GLOBALPING_RECOVERY_CITY_LIMIT,
       globalpingGateMinDistinctCities:GLOBALPING_RECOVERY_MIN_DISTINCT_CITIES,
+      globalpingGateRequiredCities: 3,
       globalpingGateRequireEyeball:GLOBALPING_RECOVERY_REQUIRE_EYEBALL,
       globalpingGateTcpOnly:GLOBALPING_RECOVERY_TCP_ONLY,
       hostToolsEnabled: HOSTTOOLS_ENABLED,
