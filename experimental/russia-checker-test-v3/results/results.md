@@ -1,6 +1,6 @@
 # Russia checker experiment v3
 
-Generated: 2026-09-19T20:43:07.753Z
+Generated: 2026-09-20T09:53:24.325Z
 Scope: lte
 Core Check-Host nodes: ru1.node.check-host.net, ru2.node.check-host.net, ru3.node.check-host.net
 TCP strong threshold: 2/3; TCP minimum threshold: 1/3; non-pass TCP recheck: enabled; exact-link Xray: enabled
@@ -9,16 +9,18 @@ TCP strong threshold: 2/3; TCP minimum threshold: 1/3; non-pass TCP recheck: ena
 
 ## LTE
 
-Candidates: **151**
-Protocols: **vless=136**, **hysteria2=15**
-Unique endpoints: **62**
-Verdicts: **PASS=48**, **UNKNOWN=4**, **PASS-PARTIAL=1**, **FAIL=1**, **PASS-UDP-STRONG=8**
-HAPP-ready transport links: **143**
-Exact-link Xray: **PASS-XRAY=72**, **FAIL-XRAY=79**
-Copy all transport candidates: [locations-lte.txt](./locations-lte.txt)
+Candidates: **158**
+Protocols: **vless=140**, **hysteria2=18**
+Unique endpoints: **61**
+Verdicts: **PASS=44**, **PASS-PARTIAL=3**, **UNKNOWN=3**, **FAIL=2**, **PASS-UDP-STRONG=9**
+Check-Host transport links: **134**
+Exact-link Xray: **PASS-XRAY=59**, **FAIL-XRAY=99**
+Copy Check-Host transport list: [locations-lte.txt](./locations-lte.txt)
 Exact-link Xray verified: [locations-lte-xray-verified.txt](./locations-lte-xray-verified.txt)
 Needs manual review: [locations-lte-xray-review.txt](./locations-lte-xray-review.txt)
 Transport-only remainder: [locations-lte-transport-only.txt](./locations-lte-transport-only.txt)
+Globalping transport diagnostic: [locations-lte-globalping-transport.txt](./locations-lte-globalping-transport.txt)
+Globalping + Xray (GitHub runner) intersection: [locations-lte-globalping-recovered.txt](./locations-lte-globalping-recovered.txt)
 Strong only: [locations-lte-strong.txt](./locations-lte-strong.txt)
 Partial only: [locations-lte-partial.txt](./locations-lte-partial.txt)
 
@@ -38,11 +40,11 @@ For production later, we can choose which verdict tiers to publish after compari
 
 ## Hysteria / UDP
 
-Hysteria/Hysteria2/TUIC are detected from the URI scheme and checked with Check-Host UDP, never TCP. The original link is copied to the output unchanged; no Hysteria link is converted to VLESS.
+Hysteria/Hysteria2/TUIC are detected from the URI scheme. UDP transport screening is kept as diagnostics only; a non-refused UDP port does not prove a Hysteria/QUIC handshake.
 
-`PASS-UDP-*` means the Russian gate did not receive an explicit UDP refusal. Check-Host itself documents the silent UDP state as `Open or filtered`, so this is a transport screening result, not proof of a successful Hysteria/QUIC handshake.
+`lte-hysteria-passing.txt` now contains only links that passed the exact-link Xray stage. Globalping is not used to certify UDP/Hysteria because it can measure UDP reachability but cannot perform the original protocol handshake.
 
-The exact-link Xray stage uses the real parsed protocol from `scripts/link-runtime.mjs` and therefore keeps Hysteria2 as Hysteria2 instead of coercing it into VLESS.
+The exact-link Xray stage uses the real parsed protocol from `scripts/link-runtime.mjs`, so Hysteria2 remains Hysteria2 instead of being converted to VLESS.
 ## Check-Host Russia nodes
 
 - ru1.node.check-host.net: Moscow
@@ -51,26 +53,28 @@ The exact-link Xray stage uses the real parsed protocol from `scripts/link-runti
 
 ## Globalping — additional Russian cities
 
-Online Russian probes discovered: **168**
-Inventory cities: Moscow (103; eyeball=11; dc=92), Saint Petersburg (20; eyeball=2; dc=18), Yekaterinburg (2; eyeball=0; dc=2), Kazan (2; eyeball=1; dc=1), Novosibirsk (9; eyeball=2; dc=7), Samara (1; eyeball=0; dc=1), Krasnodar (2; eyeball=1; dc=1), Ufa (1; eyeball=1; dc=0), Kursk (2; eyeball=2; dc=0)
-Recovery cities (excluding Moscow/SPb): **Yekaterinburg, Kazan, Novosibirsk**
+Online Russian probes discovered: **165**
+Inventory cities: Moscow (102; eyeball=10; dc=92), Saint Petersburg (22; eyeball=2; dc=20), Yekaterinburg (1; eyeball=0; dc=1), Kazan (2; eyeball=1; dc=1), Novosibirsk (8; eyeball=2; dc=6), Krasnodar (1; eyeball=1; dc=0), Ufa (1; eyeball=1; dc=0), Kursk (2; eyeball=2; dc=0), Tomsk (2; eyeball=2; dc=0), Orenburg (2; eyeball=1; dc=1), Irkutsk (1; eyeball=1; dc=0), Kostroma (1; eyeball=1; dc=0)
+Recovery cities (non-core, eyeball only): **Kazan (eyeball=1), Novosibirsk (eyeball=2), Krasnodar (eyeball=1)**
 Globalping remaining budget before run: **500 tests**; reset: 0 s.
 
-Recovery is capped at **164 endpoints** and reserves **8 tests**. With three cities, one endpoint costs three Globalping tests. The actual target count is sized from the live remaining budget, and the run stops immediately on HTTP 429.
-Globalping recovery result: **3 recovered / 62 attempted**.
-This is the extra Russian checker intended to be reusable later for ordinary locations. It is used as a second geographic transport signal, not as proof of a working proxy protocol.
+Recovery is capped at **164 endpoints**, uses **3 cities** per endpoint and requires **2 distinct valid eyeball cities**.
+Globalping result: **3 strong transport recoveries / 52 attempted**.
+Globalping is a transport/network measurement source only. It does not run a VLESS, Trojan or Hysteria2 client, so a Globalping PASS is never published directly as a working HAPP link.
+The exact-link Xray stage runs on the GitHub Actions runner, not inside the Russian ISP. Therefore `locations-lte-globalping-recovered.txt` means Globalping transport recovery + Xray protocol success outside Russia; it is a shortlist, not proof of Russian mobile reachability.
 
 ## Files for your manual test
 
-- `locations-lte.txt` — broad LTE test list: normal Check-Host passes plus Globalping-recovered endpoints.
-- `locations-lte-strong.txt` — stronger Check-Host subset.
+- `locations-lte.txt` — only the Russian Check-Host baseline (transport signal; not protocol proof).
+- `locations-lte-strong.txt` — strong Check-Host subset.
 - `locations-lte-partial.txt` — exactly-1/3 Check-Host TCP subset.
-- `locations-lte-globalping-recovered.txt` — endpoints recovered specifically by the additional Russian-city checker.
-- `locations-lte-xray-verified.txt` — exact-link Xray verified links, including the Cloudflare speed fallback.
-- `locations-lte-xray-cloudflare-speed.txt` — links recovered specifically by the production-style Cloudflare real-download fallback.
+- `locations-lte-globalping-transport.txt` — endpoints that passed the additional Globalping Russian eyeball transport gate; diagnostic only.
+- `locations-lte-globalping-recovered.txt` — intersection of Globalping transport recovery and exact-link Xray PASS on the GitHub runner; shortlist only, not Russian protocol proof.
+- `locations-lte-xray-verified.txt` — exact-link Xray verified links.
+- `locations-lte-xray-cloudflare-speed.txt` — links recovered specifically by the Cloudflare real-download fallback.
 - `locations-lte-xray-review.txt` — links that still failed exact-link Xray.
 - `lte-hysteria-all.txt` — all original Hysteria/Hysteria2/TUIC LTE candidates.
-- `lte-hysteria-passing.txt` — UDP transport-screened Hysteria/Hysteria2/TUIC links.
-- `globalping-city-diagnostic.json` — current Russian probe inventory, rate-limit state and selected recovery cities.
+- `lte-hysteria-passing.txt` — Hysteria-family links that passed exact-link Xray.
+- `globalping-city-diagnostic.json` — current Russian probe inventory and selected recovery cities.
 - `check-host-russia-nodes.json` — current Check-Host Russian nodes.
 
