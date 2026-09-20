@@ -515,27 +515,6 @@ jobs:
           }
           NODE
 
-      - name: Run Globalping diagnostics (non-gating)
-        if: ${{ steps.source_generation.outputs.refreshed == 'true' }}
-        continue-on-error: true
-        timeout-minutes: 12
-        env:
-          HEALTHCHECK_MODE: globalping-diagnostic
-          HEALTHCHECK_GLOBALPING_API_TOKEN: ${{ secrets.GLOBALPING_API_TOKEN }}
-          HEALTHCHECK_GLOBALPING_TIMEOUT_MS: 10000
-          HEALTHCHECK_GLOBALPING_CONCURRENCY: 4
-          HEALTHCHECK_GLOBALPING_MAX_CANDIDATES_PER_CYCLE: 250
-          HEALTH_CANDIDATES_FILE: ${{ github.workspace }}/config/source-health-candidates.json
-        run: node scripts/check-source-health.mjs
-
-      - name: Upload Globalping diagnostics
-        if: ${{ always() && steps.source_generation.outputs.refreshed == 'true' && hashFiles('russia-globalping-diagnostic.json') != '' }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: globalping-diagnostic-${{ github.run_id }}
-          path: russia-globalping-diagnostic.json
-          retention-days: 7
-
       - name: Run Russia reachability gate (single global coordinator)
         if: ${{ steps.source_generation.outputs.refreshed == 'true' }}
         id: russia_gate
@@ -560,7 +539,7 @@ jobs:
           HEALTHCHECK_RUSSIA_GATE_USE_CACHE: 0
           HEALTHCHECK_RUSSIA_GATE_STATE_MAX_AGE_MS: 21600000
           HEALTH_CANDIDATES_FILE: ${{ github.workspace }}/config/source-health-candidates.json
-          HEALTHCHECK_RUSSIA_GATE_ALGORITHM_VERSION: 33
+          HEALTHCHECK_RUSSIA_GATE_ALGORITHM_VERSION: 34
         run: |
           set -euo pipefail
           node scripts/check-source-health.mjs
@@ -585,7 +564,7 @@ jobs:
           const required = gate.results.filter(item => item.required);
           const passed = required.filter(item => item.gatePassed);
           const pending = required.filter(item => item.gatePending);
-          console.log(`Russia gate: ${passed.length}/${required.length} non-LTE candidates positively verified`);
+          console.log(`Russia gate: ${passed.length}/${required.length} managed candidates positively verified`);
           console.log(`Russia gate pending/unknown: ${pending.length}`);
           NODE
 
@@ -711,6 +690,16 @@ jobs:
           HEALTHCHECK_GAMING_BACKUP_MIN_QUALITY_PASSES: 1
           HEALTHCHECK_MAX_MEDIAN_CONNECTION_MS: 2500
           HEALTHCHECK_MAX_SINGLE_CONNECTION_MS: 6000
+          HEALTHCHECK_GLOBALPING_API_TOKEN: ${{ secrets.GLOBALPING_API_TOKEN }}
+          HEALTHCHECK_GLOBALPING_LTE_ENABLED: 1
+          HEALTHCHECK_GLOBALPING_LTE_CITY_LIMIT: 3
+          HEALTHCHECK_GLOBALPING_LTE_MIN_DISTINCT_CITIES: 2
+          HEALTHCHECK_GLOBALPING_LTE_REQUIRE_EYEBALL: 1
+          HEALTHCHECK_GLOBALPING_MAX_ENDPOINTS: 164
+          HEALTHCHECK_GLOBALPING_RESERVE_TESTS: 10
+          HEALTHCHECK_GLOBALPING_TIMEOUT_MS: 30000
+          HEALTHCHECK_GLOBALPING_POLL_MS: 700
+          HEALTHCHECK_GLOBALPING_MTR_TIMEOUT_SECONDS: 12
           HEALTHCHECK_TARGET_URLS: >-
             https://www.gstatic.com/generate_204,
             https://www.google.com/generate_204,
@@ -719,6 +708,20 @@ jobs:
             https://ya.ru/,
             https://yandex.ru/
         run: node scripts/check-source-health.mjs
+
+      - name: Upload LTE Globalping diagnostics
+        if: ${{ always() && hashFiles('lte-russia-globalping-diagnostic.json') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: lte-globalping-diagnostics-${{ github.run_id }}
+          path: |
+            lte-russia-globalping-diagnostic.json
+            lte-russia-before-globalping.txt
+            lte-russia-globalping-2of3.txt
+            lte-russia-globalping-3of3.txt
+            lte-russia-globalping-final.txt
+          if-no-files-found: warn
+          retention-days: 7
 
       - name: Verify UPDATE VPN pool
         if: ${{ steps.health.outcome == 'success' }}
@@ -740,6 +743,16 @@ jobs:
           }
           console.log(`UPDATE VPN pool verified: ${servers.length} LTE server(s); ${passedLTE} LTE health pass(es).`);
           NODE
+
+      - name: Remove LTE Globalping diagnostics
+        if: always()
+        run: |
+          rm -f -- \
+            lte-russia-globalping-diagnostic.json \
+            lte-russia-before-globalping.txt \
+            lte-russia-globalping-2of3.txt \
+            lte-russia-globalping-3of3.txt \
+            lte-russia-globalping-final.txt
 
       - name: Remove intermediate Russia gate artifact
         if: always()
