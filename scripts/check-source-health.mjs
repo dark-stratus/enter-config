@@ -7,6 +7,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { spawn } from "node:child_process";
 import { parseLink, buildOutbound } from "./link-runtime.mjs";
+import { runLteGlobalpingGate } from "./lte-globalping-gate.mjs";
 
 const COUNTRY_BY_FLAG = {
     "🇪🇺": "Europe",
@@ -288,15 +289,20 @@ const GLOBALPING_TOKEN = String(
     process.env.GLOBALPING_API_TOKEN ||
     ""
 ).trim();
-const GLOBALPING_TIMEOUT_MS = Math.max(5000, Number(process.env.HEALTHCHECK_GLOBALPING_TIMEOUT_MS) || 10000);
-const GLOBALPING_PROBE_LIMIT = 1;
-// Globalping is diagnostics only. One probe/measurement consumes one free test.
-// Keep this hard-capped at the anonymous free allowance so it can never become
-// a hidden dependency of the Russia reachability gate.
-const GLOBALPING_MAX_CANDIDATES_PER_CYCLE = Math.min(
-    250,
-    Math.max(1, Number(process.env.HEALTHCHECK_GLOBALPING_MAX_CANDIDATES_PER_CYCLE) || 250)
+const GLOBALPING_LTE_ENABLED = !/^(0|false|no)$/i.test(
+    String(process.env.HEALTHCHECK_GLOBALPING_LTE_ENABLED || "1")
 );
+const GLOBALPING_LTE_CITY_LIMIT = Math.max(3, Math.min(6, Number(process.env.HEALTHCHECK_GLOBALPING_LTE_CITY_LIMIT) || 3));
+const GLOBALPING_LTE_MIN_DISTINCT_CITIES = Math.max(2, Math.min(GLOBALPING_LTE_CITY_LIMIT, Number(process.env.HEALTHCHECK_GLOBALPING_LTE_MIN_DISTINCT_CITIES) || 2));
+const GLOBALPING_LTE_REQUIRE_EYEBALL = !/^(0|false|no)$/i.test(
+    String(process.env.HEALTHCHECK_GLOBALPING_LTE_REQUIRE_EYEBALL || "1")
+);
+const GLOBALPING_LTE_MAX_ENDPOINTS = Math.max(1, Math.min(164, Number(process.env.HEALTHCHECK_GLOBALPING_MAX_ENDPOINTS) || 164));
+const GLOBALPING_LTE_RESERVE_TESTS = Math.max(0, Number(process.env.HEALTHCHECK_GLOBALPING_RESERVE_TESTS) || 10);
+const GLOBALPING_LTE_TIMEOUT_MS = Math.max(10000, Number(process.env.HEALTHCHECK_GLOBALPING_TIMEOUT_MS) || 30000);
+const GLOBALPING_LTE_POLL_MS = Math.max(500, Number(process.env.HEALTHCHECK_GLOBALPING_POLL_MS) || 700);
+const GLOBALPING_LTE_MTR_TIMEOUT_SECONDS = Math.max(5, Math.min(20, Number(process.env.HEALTHCHECK_GLOBALPING_MTR_TIMEOUT_SECONDS) || 12));
+
 const RUSSIA_GATE_STATE_MAX_AGE_MS = Math.max(5 * 60 * 1000, Number(process.env.HEALTHCHECK_RUSSIA_GATE_STATE_MAX_AGE_MS) || 6 * 60 * 60 * 1000);
 const RUSSIA_GATE_USE_CACHE =
     /^(1|true|yes)$/i.test(
@@ -304,7 +310,7 @@ const RUSSIA_GATE_USE_CACHE =
     );
 // Bump whenever the gate semantics change so old cached verdicts cannot be
 // reused after changing providers or reachability rules.
-const RUSSIA_GATE_ALGORITHM_VERSION = Math.max(1, Number(process.env.HEALTHCHECK_RUSSIA_GATE_ALGORITHM_VERSION) || 33);
+const RUSSIA_GATE_ALGORITHM_VERSION = Math.max(1, Number(process.env.HEALTHCHECK_RUSSIA_GATE_ALGORITHM_VERSION) || 34);
 // Russia Gate is deliberately single-process. A per-shard limiter would create
 // multiple independent API streams and can trigger Check-Host 429 responses.
 const RUSSIA_GATE_SHARD_INDEX = 0;
@@ -313,7 +319,6 @@ const RUSSIA_GATE_SHARD_OUTPUT = "";
 const RUSSIA_GATE_SHARD_MODE = false;
 const CHECK_HOST_CONCURRENCY = Math.max(2, Math.min(12, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_CONCURRENCY) || 6));
 const CHECK_HOST_MAX_IN_FLIGHT = Math.max(2, Math.min(12, Number(process.env.HEALTHCHECK_RUSSIA_MAX_IN_FLIGHT) || CHECK_HOST_CONCURRENCY));
-const GLOBALPING_CONCURRENCY = Math.max(1, Math.min(4, Number(process.env.HEALTHCHECK_GLOBALPING_CONCURRENCY) || 4));
 
 // Speed providers are called from many candidate workers. Keep their concurrency
 // bounded globally, not per candidate, so 16 health workers cannot fan out into
@@ -783,7 +788,6 @@ function createLimiter(limit) {
 }
 
 const checkHostHttpLimiter = createLimiter(CHECK_HOST_CONCURRENCY);
-const globalpingLimiter = createLimiter(GLOBALPING_CONCURRENCY);
 const speedProviderLimiter = createLimiter(SPEED_PROVIDER_GLOBAL_CONCURRENCY);
 const mlabLocateLimiter = createLimiter(MLAB_LOCATE_CONCURRENCY);
 const yandexProbeLimiter = createLimiter(YANDEX_PROBE_CONCURRENCY);
@@ -1017,6 +1021,7 @@ function parseCheckHostNode(raw, node, transport = "tcp") {
                 node,
                 reachable: false,
                 inconclusive: true,
+                udpUsable: true,
                 latencyMs: 0,
                 error: error || "open or filtered"
             };
@@ -1035,6 +1040,7 @@ function parseCheckHostNode(raw, node, transport = "tcp") {
         node,
         reachable: false,
         inconclusive: transport === "udp",
+        udpUsable: transport === "udp",
         latencyMs: 0,
         error: String(first || "unreachable")
     };
@@ -1199,8 +1205,16 @@ function evaluateCheckHostPayload(payload, transport, nodes, requiredReachable =
     const parsed = nodes.map(node => parseCheckHostNode(payload?.[node] ?? null, node, transport));
     const reachable = parsed.filter(x => x.reachable);
     const unresolved = parsed.filter(x => x.inconclusive);
+    // UDP Check-Host cannot prove a Hysteria/QUIC handshake. For the first
+    // Russian transport gate, however, the experimental LTE checker treated
+    // "open or filtered"/timeout as a non-refused UDP result. Preserve that
+    // conservative prefilter semantics here; exact Xray health remains the
+    // authoritative application-level check.
+    const positive = transport === "udp"
+        ? parsed.filter(x => x.reachable || x.udpUsable)
+        : reachable;
 
-    if (reachable.length >= requiredReachable) {
+    if (positive.length >= requiredReachable) {
         return {
             done: true,
             result: {
@@ -1210,17 +1224,17 @@ function evaluateCheckHostPayload(payload, transport, nodes, requiredReachable =
                 inconclusive: false,
                 transport,
                 nodesTested: parsed.length,
-                nodesReachable: reachable.length,
+                nodesReachable: positive.length,
                 nodesInconclusive: unresolved.length,
                 quorumRequired: requiredReachable,
                 quorumMet: true,
-                minLatencyMs: Math.min(...reachable.map(x => x.latencyMs)),
+                minLatencyMs: reachable.length ? Math.min(...reachable.map(x => x.latencyMs)) : 0,
                 results: parsed
             }
         };
     }
 
-    if (reachable.length + unresolved.length < requiredReachable) {
+    if (positive.length + unresolved.length < requiredReachable) {
         return {
             done: true,
             result: {
@@ -1230,7 +1244,7 @@ function evaluateCheckHostPayload(payload, transport, nodes, requiredReachable =
                 inconclusive: false,
                 transport,
                 nodesTested: parsed.length,
-                nodesReachable: reachable.length,
+                nodesReachable: positive.length,
                 nodesInconclusive: unresolved.length,
                 quorumRequired: requiredReachable,
                 quorumMet: false,
@@ -1320,9 +1334,6 @@ async function pollCheckHostRequest(request, options = {}) {
 
 async function checkHostRussia(url, protocol, nodes = ACTIVE_CHECK_HOST_RUSSIA_NODES, options = {}) {
     try {
-        if (nodes.length !== 3) {
-            throw new Error(`Russia gate requires exactly 3 configured Check-Host nodes; got ${nodes.length}`);
-        }
         const request = await createCheckHostRequest(url, protocol, nodes);
         return await pollCheckHostRequest(request, options);
     } catch (error) {
@@ -1611,56 +1622,9 @@ async function checkRussiaReachabilityFromProbe(item, url, protocol, checkHost) 
         providersUnavailable: Boolean(checkHost.unavailable),
         transport: getTransportType(protocol),
         checkHost,
-        globalping: {
-            provider: "globalping",
-            ok: false,
-            unavailable: false,
-            inconclusive: false,
-            skipped: true,
-            error: "diagnostic-only; not part of Russia gate"
-        },
         minLatencyMs: Number(checkHost.minLatencyMs) > 0 ? Number(checkHost.minLatencyMs) : 0,
         checkedAt: Date.now()
     };
-}
-
-async function globalpingRussia(url, protocol) {
-    const transport = getTransportType(protocol);
-    const tcp = transport === "tcp";
-    if (!tcp) {
-        return { provider: "globalping", ok: false, unavailable: false, inconclusive: true, skipped: true, transport, protocol: "UDP", error: "Globalping free TCP probe is not a UDP service test" };
-    }
-    return globalpingLimiter(async () => {
-        try {
-            const headers = { "content-type": "application/json", "user-agent": "enter-config-russia-health/1.0" };
-            if (GLOBALPING_TOKEN) headers.authorization = `Bearer ${GLOBALPING_TOKEN}`;
-            const created = await requestJsonWithRetries(`${GLOBALPING_API_BASE}/measurements`, { method: "POST", headers, body: JSON.stringify({
-                type: "ping", target: url.hostname, locations: [{ country: "RU", limit: GLOBALPING_PROBE_LIMIT }],
-                measurementOptions: { packets: 2, protocol: tcp ? "TCP" : "ICMP", ...(tcp ? { port: Number(url.port || 443) } : {}) }
-            }) }, GLOBALPING_TIMEOUT_MS);
-            const measurementId = String(created?.id || "").trim();
-            if (!measurementId) throw new Error("missing Globalping measurement id");
-            const started = Date.now();
-            while (Date.now() - started <= GLOBALPING_TIMEOUT_MS) {
-                await sleep(700);
-                const data = await requestJsonWithRetries(`${GLOBALPING_API_BASE}/measurements/${encodeURIComponent(measurementId)}`, { headers: { "user-agent": "enter-config-russia-health/1.0", ...(GLOBALPING_TOKEN ? { authorization: `Bearer ${GLOBALPING_TOKEN}` } : {}) } }, GLOBALPING_TIMEOUT_MS);
-                if (String(data?.status || "").toLowerCase() === "in-progress") continue;
-                const rows = Array.isArray(data?.results) ? data.results : [];
-                const successful = rows.filter(row => {
-                    const status = String(row?.result?.status || "").toLowerCase();
-                    const stats = row?.result?.stats || {};
-                    const avg = Number(stats.avg);
-                    const loss = Number(stats.loss);
-                    return status === "finished" && Number.isFinite(avg) && loss === 0;
-                });
-                const latencyValues = successful.map(r => Number(r?.result?.stats?.avg)).filter(Number.isFinite);
-                return { provider: "globalping", ok: successful.length > 0, unavailable: false, inconclusive: false, transport, protocol: tcp ? "TCP" : "ICMP", probesTested: rows.length, probesReachable: successful.length, minLatencyMs: latencyValues.length ? Math.min(...latencyValues) : 0, results: rows.map(row => ({ status: row?.result?.status || "", probeCountry: row?.probe?.country || "", probeCity: row?.probe?.city || "", probeNetwork: row?.probe?.network || "", avgMs: Number(row?.result?.stats?.avg), loss: Number(row?.result?.stats?.loss) })) };
-            }
-            throw new Error("Globalping measurement timeout");
-        } catch (error) {
-            return { provider: "globalping", ok: false, unavailable: true, inconclusive: false, rateLimited: Number(error?.status || 0) === 429, transport, protocol: tcp ? "TCP" : "ICMP", error: error?.message || String(error) };
-        }
-    });
 }
 
 function russiaGateEndpointKey(item) {
@@ -1671,47 +1635,6 @@ function russiaGateEndpointKey(item) {
     } catch {
         return `invalid|${fingerprintLink(String(item?.link || ""))}`;
     }
-}
-
-async function checkRussiaReachability(item, url, protocol, sourceMeta, options = {}) {
-    if (isLteCandidate(item, sourceMeta)) {
-        return {
-            required: false,
-            skipped: true,
-            gatePassed: true,
-            gatePending: false,
-            reason: "LTE/white-list diagnostic only"
-        };
-    }
-
-    // Check-Host is the sole source of truth for the Russia gate.
-    // Globalping is intentionally NOT consulted here: its free quota,
-    // rate limiting, probe availability, or outage must never change whether
-    // a candidate is accepted or rejected by the publication gate.
-    const checkHost = await checkHostRussia(url, protocol, ACTIVE_CHECK_HOST_RUSSIA_NODES, options);
-
-    return {
-        required: true,
-        skipped: false,
-        gatePassed: Boolean(checkHost.ok),
-        // A Check-Host outage / unresolved result is UNKNOWN, not PASS.
-        // The gate will stop publication rather than admit an unverified server.
-        gatePending: !checkHost.ok && Boolean(checkHost.unavailable || checkHost.inconclusive),
-        anyReachable: Boolean(checkHost.ok),
-        providersUnavailable: Boolean(checkHost.unavailable),
-        transport: getTransportType(protocol),
-        checkHost,
-        globalping: {
-            provider: "globalping",
-            ok: false,
-            unavailable: false,
-            inconclusive: false,
-            skipped: true,
-            error: "diagnostic-only; not part of Russia gate"
-        },
-        minLatencyMs: Number(checkHost.minLatencyMs) > 0 ? Number(checkHost.minLatencyMs) : 0,
-        checkedAt: Date.now()
-    };
 }
 
 async function updateHealthHistory(results) {
@@ -4163,102 +4086,7 @@ async function buildGamingAssignments(
     }).filter(Boolean);
 }
 
-async function runGlobalpingDiagnostic() {
-    const candidateText = await fs.readFile(HEALTH_CANDIDATES_FILE, "utf8");
-    const candidates = JSON.parse(candidateText);
-    if (!Array.isArray(candidates) || !candidates.length) {
-        throw new Error(`${path.basename(HEALTH_CANDIDATES_FILE)} must contain a non-empty array`);
-    }
-
-    // Deterministic but distributed sample: hash the endpoint fingerprint so the
-    // first 250 are not always the same source slice after refreshes.
-    const sample = candidates
-        .filter(item => {
-            const fp = fingerprintLink(String(item?.link || ""));
-            return isManagedSourceId(item?.id) && !isLteCandidate(item, null) &&
-                getTransportType(getProtocol(String(item?.link || ""))) === "tcp";
-        })
-        .map(item => ({
-            item,
-            fp: fingerprintLink(String(item?.link || ""))
-        }))
-        .sort((a, b) => a.fp.localeCompare(b.fp))
-        .slice(0, GLOBALPING_MAX_CANDIDATES_PER_CYCLE);
-
-    const diagnosticResults = [];
-    let cursor = 0;
-
-    async function worker() {
-        while (true) {
-            const row = sample[cursor++];
-            if (!row) return;
-
-            let url;
-            try {
-                url = new URL(String(row.item?.link || "").trim());
-            } catch {
-                diagnosticResults.push({
-                    id: row.item?.id || "",
-                    fingerprint: row.fp,
-                    ok: false,
-                    skipped: false,
-                    error: "invalid endpoint URL"
-                });
-                continue;
-            }
-
-            const protocol = getProtocol(String(row.item?.link || ""));
-            const result = await globalpingRussia(url, protocol);
-            diagnosticResults.push({
-                id: row.item?.id || "",
-                fingerprint: row.fp,
-                country: row.item?.country || "",
-                source: row.item?.source || "",
-                host: url.hostname,
-                port: Number(url.port || 443),
-                protocol,
-                ...result,
-                checkedAt: Date.now()
-            });
-        }
-    }
-
-    const workerCount = Math.min(GLOBALPING_CONCURRENCY, sample.length || 1);
-    await Promise.all(Array.from({ length: workerCount }, () => worker()));
-
-    const ok = diagnosticResults.filter(item => item.ok).length;
-    const fail = diagnosticResults.filter(item => item.ok === false && !item.unavailable && !item.inconclusive).length;
-    const unavailable = diagnosticResults.filter(item => item.unavailable).length;
-
-    const report = {
-        generatedAt: new Date().toISOString(),
-        provider: "globalping",
-        purpose: "diagnostic-only",
-        affectsRussiaGate: false,
-        freeTestBudget: GLOBALPING_MAX_CANDIDATES_PER_CYCLE,
-        testsRequested: diagnosticResults.length,
-        testsPassed: ok,
-        testsFailed: fail,
-        testsUnavailable: unavailable,
-        results: diagnosticResults
-    };
-
-    const output = path.join(ROOT, "russia-globalping-diagnostic.json");
-    await fs.writeFile(output, `${JSON.stringify(report, null, 2)}\n`, "utf8");
-
-    console.log(
-        `GLOBALPING DIAGNOSTIC COMPLETE: ${diagnosticResults.length} tests; ` +
-        `${ok} pass, ${fail} fail, ${unavailable} unavailable; ` +
-        `gateImpact=none; results=${path.relative(ROOT, output)}`
-    );
-}
-
 async function main() {
-    if (HEALTHCHECK_MODE === "globalping-diagnostic") {
-        await runGlobalpingDiagnostic();
-        return;
-    }
-
     if (HEALTHCHECK_MODE !== "russia-gate") {
         await fs.access(
             XRAY_BIN
@@ -4476,10 +4304,10 @@ async function main() {
 
         const sourceMeta = candidateMap[linkFingerprint] || null;
 
-        // Russia reachability is a pre-gate for regular/non-LTE nodes.
+        // Russia reachability is a pre-gate for every managed candidate.
         // Servers definitely unreachable from Russia never consume the expensive
         // Xray + HTTPS + multi-provider speed budget.
-        if (!isLteCandidate(item, sourceMeta) && russiaProbe) {
+        if (russiaProbe) {
             if (!russiaProbe.gatePassed && !russiaProbe.gatePending) {
                 return {
                     item,
@@ -4487,27 +4315,23 @@ async function main() {
                     protocol,
                     russiaProbe,
                     reason:
-                        `Russia reachability failed: Check-Host ${russiaProbe.checkHost?.nodesReachable || 0}/${russiaProbe.checkHost?.nodesTested || 0}; ` +
-                        `Globalping ${russiaProbe.globalping?.probesReachable || 0}/${russiaProbe.globalping?.probesTested || 0}`,
+                        `Russia reachability failed: Check-Host ${russiaProbe.checkHost?.nodesReachable || 0}/${russiaProbe.checkHost?.nodesTested || 0}`,
                 };
             }
         }
 
-        const stage1 =
-            await tcpProbe(
-                url.hostname,
-                url.port
-            );
+        const transport = getTransportType(protocol);
+        const stage1 = transport === "tcp"
+            ? await tcpProbe(url.hostname, url.port)
+            : true;
 
         if (!stage1) {
             return {
                 item,
-                ok:
-                    false,
+                ok: false,
                 protocol,
                 russiaProbe,
-                reason:
-                    "TCP unreachable"
+                reason: "TCP unreachable"
             };
         }
 
@@ -4651,7 +4475,7 @@ async function main() {
                         protocol,
                         russiaProbe,
                         reason:
-                            `TCP + Xray + real speed check failed ` +
+                            `${transport.toUpperCase()} + Xray + real speed check failed ` +
                             `(${quality.passedCount}/${quality.providerCount} providers, ` +
                             `median ${quality.medianKbps} KB/s). ` +
                             `Synthetic HTTPS diagnostics: ${passedTargets.length}/${targets.length} passed` +
@@ -4679,7 +4503,7 @@ async function main() {
                 protocol,
                 russiaProbe,
                 stages:
-                    `TCP + Xray + ${passedTargets.length}/${targets.length} HTTPS + ` +
+                    `${transport.toUpperCase()} + Xray + ${passedTargets.length}/${targets.length} HTTPS + ` +
                     (isWhiteListCandidate
                         ? `service ${updateConnectivity.ok ? "PASS" : "FAIL"} + `
                         : "") +
@@ -4816,7 +4640,7 @@ async function main() {
     }
 
     // Russia reachability is a dedicated pipeline stage. In `russia-gate` mode
-    // every non-LTE candidate is checked (or reused from a recent cached result),
+    // every managed candidate is checked (or reused from a recent cached result),
     // then the full gate is persisted for the next job. The normal health mode
     // only consumes that immutable gate output and never calls Check-Host again.
     const russiaProbeByFingerprint = new Map();
@@ -4855,18 +4679,15 @@ async function main() {
         );
 
         console.log(
-            `RUSSIA GATE START: Check-Host=${ACTIVE_CHECK_HOST_RUSSIA_NODES.length} live Russian nodes for all non-LTE candidates; ` +
+            `RUSSIA GATE START: Check-Host=${ACTIVE_CHECK_HOST_RUSSIA_NODES.length} live Russian nodes for all managed candidates; ` +
             `strategy=${russiaCheckerMode === "dual" ? "strict-positive-reachability-2-of-2" : russiaCheckerMode === "single" ? "single-live-node-warning-mode" : "skipped-all-checkers-unavailable"}; ` +
             `cache=${RUSSIA_GATE_USE_CACHE ? "enabled" : "disabled"}; ` +
-            `Globalping=diagnostic-only (never affects gate); ` +
+            `Globalping=LTE-only post-Xray gate; ` +
             `adaptive-pacing=global-api>=${CHECK_HOST_TOTAL_MIN_INTERVAL_MS}ms; ` +
             `nodes=${ACTIVE_CHECK_HOST_RUSSIA_NODES.join(",") || "none"}`
         );
 
-        const requiredRussiaItems = managedItems.filter((item) => {
-            const fp = fingerprintLink(item.link || "");
-            return !isLteCandidate(item, candidateMap[fp] || null);
-        });
+        const requiredRussiaItems = [...managedItems];
 
         if (ACTIVE_CHECK_HOST_GATE_QUORUM === 0) {
             for (const item of requiredRussiaItems) {
@@ -4932,7 +4753,7 @@ async function main() {
                 }))
             };
             await fs.writeFile(RUSSIA_GATE_FILE, `${JSON.stringify(skippedReport, null, 2)}\n`, "utf8");
-            console.warn(`⚠️ RUSSIA GATE SKIPPED: no usable Russian Check-Host nodes; ${requiredRussiaItems.length} non-LTE candidates go directly to Heavy`);
+            console.warn(`⚠️ RUSSIA GATE SKIPPED: no usable Russian Check-Host nodes; ${requiredRussiaItems.length} candidates go directly to Heavy`);
             return;
         }
 
@@ -4950,23 +4771,6 @@ async function main() {
         let russiaCacheHits = 0;
         let russiaCheckHostUnavailable = 0;
         let russiaCheckHostRateLimited = 0;
-
-        // LTE/whitelist entries never enter the Russia Gate. They retain the
-        // existing LTE workflow exactly as before this optimization.
-        for (const item of managedItems) {
-            const fp = fingerprintLink(item.link || "");
-            const sourceMeta = candidateMap[fp] || null;
-            if (isLteCandidate(item, sourceMeta)) {
-                russiaProbeByFingerprint.set(fp, {
-                    required: false,
-                    skipped: true,
-                    gatePassed: true,
-                    gatePending: false,
-                    reason: "LTE/white-list diagnostic only",
-                    checkedAt: Date.now()
-                });
-            }
-        }
 
         console.log(
             `RUSSIA GATE WORKSET: candidates=${requiredRussiaItems.length}; ` +
@@ -5146,20 +4950,6 @@ async function main() {
                             error: probe.checkHost.error || "",
                         }
                         : probe.checkHost,
-                    globalping: probe.globalping
-                        ? {
-                            provider: probe.globalping.provider,
-                            ok: Boolean(probe.globalping.ok),
-                            unavailable: Boolean(probe.globalping.unavailable),
-                            inconclusive: Boolean(probe.globalping.inconclusive),
-                            skipped: Boolean(probe.globalping.skipped),
-                            probesTested: Number(probe.globalping.probesTested) || 0,
-                            probesReachable: Number(probe.globalping.probesReachable) || 0,
-                            minLatencyMs: Number(probe.globalping.minLatencyMs) || 0,
-                            rateLimited: Boolean(probe.globalping.rateLimited),
-                            error: probe.globalping.error || "",
-                        }
-                        : probe.globalping,
                 };
             }
         }
@@ -5212,7 +5002,6 @@ async function main() {
                 }).length,
                 checkHostNodes: ACTIVE_CHECK_HOST_RUSSIA_NODES,
                  configuredCheckHostNodes: CHECK_HOST_RUSSIA_NODES,
-                 globalpingSelectionCount: 0,
                 stateMaxAgeMs: RUSSIA_GATE_STATE_MAX_AGE_MS,
                 gateAlgorithmVersion: RUSSIA_GATE_ALGORITHM_VERSION,
                 results: gateResults,
@@ -5254,19 +5043,12 @@ async function main() {
     russiaGateFailures = Number(gateReport?.failedCandidates) || 0;
     russiaGatePending = Math.max(0, Number(gateReport?.requiredCandidates) - russiaGatePassed - russiaGateFailures);
 
-    // Only Russia-passing regular nodes and all LTE/whitelist nodes
-    // proceed to the expensive local/Xray/speed health-check. Pending/unknown
-    // reachability is deliberately excluded from publication.
+    // Only candidates positively verified by the Russia gate proceed to the
+    // expensive local/Xray/speed health-check. This includes LTE/whitelist.
+    // Pending/unknown reachability is deliberately excluded from publication.
     const healthEligibleItems = [];
     for (const item of managedItems) {
         const fp = fingerprintLink(item.link || "");
-        const sourceMeta = candidateMap[fp] || null;
-
-        if (isLteCandidate(item, sourceMeta)) {
-            healthEligibleItems.push(item);
-            continue;
-        }
-
         const probe = russiaProbeByFingerprint.get(fp);
         if (probe?.gatePassed) {
             healthEligibleItems.push(item);
@@ -5279,8 +5061,7 @@ async function main() {
             configFile: item.configFile || null, sourceKind: item.sourceKind || null, country: resolvedCountry,
             whiteList: false, source: sourceMeta?.source || item.source || "retained/manual", linkFingerprint: fp,
             ok: false, protocol: getProtocol(item.link || ""), stages: "",
-            reason: `Russia reachability failed: Check-Host ${probe.checkHost?.nodesReachable || 0}/${probe.checkHost?.nodesTested || 0}; ` +
-                `Globalping ${probe.globalping?.probesReachable || 0}/${probe.globalping?.probesTested || 0}`,
+            reason: `Russia reachability failed: Check-Host ${probe.checkHost?.nodesReachable || 0}/${probe.checkHost?.nodesTested || 0}`,
             quality: null, connection: null, gaming: null, remote: [], updateConnectivity: null,
             russiaProbe: probe, telegram: null
         });
@@ -5294,6 +5075,40 @@ async function main() {
 
     const workerCount = Math.min(HEALTH_CONCURRENCY, managedItems.length || 1);
     await Promise.all(Array.from({ length: workerCount }, () => worker()));
+
+    // LTE-only Globalping gate. It runs after the exact-link Xray/health stage,
+    // uses three non-Moscow/non-Saint-Petersburg Russian eyeball cities, and
+    // accepts a minimum of 2/3. 3/3 is recorded as a stronger diagnostic tier.
+    const lteGlobalping = await runLteGlobalpingGate({
+        healthResults,
+        enabled: GLOBALPING_LTE_ENABLED,
+        apiBase: GLOBALPING_API_BASE,
+        token: GLOBALPING_TOKEN,
+        cityLimit: GLOBALPING_LTE_CITY_LIMIT,
+        minDistinctCities: GLOBALPING_LTE_MIN_DISTINCT_CITIES,
+        requireEyeball: GLOBALPING_LTE_REQUIRE_EYEBALL,
+        maxEndpoints: GLOBALPING_LTE_MAX_ENDPOINTS,
+        reserveTests: GLOBALPING_LTE_RESERVE_TESTS,
+        timeoutMs: GLOBALPING_LTE_TIMEOUT_MS,
+        pollMs: GLOBALPING_LTE_POLL_MS,
+        mtrTimeoutSeconds: GLOBALPING_LTE_MTR_TIMEOUT_SECONDS,
+    });
+
+    for (const result of healthResults) {
+        const gp = lteGlobalping.endpointByLinkFingerprint?.[String(result.linkFingerprint || "")];
+        if (gp) result.globalping = gp;
+    }
+
+    if (lteGlobalping.excludedLinkFingerprints?.size) {
+        for (const result of healthResults) {
+            if (!result.whiteList || !result.ok) continue;
+            const fp = String(result.linkFingerprint || "");
+            if (!lteGlobalping.excludedLinkFingerprints.has(fp)) continue;
+            const gp = lteGlobalping.endpointByLinkFingerprint?.[fp];
+            result.ok = false;
+            result.reason = `Globalping Russia gate failed: ${Number(gp?.validReachedCities || 0)}/${lteGlobalping.cityCount} selected Russian cities reached the endpoint`;
+        }
+    }
 
     passed = healthResults.filter(result => result.ok).length;
     failed = healthResults.filter(result => !result.ok).length;
@@ -5633,6 +5448,32 @@ async function main() {
         report = JSON.parse(await fs.readFile(reportFile, "utf8"));
     } catch {}
 
+    await fs.writeFile(
+        path.join(ROOT, "lte-russia-globalping-diagnostic.json"),
+        `${JSON.stringify(lteGlobalping.diagnostic, null, 2)}\n`,
+        "utf8"
+    );
+    await fs.writeFile(
+        path.join(ROOT, "lte-russia-before-globalping.txt"),
+        `${lteGlobalping.beforeGlobalpingLinks.join("\n")}${lteGlobalping.beforeGlobalpingLinks.length ? "\n" : ""}`,
+        "utf8"
+    );
+    await fs.writeFile(
+        path.join(ROOT, "lte-russia-globalping-2of3.txt"),
+        `${lteGlobalping.globalping2of3Links.join("\n")}${lteGlobalping.globalping2of3Links.length ? "\n" : ""}`,
+        "utf8"
+    );
+    await fs.writeFile(
+        path.join(ROOT, "lte-russia-globalping-3of3.txt"),
+        `${lteGlobalping.globalping3of3Links.join("\n")}${lteGlobalping.globalping3of3Links.length ? "\n" : ""}`,
+        "utf8"
+    );
+    await fs.writeFile(
+        path.join(ROOT, "lte-russia-globalping-final.txt"),
+        `${lteGlobalping.finalPublishedLinks.join("\n")}${lteGlobalping.finalPublishedLinks.length ? "\n" : ""}`,
+        "utf8"
+    );
+
     report.healthCheck = {
         generatedAt: new Date().toISOString(),
         checked,
@@ -5650,8 +5491,9 @@ async function main() {
             mlabLocateUrl: MLAB_LOCATE_URL,
         },
         russiaReachability: {
-            gatedNonLte: true,
-            lteDiagnosticOnly: true,
+            gatedNonLte: false,
+            gatedAllManagedCandidates: true,
+            lteDiagnosticOnly: false,
             checkHostNodes: Array.isArray(gateReport?.checkHostNodes)
                 ? gateReport.checkHostNodes
                 : CHECK_HOST_RUSSIA_NODES,
@@ -5662,14 +5504,20 @@ async function main() {
             checkHostResultMinIntervalMs: CHECK_HOST_RESULT_MIN_INTERVAL_MS,
             checkHostConcurrency: CHECK_HOST_CONCURRENCY,
             globalpingTokenConfigured: Boolean(GLOBALPING_TOKEN),
-            globalpingDiagnosticOnly: true,
-            globalpingFreeTestBudget: GLOBALPING_MAX_CANDIDATES_PER_CYCLE,
-            globalpingMaxCandidatesPerCycle: GLOBALPING_MAX_CANDIDATES_PER_CYCLE,
-            globalpingProbeLimit: GLOBALPING_PROBE_LIMIT,
+            globalpingDiagnosticOnly: false,
+            globalpingLteEnabled: GLOBALPING_LTE_ENABLED,
+            globalpingLteCityLimit: GLOBALPING_LTE_CITY_LIMIT,
+            globalpingLteMinDistinctCities: GLOBALPING_LTE_MIN_DISTINCT_CITIES,
+            globalpingLteMaxEndpoints: GLOBALPING_LTE_MAX_ENDPOINTS,
+            globalpingLteReserveTests: GLOBALPING_LTE_RESERVE_TESTS,
+            globalpingLteAttemptedEndpoints: lteGlobalping.attemptedEndpoints,
+            globalpingLtePassed2of3: lteGlobalping.passed2of3Endpoints,
+            globalpingLtePassed3of3: lteGlobalping.passed3of3Endpoints,
+            globalpingLteFailOpen: lteGlobalping.failOpen,
             russiaGatePassed,
             russiaGateFailures,
             russiaGatePending,
-            policy: "Russia Gate uses the preferred geographically independent checker pairs ru2+ru3, then ru1+ru3, then ru1+ru2. With two live nodes, both must positively verify the candidate; with one live node, that node is used in warning mode; with zero live nodes, Russia Gate is skipped and candidates proceed directly to Heavy. Check-Host 429/5xx/timeout or unresolved results are UNKNOWN/PENDING and never an automatic PASS while a checker is available. Globalping is diagnostics-only and cannot affect gate decisions. LTE/whitelist candidates are exempt from the Russia gate."
+            policy: "Russia Gate uses the preferred geographically independent checker pairs ru2+ru3, then ru1+ru3, then ru1+ru2. With two live nodes, both must positively verify the candidate; with one live node, that node is used in warning mode; with zero live nodes, Russia Gate is skipped and candidates proceed directly to Heavy. Check-Host 429/5xx/timeout or unresolved results are UNKNOWN/PENDING and never an automatic PASS while a checker is available. The Russia transport gate applies to LTE/whitelist candidates too. Globalping is LTE-only, runs after Xray, accepts 2/3 selected Russian eyeball cities, keeps 3/3 as a stronger diagnostic tier, and is fail-open on Globalping service failure. Regular servers never use Globalping."
         },
         gamingCriteria: {
             minKbps:
