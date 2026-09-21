@@ -25,6 +25,7 @@ const ALLOWED_REGULAR_COUNTRIES = new Set([
   "Sweden",
   "Finland",
   "Poland",
+  "Russia",
   "Estonia",
   "Austria",
   "Italy",
@@ -34,7 +35,7 @@ const ALLOWED_REGULAR_COUNTRIES = new Set([
 
 const REGULAR_COUNTRY_ORDER = [
   "Germany", "Netherlands", "United Kingdom", "United States", "Canada",
-  "France", "Switzerland", "Sweden", "Finland", "Poland", "Estonia",
+  "France", "Switzerland", "Sweden", "Finland", "Poland", "Russia", "Estonia",
   "Austria", "Italy", "Hungary", "Bulgaria",
 ];
 const REGULAR_COUNTRY_RANK = new Map(

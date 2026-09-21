@@ -522,6 +522,7 @@ const FEATURED_COUNTRY_ORDER = [
     "Poland",
 ];
 const FEATURED_COUNTRIES = new Set(FEATURED_COUNTRY_ORDER.map(country => country.toLowerCase()));
+const FEATURED_EXCLUDED_COUNTRIES = new Set(["russia"]);
 
 // Europe is a permanent visible location and therefore counts toward the
 // Fast/Gaming thresholds used for the final subscription layout.
@@ -3887,7 +3888,7 @@ function selectFeaturedFastServers(results, limit = FAST_TOP_N, allowedCountries
         const country = String(result.country || '').trim();
         if (!country) continue;
         const countryKey = country.toLowerCase();
-        if (!allowedCountries.has(countryKey)) continue;
+        if (!allowedCountries.has(countryKey) || FEATURED_EXCLUDED_COUNTRIES.has(countryKey)) continue;
 
         // Fast is a location feature: one physical server per selected country.
         if (selectedCountries.has(countryKey)) continue;
@@ -3927,7 +3928,12 @@ function selectFeaturedGamingServers(
     for (const result of candidates) {
         const country = String(result.country || "").trim();
         const key = country.toLowerCase();
-        if (!country || excluded.has(key) || !allowedCountries.has(key)) continue;
+        if (
+            !country ||
+            excluded.has(key) ||
+            !allowedCountries.has(key) ||
+            FEATURED_EXCLUDED_COUNTRIES.has(key)
+        ) continue;
 
         const bucket = groups.get(key) || { country, members: [] };
         bucket.members.push(result);
