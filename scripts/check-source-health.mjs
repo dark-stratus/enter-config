@@ -523,29 +523,24 @@ const FEATURED_COUNTRY_ORDER = [
 ];
 const FEATURED_COUNTRIES = new Set(FEATURED_COUNTRY_ORDER.map(country => country.toLowerCase()));
 
-function calculateFeaturedTargetCounts(ordinaryCountryCount) {
-    const count = Math.max(0, Number(ordinaryCountryCount) || 0);
-    if (count < 3) {
-        return {
-            total: Math.min(1, count),
-            fast: Math.min(1, count),
-            gaming: 0,
-        };
+// Europe is a permanent visible location and therefore counts toward the
+// Fast/Gaming thresholds used for the final subscription layout.
+function calculateFeaturedTargetCounts(visibleLocationCount) {
+    const count = Math.max(0, Number(visibleLocationCount) || 0);
+
+    if (count > 15) {
+        return { total: 6, fast: 3, gaming: 3 };
     }
 
-    // Featured locations must never outnumber the remaining ordinary locations.
-    // The 40% target matches the requested 10 -> 4 and 15 -> 6 examples while
-    // preserving at least half of the country locations as ordinary choices.
-    const total = Math.min(
-        Math.floor(count * 0.4),
-        Math.floor(count / 2)
-    );
+    if (count > 10) {
+        return { total: 4, fast: 2, gaming: 2 };
+    }
 
-    return {
-        total,
-        fast: Math.ceil(total / 2),
-        gaming: Math.floor(total / 2),
-    };
+    if (count > 5) {
+        return { total: 2, fast: 1, gaming: 1 };
+    }
+
+    return { total: 0, fast: 0, gaming: 0 };
 }
 const GAMING_TOP_N = Math.max(1, Number(process.env.HEALTHCHECK_GAMING_TOP_N) || 3);
 const GAMING_SERVERS_PER_COUNTRY = Math.max(
@@ -5133,10 +5128,8 @@ async function main() {
     const selectedCountries =
         buildCountryHealthPool(healthResults, false);
 
-    // Europe is a permanent visible location but is not part of
-    // selectedCountries. Include it in the featured-location target so the
-    // configured 15 visible locations (14 country locations + Europe) produce
-    // the intended 3 Fast + 3 Gaming feature slots.
+    // Europe is a permanent visible location and therefore counts toward the
+    // Fast/Gaming thresholds.
     const featuredTargets = calculateFeaturedTargetCounts(
         selectedCountries.length + 1
     );
