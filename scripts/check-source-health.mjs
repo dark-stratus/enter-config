@@ -547,10 +547,6 @@ function calculateFeaturedTargetCounts(ordinaryCountryCount) {
         gaming: Math.floor(total / 2),
     };
 }
-const FAST_SERVERS_PER_COUNTRY = Math.max(
-    1,
-    Math.min(3, Number(process.env.HEALTHCHECK_FAST_SERVERS_PER_COUNTRY) || 3)
-);
 const GAMING_TOP_N = Math.max(1, Number(process.env.HEALTHCHECK_GAMING_TOP_N) || 3);
 const GAMING_SERVERS_PER_COUNTRY = Math.max(
     1,
@@ -3883,12 +3879,10 @@ function selectFeaturedFastServers(results, limit = FAST_TOP_N, allowedCountries
         });
 
     // At most three distinct countries can participate in the Fast trio.
-    // Once a country is admitted, up to FAST_SERVERS_PER_COUNTRY (=3 by default)
-    // servers from that country may be selected.
+    // Fast is a location feature: one physical server per selected country.
     const selected = [];
     const selectedKeys = new Set();
     const selectedCountries = new Set();
-    const countryCounts = new Map();
 
     for (const row of ranked) {
         const result = row.result;
@@ -3904,7 +3898,6 @@ function selectFeaturedFastServers(results, limit = FAST_TOP_N, allowedCountries
         if (selectedCountries.has(countryKey)) continue;
 
         selectedCountries.add(countryKey);
-        countryCounts.set(countryKey, 1);
         selectedKeys.add(key);
         selected.push(result);
 
@@ -4035,10 +4028,15 @@ function applyFeaturedRegularBadges(indexEntries, healthResults, featuredTargets
         if (!result) continue;
 
         if (fastFingerprints.has(result.linkFingerprint)) {
-            entry.featured = 'fast';
-            entry.featuredRank = fast.find(item => item.linkFingerprint === result.linkFingerprint)?.rank || 0;
+            const rank = fast.find(item => item.linkFingerprint === result.linkFingerprint)?.rank || 0;
             const flag = extractFlag(result.remarks) || countryFlag(result.country) || '🌐';
-            entry.remarks = `${flag} 🔥 ${result.country}`.trim();
+            const country = String(result.country || '').trim();
+
+            entry.featured = 'fast';
+            entry.featuredRank = rank;
+            entry.flag = flag;
+            entry.country = country;
+            entry.remarks = `${flag} 🔥 ${country}`.trim();
         } else if (gamingFingerprints.has(result.linkFingerprint)) {
             entry.featured = 'gaming';
             entry.featuredRank = gaming.find(item => item.linkFingerprint === result.linkFingerprint)?.rank || 0;
@@ -4055,7 +4053,6 @@ async function buildGamingAssignments(
     selectedCountries,
     healthResults,
     candidateItems,
-    excludedCountries = new Set(),
     featuredTargets = null
 ) {
     const candidateByFingerprint = new Map(
@@ -4069,7 +4066,7 @@ async function buildGamingAssignments(
     );
     const selected = selectFeaturedGamingServers(
         healthResults,
-        new Set(excludedCountries),
+        new Set(),
         targets.gaming
     );
 
@@ -5159,7 +5156,6 @@ async function main() {
             .filter(item => item && MANAGED_REGULAR_RE.test(String(item.id || "")))
             .map(item => [String(item.id), item])
     );
-    const featuredFastCountries = new Set(featured.fast.map(item => item.country));
     const featuredFastIds = new Set(featured.fast.map(item => item.id));
 
     const selectedWhiteListCountries =
@@ -5243,7 +5239,6 @@ async function main() {
             selectedCountries,
             healthResults,
             candidates,
-            featuredFastCountries,
             featuredTargets
         );
 
@@ -5541,7 +5536,6 @@ async function main() {
                 GAMING_MIN_QUALITY_PASSES,
             maxServersPerCountry:
                 GAMING_SERVERS_PER_COUNTRY,
-                FAST_SERVERS_PER_COUNTRY,
             backupMaxLatencyMs:
                 GAMING_BACKUP_MAX_LATENCY_MS,
             backupMaxLatencySpreadMs:

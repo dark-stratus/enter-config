@@ -641,7 +641,7 @@ function extractProfileLinks(text) {
     if (!value || value.startsWith("#")) continue;
 
     const matches = value.match(
-      /(?:vless|trojan|hysteria2):\/\/[^\s]+/gi
+      /(?:vless|trojan|hysteria|hysteria2):\/\/[^\s]+/gi
     );
 
     if (!matches) continue;
@@ -1750,7 +1750,7 @@ function normalizeProfileLink(link, index, source, forceWhiteList = false, stats
   const value = link.trim();
   const protocol = value.split("://")[0]?.toLowerCase();
 
-  if (!["vless", "trojan", "hysteria2"].includes(protocol)) {
+  if (!["vless", "trojan", "hysteria", "hysteria2"].includes(protocol)) {
     if (stats) {
       stats.droppedUnsupported += 1;
       recordDropSample(stats, { index, reason: "unsupported-protocol" });
