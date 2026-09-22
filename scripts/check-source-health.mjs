@@ -1523,7 +1523,7 @@ async function checkHostProviderPreflight(items = []) {
     const { selectedPair, selectionReason } = selectRussiaCheckerPair(canaryStats, canaryReliable);
 
     const liveNodes = nodeProbes.filter(row => row.reachable).map(row => row.node);
-    const selectedLiveNodes = selectedPair || (healthyNodes[0] ? [healthyNodes[0].node] : []);
+    const selectedLiveNodes = selectedPair || liveNodes.slice(0, 2);
     const checkerMode = selectedLiveNodes.length >= 2 ? "dual" : selectedLiveNodes.length === 1 ? "single" : "skipped";
 
     return {
