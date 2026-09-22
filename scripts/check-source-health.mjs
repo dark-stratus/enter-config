@@ -1207,6 +1207,103 @@ function selectRussiaGateCanaryItems(items) {
     return selected;
 }
 
+async function createCheckHostRequest(url, protocol, nodes) {
+    const transport = getTransportType(protocol);
+    const checkType = transport === "udp" ? "udp" : "tcp";
+    const params = new URLSearchParams({
+        host: `${url.hostname}:${Number(url.port || 443)}`,
+        max_nodes: String(nodes.length)
+    });
+    for (const node of nodes) params.append("node", node);
+
+    const createUrl = `${CHECK_HOST_API_BASE}/check-${checkType}?${params}`;
+    for (let createAttempt = 0; createAttempt < 4; createAttempt += 1) {
+        try {
+            const created = await scheduleCheckHostApiRequest(
+                () => requestJson(
+                    createUrl,
+                    { headers: { "user-agent": "enter-config-russia-health/1.0" } },
+                    CHECK_HOST_CREATE_TIMEOUT_MS
+                ),
+                "create"
+            );
+            const requestId = String(created?.request_id || "").trim();
+            if (!requestId) throw new Error("missing Check-Host request_id");
+            return { requestId, transport, checkType, nodes: [...nodes], createdAt: Date.now() };
+        } catch (error) {
+            const status = Number(error?.status || 0);
+            // Creation is not idempotent: a timeout/5xx may have created the
+            // request even if the response never reached us. Never replay such
+            // a request. HTTP 429 is the only safe create retry because the
+            // provider rejected the request before issuing a request_id.
+            if (status !== 429 || createAttempt >= 3) throw error;
+
+            const serverDelay = Number(error?.retryAfterMs);
+            const backoff = 2000 * Math.min(4, createAttempt + 1);
+            const delay = Number.isFinite(serverDelay) ? Math.max(serverDelay, backoff) : backoff;
+            await sleep(Math.min(20000, delay));
+        }
+    }
+    throw new Error("Check-Host create failed");
+}
+
+function evaluateCheckHostPayload(payload, transport, nodes, requiredReachable = ACTIVE_CHECK_HOST_GATE_QUORUM) {
+    const parsed = nodes.map(node => parseCheckHostNode(payload?.[node] ?? null, node, transport));
+    const reachable = parsed.filter(x => x.reachable);
+    const unresolved = parsed.filter(x => x.inconclusive);
+    // UDP Check-Host cannot prove a Hysteria/QUIC handshake. For the first
+    // Russian transport gate, however, the LTE transport policy treats
+    // "open or filtered"/timeout as a non-refused UDP result. Preserve that
+    // conservative prefilter semantics here; exact Xray health remains the
+    // authoritative application-level check.
+    const positive = transport === "udp"
+        ? parsed.filter(x => x.reachable || x.udpUsable)
+        : reachable;
+
+    if (positive.length >= requiredReachable) {
+        return {
+            done: true,
+            result: {
+                provider: "check-host",
+                ok: true,
+                unavailable: false,
+                inconclusive: false,
+                transport,
+                nodesTested: parsed.length,
+                nodesReachable: positive.length,
+                nodesInconclusive: unresolved.length,
+                quorumRequired: requiredReachable,
+                quorumMet: true,
+                minLatencyMs: reachable.length ? Math.min(...reachable.map(x => x.latencyMs)) : 0,
+                results: parsed
+            }
+        };
+    }
+
+    if (positive.length + unresolved.length < requiredReachable) {
+        return {
+            done: true,
+            result: {
+                provider: "check-host",
+                ok: false,
+                unavailable: false,
+                inconclusive: false,
+                transport,
+                nodesTested: parsed.length,
+                nodesReachable: positive.length,
+                nodesInconclusive: unresolved.length,
+                quorumRequired: requiredReachable,
+                quorumMet: false,
+                minLatencyMs: reachable.length ? Math.min(...reachable.map(x => x.latencyMs)) : 0,
+                results: parsed
+            }
+        };
+    }
+
+    return { done: false, parsed };
+}
+
+
 async function pollCheckHostRequest(request, options = {}) {
     const pollLimitMs = Math.max(
         CHECK_HOST_POLL_MS,
