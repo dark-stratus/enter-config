@@ -285,6 +285,14 @@ const CHECK_HOST_RESULT_TIMEOUT_MS = Math.max(
 const CHECK_HOST_POLL_MS = Math.max(250, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_POLL_MS) || 700);
 const CHECK_HOST_MAX_POLL_MS = Math.max(CHECK_HOST_POLL_MS, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_MAX_POLL_MS) || 5000);
 const CHECK_HOST_GRACE_POLL_MS = Math.max(0, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_GRACE_POLL_MS) || 1000);
+// Give only unresolved provider jobs a dedicated final drain. Normal active windows
+// remain bounded so a slow result cannot expand the Check-Host queue across all candidates.
+const CHECK_HOST_COORDINATOR_FINAL_DRAIN_MS = Math.max(30000, Math.min(300000,
+    Number(process.env.HEALTHCHECK_RUSSIA_COORDINATOR_FINAL_DRAIN_MS) || 180000
+));
+const CHECK_HOST_COORDINATOR_FINAL_POLL_MS = Math.max(750, Math.min(5000,
+    Number(process.env.HEALTHCHECK_RUSSIA_COORDINATOR_FINAL_POLL_MS) || 1500
+));
 const CHECK_HOST_PREFLIGHT_QUORUM = 2;
 // Check-Host is asynchronous: creating a request and fetching its result are
 // separate API operations. Both operations share one global adaptive budget because
@@ -333,7 +341,7 @@ const RUSSIA_GATE_USE_CACHE =
     );
 // Bump whenever the gate semantics change so old cached verdicts cannot be
 // reused after changing providers or reachability rules.
-const RUSSIA_GATE_ALGORITHM_VERSION = Math.max(1, Number(process.env.HEALTHCHECK_RUSSIA_GATE_ALGORITHM_VERSION) || 34);
+const RUSSIA_GATE_ALGORITHM_VERSION = Math.max(1, Number(process.env.HEALTHCHECK_RUSSIA_GATE_ALGORITHM_VERSION) || 35);
 // Russia Gate is deliberately single-process. A per-shard limiter would create
 // multiple independent API streams and can trigger Check-Host 429 responses.
 const RUSSIA_GATE_SHARD_INDEX = 0;
@@ -1417,6 +1425,7 @@ async function runRussiaGateEndpointCoordinator(endpointGroups, { maxInFlight = 
     const outcomes = new Map();
     const createFailures = [];
     const diagnosticPendingRequests = [];
+    let deferredPendingRequests = [];
     let completed = 0;
 
     // Keep the provider-side asynchronous workset bounded. Creating hundreds of
@@ -1440,6 +1449,8 @@ async function runRussiaGateEndpointCoordinator(endpointGroups, { maxInFlight = 
         250,
         Math.min(5000, Number(process.env.HEALTHCHECK_RUSSIA_COORDINATOR_ROUND_DELAY_MS) || 700)
     );
+    const coordinatorFinalDrainMs = CHECK_HOST_COORDINATOR_FINAL_DRAIN_MS;
+    const coordinatorFinalPollMs = CHECK_HOST_COORDINATOR_FINAL_POLL_MS;
 
     async function runBoundedPool(items, workerLimit, fn) {
         let cursor = 0;
@@ -1586,24 +1597,99 @@ async function runRussiaGateEndpointCoordinator(endpointGroups, { maxInFlight = 
             }
         }
 
-        for (const entry of pending) {
-            diagnosticPendingRequests.push({
-                endpointKey: entry.group.key,
-                requestId: entry.request.requestId,
-                transport: entry.request.transport,
-                checkType: entry.request.checkType,
-                batchStart: batchStart + 1,
-                batchEnd: Math.min(batchStart + activeWindow, endpointGroups.length),
-            });
-            outcomes.set(
-                entry.group.key,
-                makeTimeoutProbe(
+        deferredPendingRequests.push(...pending.map(entry => ({
+            ...entry,
+            batchStart: batchStart + 1,
+            batchEnd: Math.min(batchStart + activeWindow, endpointGroups.length),
+        })));
+    }
+
+    // Only the requests still unresolved after their normal bounded window are
+    // drained here. This avoids keeping every batch alive for slow jobs while
+    // giving rare long-running Check-Host operations additional time.
+    let finalDrainResolved = 0;
+    let finalDrainRound = 0;
+    const finalDrainStartedAt = Date.now();
+
+    while (deferredPendingRequests.length && Date.now() - finalDrainStartedAt < coordinatorFinalDrainMs) {
+        finalDrainRound += 1;
+        const current = deferredPendingRequests;
+        const nextPending = [];
+
+        await runBoundedPool(current, maxInFlight, async entry => {
+            try {
+                const payload = await scheduleCheckHostApiRequest(
+                    () => requestJson(
+                        `${CHECK_HOST_API_BASE}/check-result/${encodeURIComponent(entry.request.requestId)}`,
+                        { headers: { "user-agent": "enter-config-russia-health/1.0" } },
+                        CHECK_HOST_RESULT_TIMEOUT_MS
+                    ),
+                    "result-final-drain"
+                );
+                const evaluation = evaluateCheckHostPayload(payload, entry.request.transport, entry.request.nodes);
+                if (evaluation.done) {
+                    const probe = await checkRussiaReachabilityFromProbe(
+                        entry.group.representative,
+                        entry.url,
+                        entry.group.representative.protocol || getProtocol(entry.group.representative.link || ""),
+                        evaluation.result
+                    );
+                    outcomes.set(entry.group.key, probe);
+                    completed += 1;
+                    finalDrainResolved += 1;
+                    return;
+                }
+                nextPending.push(entry);
+            } catch (error) {
+                const status = Number(error?.status || 0);
+                const transient =
+                    status === 429 || status === 408 || status >= 500 ||
+                    /aborted|timeout|timed out|fetch failed/i.test(String(error?.message || ""));
+                if (transient) {
+                    nextPending.push(entry);
+                    return;
+                }
+                const probe = makeTimeoutProbe(
                     entry.group,
-                    `Check-Host polling unresolved after ${coordinatorPollRounds} bounded rounds in active window`
-                )
-            );
-            completed += 1;
+                    `Check-Host final result failed: ${error?.message || String(error)}`
+                );
+                probe.gatePending = false;
+                probe.providersUnavailable = false;
+                outcomes.set(entry.group.key, probe);
+                completed += 1;
+            }
+        });
+
+        deferredPendingRequests = nextPending;
+        console.log(
+            `RUSSIA COORDINATOR FINAL DRAIN: round=${finalDrainRound}; ` +
+            `resolved=${finalDrainResolved}; pending=${deferredPendingRequests.length}; ` +
+            `elapsed=${Math.round((Date.now() - finalDrainStartedAt) / 1000)}s/${Math.round(coordinatorFinalDrainMs / 1000)}s`
+        );
+
+        if (deferredPendingRequests.length && Date.now() - finalDrainStartedAt < coordinatorFinalDrainMs) {
+            const remainingMs = coordinatorFinalDrainMs - (Date.now() - finalDrainStartedAt);
+            await sleep(Math.min(coordinatorFinalPollMs, remainingMs));
         }
+    }
+
+    for (const entry of deferredPendingRequests) {
+        diagnosticPendingRequests.push({
+            endpointKey: entry.group.key,
+            requestId: entry.request.requestId,
+            transport: entry.request.transport,
+            checkType: entry.request.checkType,
+            batchStart: entry.batchStart,
+            batchEnd: entry.batchEnd,
+        });
+        outcomes.set(
+            entry.group.key,
+            makeTimeoutProbe(
+                entry.group,
+                `Check-Host result remained unresolved after ${coordinatorPollRounds} bounded rounds + ${Math.round(coordinatorFinalDrainMs / 1000)}s final drain`
+            )
+        );
+        completed += 1;
     }
 
     const elapsed = Date.now() - startedAt;
@@ -1623,6 +1709,13 @@ async function runRussiaGateEndpointCoordinator(endpointGroups, { maxInFlight = 
         createdRequests: endpointGroups.length - createFailures.length,
         createFailures: createFailures.length,
         unresolved: [...outcomes.values()].filter(value => value?.gatePending).length,
+        finalDrain: {
+            timeoutMs: coordinatorFinalDrainMs,
+            pollMs: coordinatorFinalPollMs,
+            rounds: finalDrainRound,
+            resolved: finalDrainResolved,
+            unresolved: deferredPendingRequests.length,
+        },
         rateTelemetry: {
             calls: checkHostRateTelemetry.calls,
             rateLimited429: checkHostRateTelemetry.rateLimited429,
@@ -4965,6 +5058,7 @@ async function main() {
                 createFailures: coordinator.createFailures,
                 unresolved: coordinator.unresolved,
                 pendingRequests: coordinator.pendingRequests,
+                finalDrain: coordinator.finalDrain,
             },
             rateTelemetry: coordinator.rateTelemetry,
         };
@@ -5018,14 +5112,7 @@ async function main() {
         if (russiaGatePending > 0) {
             console.warn(
                 `RUSSIA GATE PENDING: ${russiaGatePending} candidate(s) remain unresolved ` +
-                `after all bounded Check-Host polling.`
-            );
-        }
-
-        if (russiaGatePending > 0) {
-            throw new Error(
-                `Russia gate produced ${russiaGatePending} unresolved candidate(s) after bounded Check-Host polling; ` +
-                `no unresolved candidate may enter publication.`
+                `after coordinator polling + final drain; those candidates will be excluded from publication.`
             );
         }
 
