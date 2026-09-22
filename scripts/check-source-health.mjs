@@ -294,6 +294,38 @@ const CHECK_HOST_COORDINATOR_FINAL_POLL_MS = Math.max(750, Math.min(5000,
     Number(process.env.HEALTHCHECK_RUSSIA_COORDINATOR_FINAL_POLL_MS) || 1500
 ));
 const CHECK_HOST_PREFLIGHT_QUORUM = 2;
+
+// The Russian checker pair is selected by actual reachability quality, not by a
+// fixed node-name preference. We still preserve geographic coverage: whenever the
+// Saint Petersburg checker is healthy, it is paired with the best healthy Moscow
+// checker. If Saint Petersburg is degraded, the two healthy Moscow checkers are used.
+const RUSSIA_CHECKER_LOCATION_DEFAULTS = {
+    "ru1.node.check-host.net": { city: "Moscow", cityGroup: "moscow" },
+    "ru2.node.check-host.net": { city: "Moscow", cityGroup: "moscow" },
+    "ru3.node.check-host.net": { city: "Saint Petersburg", cityGroup: "saint-petersburg" },
+};
+const RUSSIA_GATE_CANARY_COUNT = Math.max(6, Math.min(12,
+    Number(process.env.HEALTHCHECK_RUSSIA_CANARY_COUNT) || 8
+));
+const RUSSIA_GATE_CANARY_TIMEOUT_MS = Math.max(8000, Math.min(30000,
+    Number(process.env.HEALTHCHECK_RUSSIA_CANARY_TIMEOUT_MS) || 18000
+));
+const RUSSIA_GATE_CANARY_POLL_MS = Math.max(750, Math.min(5000,
+    Number(process.env.HEALTHCHECK_RUSSIA_CANARY_POLL_MS) || 1500
+));
+const RUSSIA_GATE_CANARY_MIN_RESOLVED = Math.max(4, Math.min(RUSSIA_GATE_CANARY_COUNT,
+    Number(process.env.HEALTHCHECK_RUSSIA_CANARY_MIN_RESOLVED) || Math.ceil(RUSSIA_GATE_CANARY_COUNT * 0.75)
+));
+const RUSSIA_GATE_CANARY_MIN_SUCCESS_RATE = Math.max(0.50, Math.min(0.95,
+    Number(process.env.HEALTHCHECK_RUSSIA_CANARY_MIN_SUCCESS_RATE) || 0.70
+));
+const RUSSIA_GATE_RECHECK_TIMEOUT_MS = Math.max(6000, Math.min(15000,
+    Number(process.env.HEALTHCHECK_RUSSIA_RECHECK_TIMEOUT_MS) || 9000
+));
+const RUSSIA_GATE_RECHECK_GRACE_MS = Math.max(500, Math.min(5000,
+    Number(process.env.HEALTHCHECK_RUSSIA_RECHECK_GRACE_MS) || 1500
+));
+
 // Check-Host is asynchronous: creating a request and fetching its result are
 // separate API operations. Both operations share one global adaptive budget because
 // the provider rate-limits the runner as a whole. A bounded worker pool prevents
@@ -341,7 +373,7 @@ const RUSSIA_GATE_USE_CACHE =
     );
 // Bump whenever the gate semantics change so old cached verdicts cannot be
 // reused after changing providers or reachability rules.
-const RUSSIA_GATE_ALGORITHM_VERSION = Math.max(1, Number(process.env.HEALTHCHECK_RUSSIA_GATE_ALGORITHM_VERSION) || 35);
+const RUSSIA_GATE_ALGORITHM_VERSION = Math.max(1, Number(process.env.HEALTHCHECK_RUSSIA_GATE_ALGORITHM_VERSION) || 36);
 // Russia Gate is deliberately single-process. A per-shard limiter would create
 // multiple independent API streams and can trigger Check-Host 429 responses.
 const RUSSIA_GATE_SHARD_INDEX = 0;
@@ -1095,198 +1127,84 @@ async function resolveRussianCheckHostNodes() {
     return configured;
 }
 
-async function checkHostProviderPreflight() {
-    const configured = CHECK_HOST_RUSSIA_NODES
-        .map(value => String(value).trim())
-        .filter(Boolean);
-    let lastProbe = null;
-    const nodeProbes = [];
-
-    // Probe every configured Russian checker independently. This is deliberately
-    // separate from the candidate gate: it lets us distinguish 2 live checkers,
-    // 1 live checker, and a total checker outage before choosing the gate mode.
-    for (const node of configured) {
+function getRussiaCheckerLocation(node) {
+    const configuredMap = String(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_LOCATION_MAP || "").trim();
+    if (configuredMap) {
         try {
-            const request = await createCheckHostRequest(
-                new URL("https://check-host.net:443"),
-                "https",
-                [node]
-            );
-            const probe = await pollCheckHostRequest(request, {
-                maxPollMs: Math.min(5000, CHECK_HOST_MAX_POLL_MS),
-                gracePollMs: Math.min(1000, CHECK_HOST_GRACE_POLL_MS),
-                requiredReachable: 1,
-            });
-            const nodeResult = Array.isArray(probe?.results)
-                ? probe.results.find(row => row?.node === node)
-                : null;
-            const reachable = nodeResult?.reachable === true;
-            nodeProbes.push({
-                node,
-                reachable,
-                inconclusive: Boolean(nodeResult?.inconclusive),
-                timeout: /timeout|timed out|aborted/i.test(String(nodeResult?.error || probe?.error || "")),
-                rateLimited: Boolean(probe?.rateLimited),
-                error: nodeResult?.error || probe?.error || "",
-                latencyMs: Number(nodeResult?.latencyMs) || 0,
-            });
-            lastProbe = probe;
-        } catch (error) {
-            nodeProbes.push({
-                node,
-                reachable: false,
-                inconclusive: false,
-                timeout: /timeout|timed out|aborted/i.test(String(error?.message || "")),
-                rateLimited: Number(error?.status || 0) === 429,
-                error: error?.message || String(error),
-                latencyMs: 0,
-            });
-        }
+            const parsed = JSON.parse(configuredMap);
+            const override = parsed?.[node];
+            if (override && typeof override === "object") {
+                return {
+                    city: String(override.city || "").trim() || "Unknown",
+                    cityGroup: String(override.cityGroup || "").trim().toLowerCase() || "other",
+                };
+            }
+        } catch {}
     }
-
-    const liveNodes = nodeProbes.filter(row => row.reachable).map(row => row.node);
-    const preferredPairs = [
-        ["ru2.node.check-host.net", "ru3.node.check-host.net"],
-        ["ru1.node.check-host.net", "ru3.node.check-host.net"],
-        ["ru1.node.check-host.net", "ru2.node.check-host.net"],
-    ];
-    const selectedPair = preferredPairs.find(pair => pair.every(node => liveNodes.includes(node))) || null;
-
-    if (selectedPair) {
-        return {
-            nodeProbes,
-            liveNodes,
-            selectedLiveNodes: selectedPair,
-            nodesTested: configured.length,
-            nodesReachable: liveNodes.length,
-            quorumRequired: 2,
-            quorumMet: true,
-            checkerMode: "dual",
-        };
-    }
-
-    if (liveNodes.length === 1) {
-        return {
-            nodeProbes,
-            liveNodes,
-            selectedLiveNodes: liveNodes,
-            nodesTested: configured.length,
-            nodesReachable: 1,
-            quorumRequired: 1,
-            quorumMet: true,
-            checkerMode: "single",
-            warning: "Only one Russian Check-Host node is available; Russia Gate is running in single-checker warning mode.",
-        };
-    }
-
-    return {
-        nodeProbes,
-        liveNodes: [],
-        selectedLiveNodes: [],
-        nodesTested: configured.length,
-        nodesReachable: 0,
-        quorumRequired: 0,
-        quorumMet: false,
-        checkerMode: "skipped",
-        warning: "No Russian Check-Host nodes are available; Russia Gate is skipped and candidates proceed directly to Heavy.",
-        lastProbe,
+    return RUSSIA_CHECKER_LOCATION_DEFAULTS[node] || {
+        city: "Unknown",
+        cityGroup: "other",
     };
 }
 
-async function createCheckHostRequest(url, protocol, nodes) {
-    const transport = getTransportType(protocol);
-    const checkType = transport === "udp" ? "udp" : "tcp";
-    const params = new URLSearchParams({
-        host: `${url.hostname}:${Number(url.port || 443)}`,
-        max_nodes: String(nodes.length)
-    });
-    for (const node of nodes) params.append("node", node);
+function selectRussiaGateCanaryItems(items) {
+    const groups = new Map();
+    for (const item of Array.isArray(items) ? items : []) {
+        const link = String(item?.link || "").trim();
+        if (!link) continue;
+        if (getTransportType(getProtocol(link)) !== "tcp") continue;
+        if (MANAGED_WHITE_LIST_RE.test(String(item?.id || ""))) continue;
 
-    const createUrl = `${CHECK_HOST_API_BASE}/check-${checkType}?${params}`;
-    for (let createAttempt = 0; createAttempt < 4; createAttempt += 1) {
+        const key = russiaGateEndpointKey(item);
+        if (groups.has(key)) continue;
+        let url;
         try {
-            const created = await scheduleCheckHostApiRequest(
-                () => requestJson(
-                    createUrl,
-                    { headers: { "user-agent": "enter-config-russia-health/1.0" } },
-                    CHECK_HOST_CREATE_TIMEOUT_MS
-                ),
-                "create"
-            );
-            const requestId = String(created?.request_id || "").trim();
-            if (!requestId) throw new Error("missing Check-Host request_id");
-            return { requestId, transport, checkType, nodes: [...nodes], createdAt: Date.now() };
-        } catch (error) {
-            const status = Number(error?.status || 0);
-            // Creation is not idempotent: a timeout/5xx may have created the
-            // request even if the response never reached us. Never replay such
-            // a request. HTTP 429 is the only safe create retry because the
-            // provider rejected the request before issuing a request_id.
-            if (status !== 429 || createAttempt >= 3) throw error;
+            url = new URL(link);
+        } catch {
+            continue;
+        }
 
-            const serverDelay = Number(error?.retryAfterMs);
-            const backoff = 2000 * Math.min(4, createAttempt + 1);
-            const delay = Number.isFinite(serverDelay) ? Math.max(serverDelay, backoff) : backoff;
-            await sleep(Math.min(20000, delay));
+        const country = String(item?.country || "").trim() ||
+            String(item?.remarks || "").replace(/^\S+\s*/, "").replace(/\s+\d+$/, "").trim() ||
+            "Unknown";
+        const bucket = groups.get(country) || [];
+        bucket.push({ item, key, url });
+        groups.set(country, bucket);
+    }
+
+    const preferredCountries = [
+        "Germany", "Netherlands", "United Kingdom", "UK", "United States", "USA",
+        "France", "Sweden", "Finland", "Poland", "Austria", "Italy", "Canada",
+        "Switzerland", "Czechia", "Hungary", "Bulgaria", "Russia",
+    ];
+    const preferred = [];
+    const preferredKeys = new Set();
+    for (const country of preferredCountries) {
+        const key = country.toLowerCase();
+        const actual = [...groups.keys()].find(candidate => String(candidate).trim().toLowerCase() === key);
+        if (actual && !preferredKeys.has(actual.toLowerCase())) {
+            preferred.push(actual);
+            preferredKeys.add(actual.toLowerCase());
         }
     }
-    throw new Error("Check-Host create failed");
-}
+    const remaining = [...groups.keys()]
+        .filter(country => !preferredKeys.has(String(country).trim().toLowerCase()))
+        .sort((a, b) => a.localeCompare(b));
+    const countryOrder = [...preferred, ...remaining];
 
-function evaluateCheckHostPayload(payload, transport, nodes, requiredReachable = ACTIVE_CHECK_HOST_GATE_QUORUM) {
-    const parsed = nodes.map(node => parseCheckHostNode(payload?.[node] ?? null, node, transport));
-    const reachable = parsed.filter(x => x.reachable);
-    const unresolved = parsed.filter(x => x.inconclusive);
-    // UDP Check-Host cannot prove a Hysteria/QUIC handshake. For the first
-    // Russian transport gate, however, the LTE transport policy treats
-    // "open or filtered"/timeout as a non-refused UDP result. Preserve that
-    // conservative prefilter semantics here; exact Xray health remains the
-    // authoritative application-level check.
-    const positive = transport === "udp"
-        ? parsed.filter(x => x.reachable || x.udpUsable)
-        : reachable;
-
-    if (positive.length >= requiredReachable) {
-        return {
-            done: true,
-            result: {
-                provider: "check-host",
-                ok: true,
-                unavailable: false,
-                inconclusive: false,
-                transport,
-                nodesTested: parsed.length,
-                nodesReachable: positive.length,
-                nodesInconclusive: unresolved.length,
-                quorumRequired: requiredReachable,
-                quorumMet: true,
-                minLatencyMs: reachable.length ? Math.min(...reachable.map(x => x.latencyMs)) : 0,
-                results: parsed
-            }
-        };
+    const selected = [];
+    const selectedKeys = new Set();
+    for (const country of countryOrder) {
+        const candidates = groups.get(country) || [];
+        candidates.sort((a, b) => String(a.item?.id || "").localeCompare(String(b.item?.id || "")));
+        const candidate = candidates.find(row => !selectedKeys.has(row.key));
+        if (!candidate) continue;
+        selected.push(candidate);
+        selectedKeys.add(candidate.key);
+        if (selected.length >= RUSSIA_GATE_CANARY_COUNT) break;
     }
 
-    if (positive.length + unresolved.length < requiredReachable) {
-        return {
-            done: true,
-            result: {
-                provider: "check-host",
-                ok: false,
-                unavailable: false,
-                inconclusive: false,
-                transport,
-                nodesTested: parsed.length,
-                nodesReachable: positive.length,
-                nodesInconclusive: unresolved.length,
-                quorumRequired: requiredReachable,
-                quorumMet: false,
-                minLatencyMs: reachable.length ? Math.min(...reachable.map(x => x.latencyMs)) : 0,
-                results: parsed
-            }
-        };
-    }
-
-    return { done: false, parsed };
+    return selected;
 }
 
 async function pollCheckHostRequest(request, options = {}) {
@@ -1382,41 +1300,257 @@ async function checkHostRussia(url, protocol, nodes = ACTIVE_CHECK_HOST_RUSSIA_N
     }
 }
 
-async function checkHostRussiaQuorum(url, protocol, nodes = ACTIVE_CHECK_HOST_RUSSIA_NODES) {
-    const allNodes = [...new Set(nodes.map(value => String(value).trim()).filter(Boolean))];
-    if (allNodes.length !== 3 || CHECK_HOST_PREFLIGHT_QUORUM !== 2) {
+
+async function pollCheckHostRequestUntilNodesSettled(request, { timeoutMs = RUSSIA_GATE_CANARY_TIMEOUT_MS, pollMs = RUSSIA_GATE_CANARY_POLL_MS } = {}) {
+    const startedAt = Date.now();
+    let delayMs = 1000;
+    let lastParsed = request.nodes.map(node => parseCheckHostNode(null, node, request.transport));
+    let lastError = null;
+
+    while (Date.now() - startedAt < timeoutMs) {
+        try {
+            const payload = await scheduleCheckHostApiRequest(
+                () => requestJson(
+                    `${CHECK_HOST_API_BASE}/check-result/${encodeURIComponent(request.requestId)}`,
+                    { headers: { "user-agent": "enter-config-russia-preflight/1.0" } },
+                    CHECK_HOST_RESULT_TIMEOUT_MS
+                ),
+                "canary-result"
+            );
+            lastParsed = request.nodes.map(node =>
+                parseCheckHostNode(payload?.[node] ?? null, node, request.transport)
+            );
+            lastError = null;
+
+            if (lastParsed.every(row => !row.inconclusive)) {
+                return {
+                    settled: true,
+                    results: lastParsed,
+                    elapsedMs: Date.now() - startedAt,
+                    error: "",
+                };
+            }
+        } catch (error) {
+            lastError = error;
+            const status = Number(error?.status || 0);
+            const transient = status === 429 || status === 408 || status >= 500 ||
+                /aborted|timeout|timed out|fetch failed/i.test(String(error?.message || ""));
+            if (!transient) break;
+        }
+
+        const remainingMs = Math.max(0, timeoutMs - (Date.now() - startedAt));
+        if (remainingMs <= 0) break;
+        await sleep(Math.min(delayMs, pollMs, remainingMs));
+        delayMs = Math.min(pollMs, Math.round(delayMs * 1.3));
+    }
+
+    return {
+        settled: false,
+        results: lastParsed,
+        elapsedMs: Date.now() - startedAt,
+        error: lastError?.message || "Check-Host canary remained unresolved",
+    };
+}
+
+function selectRussiaCheckerPair(nodeStats, canaryReliable) {
+    const healthyNodes = canaryReliable
+        ? nodeStats.filter(row => row.eligible).sort((a, b) => b.score - a.score)
+        : nodeStats.filter(row => row.selfReachable).sort((a, b) => a.node.localeCompare(b.node));
+
+    const saintPetersburg = healthyNodes
+        .filter(row => row.cityGroup === "saint-petersburg")
+        .sort((a, b) => b.score - a.score)[0] || null;
+    const moscow = healthyNodes
+        .filter(row => row.cityGroup === "moscow")
+        .sort((a, b) => b.score - a.score);
+
+    if (saintPetersburg && moscow.length >= 1) {
+        return {
+            selectedPair: [moscow[0].node, saintPetersburg.node],
+            selectionReason: canaryReliable
+                ? "Saint Petersburg canary is healthy; preserve Moscow + Saint Petersburg geographic coverage."
+                : "Canary data was not reliable; preserve Moscow + Saint Petersburg from self-preflight.",
+        };
+    }
+
+    if (canaryReliable && moscow.length >= 2) {
+        return {
+            selectedPair: [moscow[0].node, moscow[1].node],
+            selectionReason: "Saint Petersburg canary is degraded or unavailable; use the two healthiest Moscow checkers.",
+        };
+    }
+
+    if (!canaryReliable && healthyNodes.length >= 2) {
+        return {
+            selectedPair: healthyNodes.slice(0, 2).map(row => row.node),
+            selectionReason: "Canary data was inconclusive; use the two self-preflight-healthy checkers.",
+        };
+    }
+
+    if (healthyNodes.length >= 2) {
+        return {
+            selectedPair: healthyNodes.slice(0, 2).map(row => row.node),
+            selectionReason: "Selected the two healthiest eligible Russian checkers by canary score.",
+        };
+    }
+
+    return {
+        selectedPair: null,
+        selectionReason: "No healthy dual-checker pair was available.",
+    };
+}
+
+function buildRussiaCanaryNodeStats(configuredNodes, canaryOutcomes, canaryCount) {
+    return configuredNodes.map(node => {
+        const samples = [];
+        for (const outcome of canaryOutcomes) {
+            const row = outcome.results.find(result => result?.node === node);
+            if (row) samples.push(row);
+        }
+        const reachable = samples.filter(row => row.reachable === true).length;
+        const inconclusive = samples.filter(row => row.inconclusive === true).length;
+        const failed = Math.max(0, samples.length - reachable - inconclusive);
+        const resolved = reachable + failed;
+        const successRate = resolved > 0 ? reachable / resolved : 0;
+        const coverageRate = canaryCount > 0 ? resolved / canaryCount : 0;
+        const location = getRussiaCheckerLocation(node);
+        return {
+            node,
+            ...location,
+            canaryChecks: canaryCount,
+            resolved,
+            reachable,
+            failed,
+            inconclusive,
+            timeouts: samples.filter(row => /timeout|timed out|aborted/i.test(String(row.error || ""))).length,
+            successRate: Number(successRate.toFixed(4)),
+            coverageRate: Number(coverageRate.toFixed(4)),
+            score: Number(((successRate * 0.85 + coverageRate * 0.15) * 100).toFixed(1)),
+            selfReachable: false,
+            eligibleByCanary: resolved >= Math.min(RUSSIA_GATE_CANARY_MIN_RESOLVED, canaryCount) &&
+                successRate >= RUSSIA_GATE_CANARY_MIN_SUCCESS_RATE,
+        };
+    });
+}
+
+async function checkHostProviderPreflight(items = []) {
+    const configured = CHECK_HOST_RUSSIA_NODES
+        .map(value => String(value).trim())
+        .filter(Boolean);
+    if (!configured.length) {
         throw new Error(
-            `Russia gate requires exactly 3 configured Check-Host nodes and quorum 2/3; ` +
-            `got nodes=${allNodes.length}, quorum=${CHECK_HOST_PREFLIGHT_QUORUM}`
+            "No Russian Check-Host nodes configured; set HEALTHCHECK_RUSSIA_CHECK_HOST_NODES"
         );
     }
 
-    // Preflight sanity check only: require 2 of the 3 configured Russian nodes.
-    // The publication gate itself uses the historical positive-reachability rule
-    // below: any one definitive reachable result is sufficient to PASS.
+    let nodeProbes;
     try {
-        const request = await createCheckHostRequest(url, protocol, allNodes);
-        return await pollCheckHostRequest(request, {
-            maxPollMs: CHECK_HOST_MAX_POLL_MS,
-            gracePollMs: CHECK_HOST_GRACE_POLL_MS,
+        const request = await createCheckHostRequest(
+            new URL("https://check-host.net:443"),
+            "https",
+            configured
+        );
+        const probe = await pollCheckHostRequestUntilNodesSettled(request, {
+            timeoutMs: Math.min(18000, CHECK_HOST_MAX_POLL_MS + CHECK_HOST_GRACE_POLL_MS + 8000),
+            pollMs: Math.min(1500, RUSSIA_GATE_CANARY_POLL_MS),
+        });
+        nodeProbes = configured.map(node => {
+            const nodeResult = probe.results.find(row => row?.node === node);
+            return {
+                node,
+                reachable: nodeResult?.reachable === true,
+                inconclusive: Boolean(nodeResult?.inconclusive),
+                timeout: /timeout|timed out|aborted/i.test(String(nodeResult?.error || probe?.error || "")),
+                rateLimited: false,
+                error: nodeResult?.error || probe?.error || "",
+                latencyMs: Number(nodeResult?.latencyMs) || 0,
+            };
         });
     } catch (error) {
-        return {
-            provider: "check-host",
-            ok: false,
-            unavailable: true,
-            inconclusive: true,
-            transport: getTransportType(protocol),
-            checkType: getTransportType(protocol) === "udp" ? "udp" : "tcp",
-            nodesTested: allNodes.length,
-            nodesReachable: 0,
-            nodesInconclusive: allNodes.length,
-            quorumRequired: CHECK_HOST_PREFLIGHT_QUORUM,
-            quorumMet: false,
+        nodeProbes = configured.map(node => ({
+            node,
+            reachable: false,
+            inconclusive: false,
+            timeout: /timeout|timed out|aborted/i.test(String(error?.message || "")),
             rateLimited: Number(error?.status || 0) === 429,
             error: error?.message || String(error),
-        };
+            latencyMs: 0,
+        }));
     }
+
+    const canaries = selectRussiaGateCanaryItems(items);
+    const canaryOutcomes = [];
+    for (const canary of canaries) {
+        try {
+            const request = await createCheckHostRequest(canary.url, "tcp", configured);
+            const probe = await pollCheckHostRequestUntilNodesSettled(request);
+            canaryOutcomes.push({
+                endpointKey: canary.key,
+                id: canary.item?.id || "",
+                country: canary.item?.country || "",
+                settled: probe.settled,
+                results: probe.results,
+                elapsedMs: probe.elapsedMs,
+                error: probe.error || "",
+            });
+        } catch (error) {
+            canaryOutcomes.push({
+                endpointKey: canary.key,
+                id: canary.item?.id || "",
+                country: canary.item?.country || "",
+                settled: false,
+                results: configured.map(node => parseCheckHostNode(null, node, "tcp")),
+                elapsedMs: 0,
+                error: error?.message || String(error),
+            });
+        }
+    }
+
+    const canaryStats = buildRussiaCanaryNodeStats(configured, canaryOutcomes, canaries.length);
+    for (const row of canaryStats) {
+        const self = nodeProbes.find(probe => probe.node === row.node);
+        row.selfReachable = Boolean(self?.reachable);
+        row.selfPreflightError = self?.error || "";
+        row.eligible = row.selfReachable && (canaryOutcomes.length < RUSSIA_GATE_CANARY_MIN_RESOLVED
+            ? true
+            : row.eligibleByCanary);
+    }
+
+    const reliableCanaryChecks = canaryOutcomes.filter(outcome => outcome.settled).length;
+    const canaryReliable = canaryOutcomes.length >= RUSSIA_GATE_CANARY_MIN_RESOLVED &&
+        reliableCanaryChecks >= RUSSIA_GATE_CANARY_MIN_RESOLVED;
+
+    const { selectedPair, selectionReason } = selectRussiaCheckerPair(canaryStats, canaryReliable);
+
+    const liveNodes = nodeProbes.filter(row => row.reachable).map(row => row.node);
+    const selectedLiveNodes = selectedPair || (healthyNodes[0] ? [healthyNodes[0].node] : []);
+    const checkerMode = selectedLiveNodes.length >= 2 ? "dual" : selectedLiveNodes.length === 1 ? "single" : "skipped";
+
+    return {
+        nodeProbes,
+        canary: {
+            requested: RUSSIA_GATE_CANARY_COUNT,
+            selected: canaries.map(item => ({
+                id: item.item?.id || "",
+                country: item.item?.country || "",
+                endpointKey: item.key,
+            })),
+            reliable: canaryReliable,
+            settledChecks: reliableCanaryChecks,
+            minSettledChecks: RUSSIA_GATE_CANARY_MIN_RESOLVED,
+            timeoutMs: RUSSIA_GATE_CANARY_TIMEOUT_MS,
+            nodeStats: canaryStats,
+            outcomes: canaryOutcomes,
+        },
+        liveNodes,
+        selectedLiveNodes,
+        nodesTested: configured.length,
+        nodesReachable: liveNodes.length,
+        quorumRequired: selectedLiveNodes.length >= 2 ? 2 : selectedLiveNodes.length === 1 ? 1 : 0,
+        quorumMet: selectedLiveNodes.length >= 1,
+        checkerMode,
+        selectionReason,
+    };
 }
 
 
@@ -1435,15 +1569,15 @@ async function runRussiaGateEndpointCoordinator(endpointGroups, { maxInFlight = 
     // provider-side backlog.
     const activeWindow = Math.max(
         maxInFlight,
-        Math.min(64, Number(process.env.HEALTHCHECK_RUSSIA_ACTIVE_WINDOW) || 64)
+        Math.min(24, Number(process.env.HEALTHCHECK_RUSSIA_ACTIVE_WINDOW) || 24)
     );
     const coordinatorPollRounds = Math.max(
         2,
-        Math.min(8, Number(process.env.HEALTHCHECK_RUSSIA_COORDINATOR_POLL_ROUNDS) || 8)
+        Math.min(6, Number(process.env.HEALTHCHECK_RUSSIA_COORDINATOR_POLL_ROUNDS) || 6)
     );
     const coordinatorInitialDelayMs = Math.max(
         250,
-        Math.min(5000, Number(process.env.HEALTHCHECK_RUSSIA_COORDINATOR_INITIAL_DELAY_MS) || 1000)
+        Math.min(4000, Number(process.env.HEALTHCHECK_RUSSIA_COORDINATOR_INITIAL_DELAY_MS) || 900)
     );
     const coordinatorRoundDelayMs = Math.max(
         250,
@@ -1483,6 +1617,57 @@ async function runRussiaGateEndpointCoordinator(endpointGroups, { maxInFlight = 
         },
         checkedAt: Date.now()
     });
+
+    const shouldRecheckTwoOfTwo = evaluation => {
+        if (!evaluation?.done || !evaluation.result?.results) return false;
+        if (ACTIVE_CHECK_HOST_GATE_QUORUM !== 2) return false;
+        const rows = Array.isArray(evaluation.result.results) ? evaluation.result.results : [];
+        const positive = rows.filter(row => entryTransportIsPositive(row));
+        const definitive = rows.filter(row => !row?.inconclusive);
+        return positive.length === 1 && definitive.length === 2;
+    };
+
+    function entryTransportIsPositive(row) {
+        return Boolean(row?.reachable || row?.udpUsable);
+    }
+
+    async function recheckSinglePositive(entry, initialEvaluation) {
+        if (!shouldRecheckTwoOfTwo(initialEvaluation)) return initialEvaluation;
+
+        try {
+            const request = await createCheckHostRequest(
+                entry.url,
+                entry.group.representative.protocol || getProtocol(entry.group.representative.link || ""),
+                ACTIVE_CHECK_HOST_RUSSIA_NODES
+            );
+            const retryResult = await pollCheckHostRequest(request, {
+                maxPollMs: RUSSIA_GATE_RECHECK_TIMEOUT_MS,
+                gracePollMs: RUSSIA_GATE_RECHECK_GRACE_MS,
+                requiredReachable: ACTIVE_CHECK_HOST_GATE_QUORUM,
+            });
+            retryResult.recheck = {
+                attempted: true,
+                initial: initialEvaluation.result,
+                passed: Boolean(retryResult?.ok),
+                performedAt: new Date().toISOString(),
+            };
+            return { done: true, result: retryResult };
+        } catch (error) {
+            initialEvaluation.result.recheck = {
+                attempted: true,
+                passed: false,
+                error: error?.message || String(error),
+                performedAt: new Date().toISOString(),
+            };
+        }
+
+        initialEvaluation.result.recheck = initialEvaluation.result.recheck || {
+            attempted: true,
+            passed: false,
+            performedAt: new Date().toISOString(),
+        };
+        return initialEvaluation;
+    }
 
     for (let batchStart = 0; batchStart < endpointGroups.length; batchStart += activeWindow) {
         const batch = endpointGroups.slice(batchStart, batchStart + activeWindow);
@@ -1549,11 +1734,12 @@ async function runRussiaGateEndpointCoordinator(endpointGroups, { maxInFlight = 
                     );
 
                     if (evaluation.done) {
+                        const finalEvaluation = await recheckSinglePositive(entry, evaluation);
                         const probe = await checkRussiaReachabilityFromProbe(
                             entry.group.representative,
                             entry.url,
                             entry.group.representative.protocol || getProtocol(entry.group.representative.link || ""),
-                            evaluation.result
+                            finalEvaluation.result
                         );
                         outcomes.set(entry.group.key, probe);
                         completed += 1;
@@ -1628,11 +1814,12 @@ async function runRussiaGateEndpointCoordinator(endpointGroups, { maxInFlight = 
                 );
                 const evaluation = evaluateCheckHostPayload(payload, entry.request.transport, entry.request.nodes);
                 if (evaluation.done) {
+                    const finalEvaluation = await recheckSinglePositive(entry, evaluation);
                     const probe = await checkRussiaReachabilityFromProbe(
                         entry.group.representative,
                         entry.url,
                         entry.group.representative.protocol || getProtocol(entry.group.representative.link || ""),
-                        evaluation.result
+                        finalEvaluation.result
                     );
                     outcomes.set(entry.group.key, probe);
                     completed += 1;
@@ -4102,14 +4289,16 @@ function applyFeaturedRegularBadges(indexEntries, healthResults, featuredTargets
     );
     const fast = selectFeaturedFastServers(healthResults, targets.fast);
     const fastFingerprints = new Set(fast.map(item => item.linkFingerprint));
-    // Fast and Gaming are separate feature locations. A country already
-    // represented by Fast may also host a distinct Gaming winner; excluding
-    // Fast countries made Gaming impossible whenever only the Fast countries
-    // had strict Gaming Tier-1 candidates. The selected servers remain
-    // fingerprint-distinct and are published as separate Gaming balancers.
+    // Fast and Gaming are mutually exclusive at the country level. Once a
+    // country is assigned to Fast, Gaming is allowed to choose only from the
+    // remaining eligible countries. The same country can therefore appear in
+    // exactly one featured category, never in Fast + Gaming simultaneously.
+    const fastCountries = new Set(
+        fast.map(item => String(item.country || '').trim().toLowerCase()).filter(Boolean)
+    );
     const gaming = selectFeaturedGamingServers(
         healthResults,
-        new Set(),
+        fastCountries,
         targets.gaming
     );
     const gamingFingerprints = new Set(gaming.map(item => item.linkFingerprint));
@@ -4163,7 +4352,8 @@ async function buildGamingAssignments(
     selectedCountries,
     healthResults,
     candidateItems,
-    featuredTargets = null
+    featuredTargets = null,
+    preselectedGaming = null
 ) {
     const candidateByFingerprint = new Map(
         (Array.isArray(candidateItems) ? candidateItems : [])
@@ -4174,11 +4364,13 @@ async function buildGamingAssignments(
     const targets = featuredTargets || calculateFeaturedTargetCounts(
         Array.isArray(selectedCountries) ? selectedCountries.length : 0
     );
-    const selected = selectFeaturedGamingServers(
-        healthResults,
-        new Set(),
-        targets.gaming
-    );
+    const selected = Array.isArray(preselectedGaming)
+        ? preselectedGaming
+        : selectFeaturedGamingServers(
+            healthResults,
+            new Set(),
+            targets.gaming
+        );
 
     return selected.map((item, index) => {
         const selectedItem = candidateByFingerprint.get(item.linkFingerprint);
@@ -4856,12 +5048,13 @@ async function main() {
 
     if (HEALTHCHECK_MODE === "russia-gate") {
         ACTIVE_CHECK_HOST_RUSSIA_NODES = await resolveRussianCheckHostNodes();
+        const requiredRussiaItems = [...managedItems];
 
-        // Verify the checker itself before spending hundreds of checks. This
-        // separates "Check-Host is unavailable/throttling" from "this target is
-        // unreachable" and selects only Russian nodes that can actually reach
-        // the control target.
-        const russiaPreflight = await checkHostProviderPreflight();
+        // Verify the checker itself and then run a small deterministic canary set
+        // against real production endpoints. Node selection is based on that
+        // observed quality while preserving Moscow + Saint Petersburg coverage
+        // whenever Saint Petersburg is healthy.
+        const russiaPreflight = await checkHostProviderPreflight(requiredRussiaItems);
         const liveRussiaNodes = Array.isArray(russiaPreflight?.selectedLiveNodes)
             ? [...new Set(russiaPreflight.selectedLiveNodes)]
             : [];
@@ -4883,8 +5076,6 @@ async function main() {
             `adaptive-pacing=global-api>=${CHECK_HOST_TOTAL_MIN_INTERVAL_MS}ms; ` +
             `nodes=${ACTIVE_CHECK_HOST_RUSSIA_NODES.join(",") || "none"}`
         );
-
-        const requiredRussiaItems = [...managedItems];
 
         if (ACTIVE_CHECK_HOST_GATE_QUORUM === 0) {
             for (const item of requiredRussiaItems) {
@@ -5050,7 +5241,8 @@ async function main() {
             positiveReachabilityRequired: ACTIVE_CHECK_HOST_GATE_QUORUM,
             selectedNodes: ACTIVE_CHECK_HOST_RUSSIA_NODES,
             nodeStats,
-            activeWindow: Number(process.env.HEALTHCHECK_RUSSIA_ACTIVE_WINDOW) || 64,
+            checkerPreflight: russiaPreflight,
+            activeWindow: Number(process.env.HEALTHCHECK_RUSSIA_ACTIVE_WINDOW) || 24,
             maxInFlight: CHECK_HOST_MAX_IN_FLIGHT,
             coordinator: {
                 elapsedMs: coordinator.elapsedMs,
@@ -5187,6 +5379,7 @@ async function main() {
                 checkerMode: russiaCheckerMode,
                 warning: russiaCheckerMode !== "dual" ? (russiaCheckerMode === "single" ? "⚠️ Only one Russian Check-Host node was available; single-node mode used." : "⚠️ No Russian Check-Host nodes were available; Russia Gate was skipped and candidates were passed directly to Heavy.") : "",
                 nodeStats,
+                checkerPreflight: russiaPreflight,
                 cachedResults: gateResults.filter(item => {
                     const age = Date.now() - (Number(item.checkedAt) || 0);
                     return age >= 0 && age < RUSSIA_GATE_STATE_MAX_AGE_MS;
@@ -5347,7 +5540,7 @@ async function main() {
 
     const selectedRegularFingerprints =
         new Set(
-            selectedCountries.flatMap(
+            selectedNormalCountries.flatMap(
                 country => country.members.map(member => member.linkFingerprint)
             )
         );
@@ -5418,12 +5611,27 @@ async function main() {
         }
     }
 
+    const featuredFastCountries = new Set(
+        featured.fast.map(item => String(item.country || '').trim().toLowerCase()).filter(Boolean)
+    );
+    const featuredGamingCountries = new Set(
+        featured.gaming.map(item => String(item.country || '').trim().toLowerCase()).filter(Boolean)
+    );
+    const featuredCountries = new Set([
+        ...featuredFastCountries,
+        ...featuredGamingCountries,
+    ]);
+    const selectedNormalCountries = selectedCountries.filter(country =>
+        !featuredCountries.has(String(country.country || '').trim().toLowerCase())
+    );
+
     const gamingAssignments =
         await buildGamingAssignments(
-            selectedCountries,
+            selectedNormalCountries,
             healthResults,
             candidates,
-            featuredTargets
+            featuredTargets,
+            featured.gaming
         );
 
     await writeGamingAssignments(
@@ -5452,7 +5660,7 @@ async function main() {
 
     const selectedRegularOrder = [
         ...featured.fast.map(item => item.id),
-        ...selectedCountries.flatMap(
+        ...selectedNormalCountries.flatMap(
             country => country.members
                 .filter(member => !featuredFastIds.has(member.id))
                 .map(member => member.id)
@@ -5778,6 +5986,21 @@ async function main() {
                     score: country.countryScore
                 })
             ),
+        selectedNormalCountries:
+            selectedNormalCountries.map(
+                country => ({
+                    country: country.country,
+                    members: country.members.map(member => ({
+                        id: member.id,
+                        kbps: Number(member.quality?.kbps) || 0
+                    })),
+                    score: country.countryScore
+                })
+            ),
+        featuredCountryAssignments: {
+            fast: [...featuredFastCountries],
+            gaming: [...featuredGamingCountries],
+        },
         selectedWhiteListCountries:
             selectedWhiteListCountries.map(
                 country => ({
