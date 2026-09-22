@@ -7,6 +7,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { spawn } from "node:child_process";
 import { parseLink, buildOutbound } from "./link-runtime.mjs";
+import { runLteGlobalpingGate } from "./lte-globalping-gate.mjs";
 
 const COUNTRY_BY_FLAG = {
     "🇪🇺": "Europe",
@@ -144,6 +145,41 @@ const ROOT =
         process.cwd()
     );
 
+const SERVICE_ENDPOINTS_FILE =
+    path.join(ROOT, "config", "service-endpoints.json");
+
+let serviceEndpoints = {};
+try {
+    serviceEndpoints = JSON.parse(
+        await fs.readFile(SERVICE_ENDPOINTS_FILE, "utf8")
+    );
+} catch (error) {
+    throw new Error(
+        `Service endpoint configuration is unavailable: ${error?.message || error}`
+    );
+}
+
+const SERVICE_BASE_URL =
+    String(
+        process.env.SERVICE_BASE_URL ||
+        serviceEndpoints.serviceBaseUrl ||
+        ""
+    ).trim();
+
+if (!SERVICE_BASE_URL) {
+    throw new Error(
+        "UPDATE connectivity URL is not configured in config/service-endpoints.json"
+    );
+}
+
+try {
+    new URL(SERVICE_BASE_URL);
+} catch {
+    throw new Error(
+        `Invalid UPDATE connectivity URL: ${SERVICE_BASE_URL}`
+    );
+}
+
 const LINKS_DIR =
     path.join(
         ROOT,
@@ -195,6 +231,29 @@ const TCP_TIMEOUT_MS =
 const XRAY_START_TIMEOUT_MS =
     2500;
 
+// LTE uses the production Xray binary, but follows the dedicated LTE test
+// model: exact-link Xray validation with a bounded retry and a real-download
+// fallback. Regular servers keep the original Xray settings below unchanged.
+const LTE_XRAY_START_TIMEOUT_MS = Math.max(5000, Number(process.env.HEALTHCHECK_LTE_XRAY_START_TIMEOUT_MS) || 12000);
+const LTE_XRAY_ATTEMPTS = Math.max(1, Math.min(3, Number(process.env.HEALTHCHECK_LTE_XRAY_ATTEMPTS) || 2));
+const LTE_XRAY_RETRY_DELAY_MS = Math.max(250, Number(process.env.HEALTHCHECK_LTE_XRAY_RETRY_DELAY_MS) || 1200);
+const LTE_XRAY_TARGET_URLS = String(
+    process.env.HEALTHCHECK_LTE_XRAY_TARGET_URLS ||
+    [
+        "https://www.gstatic.com/generate_204",
+        "https://www.cloudflare.com/cdn-cgi/trace"
+    ].join(",")
+)
+    .split(/[\,\r\n;]+/)
+    .map(value => value.trim())
+    .filter(Boolean);
+const LTE_XRAY_SPEED_FALLBACK_URL =
+    process.env.HEALTHCHECK_LTE_XRAY_SPEED_URL ||
+    "https://speed.cloudflare.com/__down?bytes=4194304";
+const LTE_XRAY_SPEED_TIMEOUT_MS = Math.max(5000, Number(process.env.HEALTHCHECK_LTE_XRAY_SPEED_TIMEOUT_MS) || 9000);
+const LTE_XRAY_SPEED_MIN_BYTES = Math.max(64 * 1024, Number(process.env.HEALTHCHECK_LTE_XRAY_SPEED_MIN_BYTES) || 256 * 1024);
+const LTE_XRAY_SPEED_MIN_KBPS = Math.max(64, Number(process.env.HEALTHCHECK_LTE_XRAY_SPEED_MIN_KBPS) || 1024);
+
 const REQUEST_TIMEOUT_MS =
     8000;
 
@@ -245,12 +304,28 @@ const CHECK_HOST_RESULT_MIN_INTERVAL_MS = Math.max(
 );
 
 
+const GLOBALPING_API_BASE =
+    process.env.HEALTHCHECK_GLOBALPING_API_BASE ||
+    "https://api.globalping.io/v1";
 const GLOBALPING_TOKEN = String(
-    process.env.RUSSIA_TEST_GLOBALPING_TOKEN ||
     process.env.HEALTHCHECK_GLOBALPING_API_TOKEN ||
     process.env.GLOBALPING_API_TOKEN ||
     ""
 ).trim();
+const GLOBALPING_LTE_ENABLED = !/^(0|false|no)$/i.test(
+    String(process.env.HEALTHCHECK_GLOBALPING_LTE_ENABLED || "1")
+);
+const GLOBALPING_LTE_CITY_LIMIT = Math.max(3, Math.min(6, Number(process.env.HEALTHCHECK_GLOBALPING_LTE_CITY_LIMIT) || 3));
+const GLOBALPING_LTE_MIN_DISTINCT_CITIES = Math.max(2, Math.min(GLOBALPING_LTE_CITY_LIMIT, Number(process.env.HEALTHCHECK_GLOBALPING_LTE_MIN_DISTINCT_CITIES) || 2));
+const GLOBALPING_LTE_REQUIRE_EYEBALL = !/^(0|false|no)$/i.test(
+    String(process.env.HEALTHCHECK_GLOBALPING_LTE_REQUIRE_EYEBALL || "1")
+);
+const GLOBALPING_LTE_MAX_ENDPOINTS = Math.max(1, Math.min(164, Number(process.env.HEALTHCHECK_GLOBALPING_MAX_ENDPOINTS) || 164));
+const GLOBALPING_LTE_RESERVE_TESTS = Math.max(0, Number(process.env.HEALTHCHECK_GLOBALPING_RESERVE_TESTS) || 10);
+const GLOBALPING_LTE_TIMEOUT_MS = Math.max(10000, Number(process.env.HEALTHCHECK_GLOBALPING_TIMEOUT_MS) || 30000);
+const GLOBALPING_LTE_POLL_MS = Math.max(500, Number(process.env.HEALTHCHECK_GLOBALPING_POLL_MS) || 700);
+const GLOBALPING_LTE_MTR_TIMEOUT_SECONDS = Math.max(5, Math.min(20, Number(process.env.HEALTHCHECK_GLOBALPING_MTR_TIMEOUT_SECONDS) || 12));
+
 const RUSSIA_GATE_STATE_MAX_AGE_MS = Math.max(5 * 60 * 1000, Number(process.env.HEALTHCHECK_RUSSIA_GATE_STATE_MAX_AGE_MS) || 6 * 60 * 60 * 1000);
 const RUSSIA_GATE_USE_CACHE =
     /^(1|true|yes)$/i.test(
@@ -470,7 +545,6 @@ const FEATURED_COUNTRY_ORDER = [
     "Poland",
 ];
 const FEATURED_COUNTRIES = new Set(FEATURED_COUNTRY_ORDER.map(country => country.toLowerCase()));
-const FEATURED_EXCLUDED_COUNTRIES = new Set(["russia"]);
 
 // Europe is a permanent visible location and therefore counts toward the
 // Fast/Gaming thresholds used for the final subscription layout.
@@ -532,6 +606,17 @@ const HEALTH_TARGET_URLS = String(
     .map(value => value.trim())
     .filter(Boolean);
 
+const WHITE_LIST_HEALTH_TARGET_URLS = String(
+    process.env.HEALTHCHECK_WHITE_LIST_TARGET_URLS ||
+    [
+        "https://ya.ru/",
+        "https://yandex.ru/"
+    ].join(",")
+)
+    .split(/[,\r\n;]+/)
+    .map(value => value.trim())
+    .filter(Boolean);
+
 const HEALTH_MIN_TARGET_PASSES = Math.max(
     1,
     Math.min(
@@ -539,1814 +624,6 @@ const HEALTH_MIN_TARGET_PASSES = Math.max(
         Number(process.env.HEALTHCHECK_MIN_TARGET_PASSES) || 2
     )
 );
-
-
-// LTE Russia checker v3 — production-integrated implementation.
-// This is intentionally kept inside the existing source health checker so the
-// experimental repository can be deleted without affecting production.
-let runLteRussiaCheckerV3;
-
-{
-const CHECK_HOST_BASE = String(process.env.RUSSIA_TEST_CHECK_HOST_BASE || "https://check-host.net").replace(/\/$/, "");
-const CORE_NODES = String(process.env.RUSSIA_TEST_CORE_NODES || "ru1.node.check-host.net,ru2.node.check-host.net,ru3.node.check-host.net")
-  .split(/[\s,;]+/).map(v => v.trim()).filter(Boolean);
-const STRONG_QUORUM = Math.max(1, Math.min(CORE_NODES.length, Number(process.env.RUSSIA_TEST_STRONG_QUORUM) || 2));
-const MIN_PASS_NODES = Math.max(1, Math.min(CORE_NODES.length, Number(process.env.RUSSIA_TEST_MIN_PASS_NODES) || 1));
-const RECHECK_NONPASS = !/^(0|false|no)$/i.test(String(process.env.RUSSIA_TEST_RECHECK_NONPASS || "1"));
-const DISCOVER_CHECK_HOST_RU = !/^(0|false|no)$/i.test(String(process.env.RUSSIA_TEST_DISCOVER_CHECK_HOST_RU || "1"));
-
-const CREATE_TIMEOUT_MS = Math.max(5000, Number(process.env.RUSSIA_TEST_CREATE_TIMEOUT_MS) || 12000);
-const RESULT_TIMEOUT_MS = Math.max(3000, Number(process.env.RUSSIA_TEST_RESULT_TIMEOUT_MS) || 6000);
-const POLL_MS = Math.max(700, Number(process.env.RUSSIA_TEST_POLL_MS) || 1200);
-const MAX_POLL_MS = Math.max(POLL_MS, Number(process.env.RUSSIA_TEST_MAX_POLL_MS) || 16000);
-const CREATE_INTERVAL_MS = Math.max(800, Number(process.env.RUSSIA_TEST_CREATE_INTERVAL_MS) || 1400);
-const CONCURRENCY = Math.max(1, Math.min(3, Number(process.env.RUSSIA_TEST_CONCURRENCY) || 2));
-const RETRIES = Math.max(3, Math.min(8, Number(process.env.RUSSIA_TEST_RETRIES) || 6));
-
-const GLOBALPING_ENABLED = !/^(0|false|no)$/i.test(String(process.env.RUSSIA_TEST_GLOBALPING || "1"));
-const GLOBALPING_RECOVERY_ENABLED = !/^(0|false|no)$/i.test(String(process.env.RUSSIA_TEST_GLOBALPING_RECOVERY || "1"));
-const GLOBALPING_BASE = String(process.env.RUSSIA_TEST_GLOBALPING_BASE || "https://api.globalping.io/v1").replace(/\/$/, "");
-const GLOBALPING_TOKEN = String(process.env.RUSSIA_TEST_GLOBALPING_TOKEN || process.env.GLOBALPING_API_TOKEN || "").trim();
-const GLOBALPING_CITY_LIMIT = Math.max(3, Math.min(12, Number(process.env.RUSSIA_TEST_GLOBALPING_CITY_LIMIT) || 9));
-const GLOBALPING_RECOVERY_CITY_LIMIT = Math.max(2, Math.min(6, Number(process.env.RUSSIA_TEST_GLOBALPING_RECOVERY_CITY_LIMIT) || 3));
-const GLOBALPING_RECOVERY_MIN_DISTINCT_CITIES = Math.max(2, Math.min(GLOBALPING_RECOVERY_CITY_LIMIT, Number(process.env.RUSSIA_TEST_GLOBALPING_MIN_DISTINCT_CITIES) || 2));
-const GLOBALPING_RECOVERY_REQUIRE_EYEBALL = !/^(0|false|no)$/i.test(String(process.env.RUSSIA_TEST_GLOBALPING_REQUIRE_EYEBALL || "1"));
-const GLOBALPING_RECOVERY_TCP_ONLY = !/^(0|false|no)$/i.test(String(process.env.RUSSIA_TEST_GLOBALPING_TCP_ONLY || "1"));
-const GLOBALPING_RECOVERY_MAX_ENDPOINTS = Math.max(1, Math.min(164, Number(process.env.RUSSIA_TEST_GLOBALPING_MAX_RECOVERY_ENDPOINTS) || 164));
-const GLOBALPING_RECOVERY_RESERVE_TESTS = Math.max(0, Number(process.env.RUSSIA_TEST_GLOBALPING_RESERVE_TESTS) || 10);
-const GLOBALPING_RECOVERY_CONCURRENCY = 1;
-const GLOBALPING_POLL_MS = Math.max(500, Number(process.env.RUSSIA_TEST_GLOBALPING_POLL_MS) || 700);
-const GLOBALPING_TIMEOUT_MS = Math.max(10000, Number(process.env.RUSSIA_TEST_GLOBALPING_TIMEOUT_MS) || 30000);
-const GLOBALPING_MTR_TIMEOUT_SECONDS = Math.max(5, Math.min(20, Number(process.env.RUSSIA_TEST_GLOBALPING_MTR_TIMEOUT_SECONDS) || 12));
-const HOSTTOOLS_ENABLED = !/^(0|false|no)$/i.test(String(process.env.RUSSIA_TEST_HOSTTOOLS || "1"));
-const HOSTTOOLS_BASE = String(process.env.RUSSIA_TEST_HOSTTOOLS_BASE || "https://host.tools").replace(/\/$/, "");
-const HOSTTOOLS_MAX_REQUESTS = Math.max(1, Math.min(90, Number(process.env.RUSSIA_TEST_HOSTTOOLS_MAX_REQUESTS) || 80));
-const HOSTTOOLS_RESERVE_REQUESTS = Math.max(0, Math.min(20, Number(process.env.RUSSIA_TEST_HOSTTOOLS_RESERVE_REQUESTS) || 15));
-const HOSTTOOLS_REQUEST_INTERVAL_MS = Math.max(350, Number(process.env.RUSSIA_TEST_HOSTTOOLS_REQUEST_INTERVAL_MS) || 650);
-const HOSTTOOLS_TIMEOUT_MS = Math.max(7000, Number(process.env.RUSSIA_TEST_HOSTTOOLS_TIMEOUT_MS) || 15000);
-const HOSTTOOLS_RU_STRONG_CITIES = Math.max(2, Number(process.env.RUSSIA_TEST_HOSTTOOLS_RU_STRONG_CITIES) || 2);
-const HOSTTOOLS_EXCLUDE_CITIES = new Set(["moscow", "saint petersburg", "st petersburg", "st. petersburg", "санкт-петербург"]);
-const XRAY_ENABLED = !/^(0|false|no)$/i.test(String(process.env.RUSSIA_TEST_XRAY || "1"));
-const XRAY_BIN = path.resolve(ROOT, process.env.RUSSIA_TEST_XRAY_BIN || ".xray/xray");
-const XRAY_START_TIMEOUT_MS = Math.max(5000, Number(process.env.RUSSIA_TEST_XRAY_START_TIMEOUT_MS) || 12000);
-const XRAY_REQUEST_TIMEOUT_MS = Math.max(5000, Number(process.env.RUSSIA_TEST_XRAY_REQUEST_TIMEOUT_MS) || 9000);
-const XRAY_LINK_CONCURRENCY = Math.max(1, Math.min(4, Number(process.env.RUSSIA_TEST_XRAY_LINK_CONCURRENCY) || 3));
-const XRAY_LINK_ATTEMPTS = Math.max(1, Math.min(2, Number(process.env.RUSSIA_TEST_XRAY_LINK_ATTEMPTS) || 2));
-const XRAY_RETRY_DELAY_MS = Math.max(300, Number(process.env.RUSSIA_TEST_XRAY_RETRY_DELAY_MS) || 1200);
-const XRAY_TARGETS = String(
-  process.env.RUSSIA_TEST_XRAY_TARGETS ||
-  "https://www.gstatic.com/generate_204,https://www.cloudflare.com/cdn-cgi/trace"
-).split(/\s*,\s*/).map(v => v.trim()).filter(Boolean);
-const XRAY_ONLY_ON_TRANSPORT_PASS = !/^(0|false|no)$/i.test(String(process.env.RUSSIA_TEST_XRAY_ONLY_ON_TRANSPORT_PASS || "1"));
-const XRAY_SPEED_FALLBACK_ENABLED = !/^(0|false|no)$/i.test(String(process.env.RUSSIA_TEST_XRAY_SPEED_FALLBACK || "1"));
-const XRAY_SPEED_FALLBACK_URL =
-  process.env.RUSSIA_TEST_XRAY_SPEED_URL ||
-  "https://speed.cloudflare.com/__down?bytes=4194304";
-const XRAY_SPEED_FALLBACK_TIMEOUT_MS = Math.max(
-  5000,
-  Number(process.env.RUSSIA_TEST_XRAY_SPEED_TIMEOUT_MS) || 9000
-);
-const XRAY_SPEED_FALLBACK_MIN_BYTES = Math.max(
-  64 * 1024,
-  Number(process.env.RUSSIA_TEST_XRAY_SPEED_MIN_BYTES) || 256 * 1024
-);
-const XRAY_SPEED_FALLBACK_MIN_KBPS = Math.max(
-  64,
-  Number(process.env.RUSSIA_TEST_XRAY_SPEED_MIN_KBPS) || 1024
-);
-
-const PRIORITY_RUSSIA_CITIES = [
-  "Moscow", "Saint Petersburg", "Yekaterinburg", "Kazan", "Novosibirsk",
-  "Nizhny Novgorod", "Samara", "Krasnodar", "Rostov-on-Don", "Ufa", "Perm", "Voronezh",
-];
-
-const SCOPE = "lte";
-const DRY_RUN = false;
-const SELF_TEST = /^(1|true|yes)$/i.test(String(process.env.RUSSIA_TEST_SELF_TEST || "0"));
-
-const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
-
-function hash(value) { return crypto.createHash("sha256").update(String(value)).digest("hex"); }
-
-function protocolOf(link) {
-  return String(link || "").split("://", 1)[0].trim().toLowerCase();
-}
-
-function transportOf(protocol) {
-  return ["hysteria", "hysteria2", "tuic"].includes(String(protocol).toLowerCase()) ? "udp" : "tcp";
-}
-
-function isLte(item) {
-  return Boolean(item?.whiteList === true || /^source-whitelist-\d+$/i.test(String(item?.id || "")));
-}
-
-function parseUrl(link) {
-  const url = new URL(String(link).trim());
-  const protocol = protocolOf(link);
-  const port = Number(url.port || 443);
-  return { url, protocol, transport: transportOf(protocol), host: url.hostname, port };
-}
-
-function endpointKey(link) {
-  const { host, port, transport } = parseUrl(link);
-  return `${transport}|${String(host).toLowerCase()}|${port}`;
-}
-
-function targetForCheckHost(url, port) {
-  const host = String(url.hostname || "");
-  const hostPart = host.includes(":") ? `[${host}]` : host;
-  return `${hostPart}:${port || Number(url.port || 443)}`;
-}
-
-function authHeaders(extra = {}) {
-  return {
-    accept: "application/json",
-    "user-agent": "escapevpn-russia-checker-experiment-v3/1.0",
-    "accept-encoding": "gzip",
-    ...extra,
-  };
-}
-
-async function fetchJson(url, options = {}, timeoutMs = 10000) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const response = await fetch(url, { ...options, signal: controller.signal, headers: authHeaders(options.headers || {}) });
-    const retryAfterMs = Number(response.headers.get("retry-after")) * 1000 || 0;
-    const text = await response.text();
-    let body = null;
-    try { body = text ? JSON.parse(text) : null; } catch {}
-    if (!response.ok) {
-      const msg = body?.error?.message || body?.error || body?.message || `HTTP ${response.status}`;
-      const error = new Error(String(msg));
-      error.status = response.status;
-      error.retryAfterMs = retryAfterMs;
-      throw error;
-    }
-    if (body === null && text) {
-      const error = new Error(`non-JSON response (${response.status})`);
-      error.status = response.status;
-      error.retryAfterMs = retryAfterMs;
-      throw error;
-    }
-    return body;
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-async function withRetry(fn, attempts = RETRIES) {
-  let lastError = null;
-  for (let attempt = 0; attempt < attempts; attempt += 1) {
-    try { return await fn(attempt); }
-    catch (error) {
-      lastError = error;
-      const status = Number(error?.status || 0);
-      const retryable = status === 408 || status === 429 || status >= 500 || /aborted|timeout|timed out|fetch failed/i.test(String(error?.message || ""));
-      if (!retryable || attempt + 1 >= attempts) throw error;
-      const retryAfter = Number(error?.retryAfterMs || 0);
-      const backoff = Math.max(1200, 1500 * 2 ** attempt);
-      await sleep(retryAfter > 0 ? Math.max(backoff, retryAfter) : backoff);
-    }
-  }
-  throw lastError || new Error("retry failed");
-}
-
-let lastHostToolsRequestAt = 0;
-let hostToolsRequestsUsed = 0;
-async function throttleHostToolsRequest() {
-  const wait = HOSTTOOLS_REQUEST_INTERVAL_MS - (Date.now() - lastHostToolsRequestAt);
-  if (wait > 0) await sleep(wait);
-  lastHostToolsRequestAt = Date.now();
-}
-
-async function fetchHostToolsStream(url, timeoutMs = HOSTTOOLS_TIMEOUT_MS) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const response = await fetch(url, {
-      signal: controller.signal,
-      headers: authHeaders({ accept: "text/event-stream, application/json" }),
-    });
-    const text = await response.text();
-    const retryAfterMs = Number(response.headers.get("retry-after")) * 1000 || 0;
-    if (!response.ok) {
-      const error = new Error(`HTTP ${response.status}`);
-      error.status = response.status;
-      error.retryAfterMs = retryAfterMs;
-      throw error;
-    }
-    try {
-      const body = JSON.parse(text);
-      return { envelope: body, events: [body] };
-    } catch {}
-    const events = [];
-    let current = [];
-    const flush = () => {
-      if (!current.length) return;
-      const dataText = current.filter(line => line.startsWith("data:")).map(line => line.slice(5).trim()).join("\n");
-      if (dataText) {
-        try { events.push(JSON.parse(dataText)); } catch {}
-      }
-      current = [];
-    };
-    for (const line of text.split(/\r?\n/)) {
-      if (line === "") flush();
-      else if (!line.startsWith(":")) current.push(line);
-    }
-    flush();
-    if (!events.length) throw new Error("host.tools returned no JSON/SSE events");
-    return { envelope: events[0], events };
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-const HOSTTOOLS_KNOWN_RU_CITIES = [
-  "Yekaterinburg", "Ekaterinburg", "Екатеринбург", "Kazan", "Казань", "Novosibirsk", "Новосибирск",
-  "Krasnodar", "Краснодар", "Rostov-on-Don", "Ростов-на-Дону", "Ufa", "Уфа", "Perm", "Пермь",
-  "Nizhny Novgorod", "Нizhny Novgorod", "Нижний Новгород", "Samara", "Самара", "Voronezh", "Воронеж",
-  "Chelyabinsk", "Челябинск", "Omsk", "Омск", "Vladivostok", "Владивосток", "Irkutsk", "Иркутск",
-  "Krasnoyarsk", "Красноярск", "Tyumen", "Тюмень", "Saratov", "Саратов", "Volgograd", "Волгоград",
-  "Tomsk", "Томск", "Barnaul", "Барнаул", "Naberezhnye Chelny", "Набережные Челны",
-];
-function hostToolsLocationText(value) {
-  if (typeof value === "string") return value;
-  if (!value || typeof value !== "object") return "";
-  return [value.name, value.city, value.region, value.country, value.location, value.probe, value.provider]
-    .filter(v => typeof v === "string").join(" ");
-}
-function hostToolsCountry(value, locationText = "") {
-  const text = `${String(value || "")} ${locationText}`.trim().toLowerCase();
-  if (/\b(?:ru|rus|russia|russian federation)\b|росси|рф/.test(text)) return true;
-  return HOSTTOOLS_KNOWN_RU_CITIES.some(city => text.includes(city.toLowerCase()));
-}
-function hostToolsCity(value, locationText = "") {
-  const explicit = String(value || "").trim().replace(/\s+/g, " ");
-  if (explicit) return explicit;
-  const text = String(locationText || "").replace(/\s+/g, " ");
-  for (const city of HOSTTOOLS_KNOWN_RU_CITIES) if (text.toLowerCase().includes(city.toLowerCase())) return city;
-  return text.split(",")[0]?.trim() || text.trim();
-}
-function hostToolsObservationRows(value, rows = [], seen = new Set(), depth = 0) {
-  if (depth > 6 || value == null || typeof value !== "object" || seen.has(value)) return rows;
-  seen.add(value);
-  if (Array.isArray(value)) { for (const item of value) hostToolsObservationRows(item, rows, seen, depth + 1); return rows; }
-  const location = value.location && typeof value.location === "object" ? value.location : null;
-  const locationText = hostToolsLocationText(value.location) || hostToolsLocationText(value);
-  const city = hostToolsCity(value.city ?? location?.city ?? value.region?.city ?? value.place?.city, locationText);
-  const country = String(value.country ?? location?.country ?? value.region?.country ?? value.place?.country ?? "");
-  const combined = `${locationText} ${hostToolsLocationText(value)}`.trim();
-  const status = String(value.status ?? value.state ?? value.verdict ?? value.result ?? value.outcome ?? value.portStatus ?? "").trim().toLowerCase();
-  const ok = value.ok === true || value.success === true || value.reachable === true || value.open === true || value.connected === true;
-  if (city && hostToolsCountry(country, combined)) rows.push({ city, country: country || "RU", ok, status, latencyMs: Number(value.latencyMs ?? value.latency ?? value.rtt ?? value.connectMs ?? 0) || 0, raw: value });
-  for (const nested of Object.values(value)) if (nested && typeof nested === "object") hostToolsObservationRows(nested, rows, seen, depth + 1);
-  return rows;
-}
-function hostToolsRowPassed(row) {
-  const status = String(row?.status || "").toLowerCase();
-  if (row?.ok === true) return true;
-  return /\b(open|opened|reachable|success|successful|up|connected|ok)\b/.test(status);
-}
-function summarizeHostToolsEvents(events) {
-  const byCity = new Map();
-  for (const row of hostToolsObservationRows(events)) {
-    const key = row.city.toLowerCase();
-    const current = byCity.get(key) || { city: row.city, attempts: 0, passed: 0, bestLatencyMs: 0, statuses: [] };
-    current.attempts += 1;
-    if (hostToolsRowPassed(row)) { current.passed += 1; if (!current.bestLatencyMs || (row.latencyMs > 0 && row.latencyMs < current.bestLatencyMs)) current.bestLatencyMs = row.latencyMs; }
-    if (row.status) current.statuses.push(row.status);
-    byCity.set(key, current);
-  }
-  const cities = [...byCity.values()].map(row => ({ ...row, passed: row.passed > 0, nonCore: !HOSTTOOLS_EXCLUDE_CITIES.has(row.city.toLowerCase()) }));
-  const russianPassedCities = cities.filter(row => row.nonCore && row.passed);
-  return { cities: cities.sort((a,b) => Number(b.passed)-Number(a.passed) || a.city.localeCompare(b.city)), russianPassedCities, passedOtherCities: russianPassedCities.length };
-}
-async function runHostToolsTcp(endpoint) {
-  if (!HOSTTOOLS_ENABLED || DRY_RUN) return { verdict: "SKIPPED-HOSTTOOLS", endpoint: endpoint.key };
-  if (endpoint.transport !== "tcp") return { verdict: "SKIPPED-HOSTTOOLS-UDP", endpoint: endpoint.key, cities: [] };
-  const { host, port } = parseUrl(endpoint.link);
-  const target = host.includes(":") ? `[${host}]:${port}` : `${host}:${port}`;
-  const url = `${HOSTTOOLS_BASE}/api/v1/network/tcp?q=${encodeURIComponent(target)}`;
-  if (hostToolsRequestsUsed >= Math.max(0, HOSTTOOLS_MAX_REQUESTS - HOSTTOOLS_RESERVE_REQUESTS)) return { verdict: "SKIPPED-HOSTTOOLS-BUDGET", endpoint: endpoint.key, url, cities: [], passedOtherCities: 0 };
-  await throttleHostToolsRequest();
-  hostToolsRequestsUsed += 1;
-  try {
-    const payload = await fetchHostToolsStream(url, HOSTTOOLS_TIMEOUT_MS);
-    const summary = summarizeHostToolsEvents(payload.events || [payload.envelope]);
-    const verdict = summary.passedOtherCities >= HOSTTOOLS_RU_STRONG_CITIES ? "PASS-HOSTTOOLS-STRONG" : summary.passedOtherCities >= 1 ? "PASS-HOSTTOOLS" : "FAIL-HOSTTOOLS";
-    return { verdict, endpoint: endpoint.key, url, cities: summary.cities, russianPassedCities: summary.russianPassedCities, passedOtherCities: summary.passedOtherCities, source: "host.tools" };
-  } catch (error) {
-    return { verdict: Number(error?.status || 0) === 429 ? "RATE-LIMIT-HOSTTOOLS" : "UNKNOWN-HOSTTOOLS", endpoint: endpoint.key, url, status: Number(error?.status || 0), error: error?.message || String(error), cities: [], russianPassedCities: [], passedOtherCities: 0 };
-  }
-}
-function chooseHostToolsRecoveryTargets(endpointRows, xrayById) {
-  return [...endpointRows]
-    .filter(endpoint => endpoint.transport === "tcp")
-    .filter(endpoint => {
-      const members = Array.isArray(endpoint?.members) ? endpoint.members : [];
-      return !members.some(member =>
-        ["PASS-XRAY", "PASS-XRAY-CLOUDFLARE"].includes(
-          xrayById.get(String(member?.id))?.verdict
-        )
-      );
-    })
-    .sort((a,b) => {
-    const rank = endpoint => ({ FAIL:4, UNKNOWN:3, "PASS-PARTIAL":2 }[String(endpoint.verdict)] || 1);
-    return rank(b)-rank(a) || a.key.localeCompare(b.key);
-  });
-}
-async function runHostToolsRecoveryPass(endpointRows, items, xrayById) {
-  if (!HOSTTOOLS_ENABLED || DRY_RUN) return { attempted: 0, recovered: 0, strongRecovered: 0, skipped: "disabled", endpoints: [] };
-  const budget = Math.max(0, Math.min(endpointRows.filter(e => e.transport === "tcp").length, HOSTTOOLS_MAX_REQUESTS - HOSTTOOLS_RESERVE_REQUESTS));
-  const targets = chooseHostToolsRecoveryTargets(endpointRows, xrayById).slice(0, budget);
-  const rows = []; let rateLimited = false;
-  for (let index=0; index<targets.length; index++) {
-    const result = await runHostToolsTcp(targets[index]);
-    targets[index].hostToolsRecovery = result;
-    if (["PASS-HOSTTOOLS","PASS-HOSTTOOLS-STRONG"].includes(result.verdict)) targets[index].hostToolsVerdict = result.verdict;
-    rows.push({ key: targets[index].key, verdict: result.verdict, passedOtherCities: result.passedOtherCities || 0, cities: result.cities || [], error: result.error || "" });
-    console.log(`RUSSIA TEST V3 HOSTTOOLS ${index+1}/${targets.length}: ${targets[index].key} => ${result.verdict} (${result.passedOtherCities||0} other-RU cities)`);
-    if (result.verdict === "RATE-LIMIT-HOSTTOOLS") { rateLimited=true; break; }
-  }
-  return { attempted: rows.length, recovered: rows.filter(r => ["PASS-HOSTTOOLS","PASS-HOSTTOOLS-STRONG"].includes(r.verdict)).length, strongRecovered: rows.filter(r=>r.verdict==="PASS-HOSTTOOLS-STRONG").length, skipped: rateLimited ? "stopped-on-rate-limit" : "", endpoints: rows, maxRequests: HOSTTOOLS_MAX_REQUESTS, reserveRequests: HOSTTOOLS_RESERVE_REQUESTS, requestsUsed: hostToolsRequestsUsed, rateLimited };
-}
-
-let lastCreateAt = 0;
-async function throttleCreate() {
-  const wait = CREATE_INTERVAL_MS - (Date.now() - lastCreateAt);
-  if (wait > 0) await sleep(wait);
-  lastCreateAt = Date.now();
-}
-
-function extractErrorText(value) {
-  if (value == null) return "";
-  if (typeof value === "string") return value;
-  if (Array.isArray(value)) return value.map(extractErrorText).filter(Boolean).join(" | ");
-  if (typeof value === "object") return [value.error, value.message, value.status].map(extractErrorText).filter(Boolean).join(" | ");
-  return String(value);
-}
-
-function parseNodeResult(raw, node, transport) {
-  if (raw == null) return { node, state: "pending", raw: null, latencyMs: 0 };
-  const text = extractErrorText(raw);
-  const jsonText = JSON.stringify(raw);
-
-  if (transport === "udp") {
-    if (/connection refused|port unreachable|udp.*unreachable|network is unreachable/i.test(`${text} ${jsonText}`)) {
-      return { node, state: "refused", raw, error: text || "connection refused", latencyMs: 0 };
-    }
-    if (/open or filtered|filtered/i.test(`${text} ${jsonText}`)) {
-      return { node, state: "udp-filtered", raw, error: text || "open or filtered", latencyMs: 0 };
-    }
-    if (Array.isArray(raw)) {
-      const flat = raw.flat(Infinity);
-      const flatText = extractErrorText(flat);
-      if (/connection refused|port unreachable|unreachable/i.test(flatText)) return { node, state: "refused", raw, error: flatText, latencyMs: 0 };
-      if (/open or filtered|filtered/i.test(flatText)) return { node, state: "udp-filtered", raw, error: flatText, latencyMs: 0 };
-      if (flat.length === 0 || flat.every(v => v == null)) return { node, state: "pending", raw, latencyMs: 0 };
-    }
-    // Check-Host's UDP semantics intentionally cannot prove an application handshake.
-    // Any final result that is not an explicit UDP refusal is kept for manual HAPP validation.
-    if (/timeout|timed out|no response|no answer/i.test(`${text} ${jsonText}`)) {
-      return { node, state: "udp-filtered", raw, error: text || "open or filtered", latencyMs: 0 };
-    }
-    return { node, state: "udp-filtered", raw, error: text || "open or filtered", latencyMs: 0 };
-  }
-
-  // Check-Host TCP returns an array like [{"time":0.03,"address":"..."}] per its API.
-  // v2 incorrectly treated that array as an opaque value and marked every successful
-  // TCP endpoint as unreachable. Always inspect the first concrete result object.
-  const first = Array.isArray(raw) ? raw.find(value => value && typeof value === "object") : raw;
-  if (first && typeof first === "object" && Number.isFinite(Number(first.time))) {
-    return { node, state: "reachable", raw, latencyMs: Number(first.time) * 1000 };
-  }
-  const firstError = first && typeof first === "object" ? String(first.error || first.message || "") : "";
-  if (/connection refused|unreachable|timed out|timeout|no route/i.test(`${firstError} ${text} ${jsonText}`)) {
-    return { node, state: "unreachable", raw, error: text || "unreachable", latencyMs: 0 };
-  }
-  return { node, state: "unreachable", raw, error: text || "unreachable", latencyMs: 0 };
-}
-
-function decide(nodes, transport) {
-  if (!Array.isArray(nodes) || !nodes.length) return { verdict: "UNKNOWN", confidence: "no-node-results" };
-  if (transport === "tcp") {
-    const reachable = nodes.filter(n => n.state === "reachable").length;
-    const pending = nodes.filter(n => n.state === "pending").length;
-    if (reachable >= STRONG_QUORUM) return { verdict: "PASS", confidence: `tcp-${reachable}/${nodes.length}` };
-    if (pending === 0 && reachable >= MIN_PASS_NODES) return { verdict: "PASS-PARTIAL", confidence: `tcp-${reachable}/${nodes.length}` };
-    if (pending === 0) return { verdict: "FAIL", confidence: `tcp-${reachable}/${nodes.length}` };
-    return { verdict: "UNKNOWN", confidence: `tcp-pending-${pending}` };
-  }
-  const refused = nodes.filter(n => n.state === "refused").length;
-  const pending = nodes.filter(n => n.state === "pending").length;
-  const usable = nodes.filter(n => n.state === "udp-filtered" || n.state === "reachable").length;
-  if (usable >= STRONG_QUORUM) return { verdict: "PASS-UDP-STRONG", confidence: `udp-${usable}/${nodes.length}` };
-  if (pending === 0 && usable >= MIN_PASS_NODES) return { verdict: "PASS-UDP-NOT-REFUSED", confidence: `udp-${usable}/${nodes.length}` };
-  if (pending === 0 && refused === nodes.length) return { verdict: "FAIL", confidence: "udp-explicitly-refused-all" };
-  return { verdict: "UNKNOWN", confidence: `udp-pending-${pending}` };
-}
-
-async function createCheckHostMeasurement(url, protocol) {
-  const transport = transportOf(protocol);
-  const type = transport === "udp" ? "udp" : "tcp";
-  const params = new URLSearchParams({ host: targetForCheckHost(url), max_nodes: String(CORE_NODES.length) });
-  for (const node of CORE_NODES) params.append("node", node);
-  await throttleCreate();
-  const created = await withRetry(() => fetchJson(`${CHECK_HOST_BASE}/check-${type}?${params.toString()}`, {}, CREATE_TIMEOUT_MS));
-  const requestId = String(created?.request_id || "").trim();
-  if (!requestId) throw new Error("Check-Host response has no request_id");
-  return { requestId, transport, type, nodes: [...CORE_NODES] };
-}
-
-async function pollCheckHostMeasurement(measurement) {
-  const started = Date.now();
-  let lastPayload = null;
-  while (Date.now() - started <= MAX_POLL_MS) {
-    await sleep(POLL_MS);
-    lastPayload = await withRetry(() => fetchJson(`${CHECK_HOST_BASE}/check-result/${encodeURIComponent(measurement.requestId)}`, {}, RESULT_TIMEOUT_MS));
-    const parsed = measurement.nodes.map(node => parseNodeResult(lastPayload?.[node] ?? null, node, measurement.transport));
-    const decision = decide(parsed, measurement.transport);
-    const allFinal = parsed.every(row => !["pending"].includes(row.state));
-    if (["PASS", "FAIL", "PASS-PARTIAL", "PASS-UDP-STRONG", "PASS-UDP-NOT-REFUSED"].includes(decision.verdict) || allFinal) {
-      return { ...decision, nodes: parsed, requestId: measurement.requestId };
-    }
-  }
-  const parsed = measurement.nodes.map(node => parseNodeResult(lastPayload?.[node] ?? null, node, measurement.transport));
-  return { verdict: "UNKNOWN", confidence: "timeout", nodes: parsed, requestId: measurement.requestId, error: "Check-Host result did not resolve within the bounded polling window" };
-}
-
-async function checkEndpointOnce(endpoint) {
-  const { url, protocol } = parseUrl(endpoint.link);
-  const measurement = await createCheckHostMeasurement(url, protocol);
-  return pollCheckHostMeasurement(measurement);
-}
-
-function reachableCount(result) {
-  return Array.isArray(result?.nodes) ? result.nodes.filter(n => n.state === "reachable").length : 0;
-}
-
-function isTcpNonPass(result, endpoint) {
-  return endpoint.transport === "tcp" && !["PASS", "PASS-PARTIAL", "DRY-RUN"].includes(result?.verdict);
-}
-
-let globalpingGateQueue = Promise.resolve();
-
-function serializeGlobalpingRecovery(fn) {
-  const previous = globalpingGateQueue;
-  let release;
-  globalpingGateQueue = new Promise(resolve => { release = resolve; });
-  return previous
-    .catch(() => {})
-    .then(fn)
-    .finally(() => release());
-}
-
-async function checkEndpoint(endpoint, globalpingContext = null) {
-  if (DRY_RUN) {
-    return {
-      verdict: "DRY-RUN",
-      confidence: "not-tested",
-      requestId: "",
-      attempts: [],
-      nodes: CORE_NODES.map(node => ({ node, state: "dry-run", latencyMs: 0 })),
-      globalpingGate: null,
-    };
-  }
-
-  const first = await checkEndpointOnce(endpoint);
-  const shouldRecheck = RECHECK_NONPASS && isTcpNonPass(first, endpoint);
-
-  let bestResult = first;
-  let attempts = [first];
-
-  if (shouldRecheck) {
-    const second = await checkEndpointOnce(endpoint);
-    attempts = [first, second];
-
-    const firstReachable = reachableCount(first);
-    const secondReachable = reachableCount(second);
-    const best = Math.max(firstReachable, secondReachable);
-
-    if (best >= STRONG_QUORUM) {
-      bestResult = {
-        ...second,
-        verdict: "PASS",
-        confidence: `tcp-recheck-strong-best-${best}/${CORE_NODES.length}`,
-        rechecked: true,
-        bestReachable: best,
-      };
-    } else if (best >= MIN_PASS_NODES) {
-      bestResult = {
-        ...second,
-        verdict: "PASS-PARTIAL",
-        confidence: `tcp-recheck-partial-best-${best}/${CORE_NODES.length}`,
-        rechecked: true,
-        bestReachable: best,
-      };
-    } else {
-      bestResult = {
-        ...second,
-        verdict: "FAIL",
-        confidence: `tcp-recheck-${firstReachable}/${secondReachable}`,
-        rechecked: true,
-        bestReachable: best,
-      };
-    }
-  }
-
-  return {
-    ...bestResult,
-    attempts,
-    globalpingGate: null,
-  };
-}
-
-
-function xrayPassCandidateVerdict(verdict) {
-  return ["PASS", "PASS-PARTIAL", "PASS-GLOBALPING", "PASS-HOSTTOOLS", "PASS-HOSTTOOLS-STRONG", "PASS-UDP-STRONG", "PASS-UDP-NOT-REFUSED", "DRY-RUN"].includes(String(verdict));
-}
-
-function getFreePort() {
-  return new Promise((resolve, reject) => {
-    const server = net.createServer();
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", () => {
-      const address = server.address();
-      const port = typeof address === "object" && address ? address.port : null;
-      server.close(error => error ? reject(error) : resolve(port));
-    });
-  });
-}
-
-function waitForLocalPort(port) {
-  return new Promise(resolve => {
-    const started = Date.now();
-    const probe = () => {
-      if (Date.now() - started >= XRAY_START_TIMEOUT_MS) return resolve(false);
-      const socket = net.createConnection({ host: "127.0.0.1", port, timeout: 700 });
-      let done = false;
-      const finish = ok => {
-        if (done) return;
-        done = true;
-        socket.destroy();
-        if (ok) return resolve(true);
-        setTimeout(probe, 100);
-      };
-      socket.once("connect", () => finish(true));
-      socket.once("timeout", () => finish(false));
-      socket.once("error", () => finish(false));
-    };
-    probe();
-  });
-}
-
-function normalizeLinkForXrayProbe(link) {
-  const raw = String(link || "").trim();
-  try {
-    const url = new URL(raw);
-    const extra = url.searchParams.get("extra");
-    // Some VLESS xhttp feeds contain literal extra=null. The shared runtime
-    // expects an object and otherwise may throw while reading extra.mode.
-    if (String(extra || "").trim().toLowerCase() === "null") {
-      url.searchParams.delete("extra");
-      return url.toString();
-    }
-  } catch {}
-  return raw;
-}
-
-function buildXrayConfigForLink(link, socksPort) {
-  const server = parseLink(link);
-  const outbound = buildOutbound(server, "proxy");
-  return {
-    log: { loglevel: "none" },
-    inbounds: [{
-      listen: "127.0.0.1",
-      port: socksPort,
-      protocol: "socks",
-      settings: { udp: true },
-      sniffing: { enabled: false },
-      tag: "socks",
-    }],
-    outbounds: [
-      outbound,
-      { protocol: "freedom", tag: "direct" },
-      { protocol: "blackhole", tag: "block" },
-    ],
-  };
-}
-
-async function startXrayForLink(link) {
-  const socksPort = await getFreePort();
-  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "russia-v3-xray-"));
-  const configPath = path.join(tempDir, "config.json");
-  let child = null;
-  let stderr = "";
-
-  const cleanup = async () => {
-    if (child && !child.killed) {
-      child.kill("SIGTERM");
-      await new Promise(resolve => {
-        const force = setTimeout(() => {
-          try { child.kill("SIGKILL"); } catch {}
-          resolve();
-        }, 1000);
-        child.once("exit", () => {
-          clearTimeout(force);
-          resolve();
-        });
-      });
-    }
-    await fs.rm(tempDir, { recursive: true, force: true });
-  };
-
-  try {
-    const probeLink = normalizeLinkForXrayProbe(link);
-    const config = buildXrayConfigForLink(probeLink, socksPort);
-    await fs.writeFile(configPath, JSON.stringify(config, null, 2), "utf8");
-
-    child = spawn(XRAY_BIN, ["run", "-c", configPath], {
-      stdio: ["ignore", "ignore", "pipe"],
-    });
-    child.stderr.on("data", chunk => {
-      stderr += String(chunk);
-      if (stderr.length > 4000) stderr = stderr.slice(-4000);
-    });
-
-    const opened = await Promise.race([
-      waitForLocalPort(socksPort),
-      new Promise(resolve => child.once("error", error => resolve({ error }))),
-      new Promise(resolve => child.once("exit", (code, signal) => resolve({ code, signal }))),
-    ]);
-
-    if (opened !== true) {
-      const detail = opened?.error?.message ||
-        (opened && typeof opened === "object" ? `xray exited (${opened.code ?? "?"}${opened.signal ? `/${opened.signal}` : ""})` : "") ||
-        "xray SOCKS port did not open";
-      await cleanup();
-      return { ok: false, error: `${detail}${stderr ? `; ${stderr.trim().slice(-700)}` : ""}`.slice(0, 1400) };
-    }
-
-    return { ok: true, socksPort, cleanup };
-  } catch (error) {
-    await cleanup();
-    return { ok: false, error: error?.message || String(error) };
-  }
-}
-
-function curlViaXrayOnce(socksPort, targetUrl) {
-  return new Promise(resolve => {
-    const startedAt = Date.now();
-    const args = [
-      "--silent", "--show-error", "--fail",
-      "--connect-timeout", "4",
-      "--max-time", String(Math.ceil(XRAY_REQUEST_TIMEOUT_MS / 1000)),
-      "--proxy", `socks5h://127.0.0.1:${socksPort}`,
-      targetUrl,
-      "--output", "/dev/null",
-      "--write-out", "\\n%{http_code}\\n%{time_total}\\n",
-    ];
-    const child = spawn("curl", args, { stdio: ["ignore", "pipe", "pipe"] });
-    let stdout = "", stderr = "";
-    let settled = false;
-    const finish = result => {
-      if (settled) return;
-      settled = true;
-      resolve(result);
-    };
-    const timeout = setTimeout(() => {
-      try { child.kill("SIGKILL"); } catch {}
-      finish({ ok: false, latencyMs: 0, httpCode: 0, error: "curl timeout" });
-    }, XRAY_REQUEST_TIMEOUT_MS + 500);
-    child.stdout.on("data", chunk => { stdout += String(chunk); });
-    child.stderr.on("data", chunk => { stderr += String(chunk); });
-    child.once("error", error => {
-      clearTimeout(timeout);
-      finish({ ok: false, latencyMs: 0, httpCode: 0, error: error?.message || "curl spawn failed" });
-    });
-    child.once("exit", code => {
-      clearTimeout(timeout);
-      const values = stdout.trim().split(/\r?\n/).map(v => v.trim()).filter(Boolean);
-      const latencyMs = Number(values.at(-1)) > 0
-        ? Math.round(Number(values.at(-1)) * 1000)
-        : Math.max(Date.now() - startedAt, 0);
-      const httpCode = Number(values.at(-2)) || 0;
-      finish({
-        ok: code === 0,
-        latencyMs,
-        httpCode,
-        error: code === 0 ? "" : (stderr.trim().slice(0, 500) || `curl exit ${code}`),
-      });
-    });
-  });
-}
-
-function curlViaXraySpeedOnce(socksPort, targetUrl) {
-  return new Promise(resolve => {
-    const startedAt = Date.now();
-    const args = [
-      "--silent", "--show-error",
-      "--connect-timeout", "5",
-      "--max-time", String(Math.ceil(XRAY_SPEED_FALLBACK_TIMEOUT_MS / 1000)),
-      "--proxy", `socks5h://127.0.0.1:${socksPort}`,
-      "--http1.1",
-      "--location",
-      "--output", "/dev/null",
-      "--write-out", "%{http_code}\\n%{size_download}\\n%{time_total}\\n",
-      targetUrl,
-    ];
-    const child = spawn("curl", args, { stdio: ["ignore", "pipe", "pipe"] });
-    let stdout = "", stderr = "";
-    let settled = false;
-    const finish = result => {
-      if (settled) return;
-      settled = true;
-      resolve(result);
-    };
-    const timeout = setTimeout(() => {
-      try { child.kill("SIGKILL"); } catch {}
-      finish({ ok: false, httpCode: 0, bytes: 0, kbps: 0, elapsedMs: Math.max(Date.now() - startedAt, 0), curlCode: 28, error: "curl timeout" });
-    }, XRAY_SPEED_FALLBACK_TIMEOUT_MS + 800);
-    child.stdout.on("data", chunk => { stdout += String(chunk); });
-    child.stderr.on("data", chunk => { stderr += String(chunk); });
-    child.once("error", error => {
-      clearTimeout(timeout);
-      finish({ ok: false, httpCode: 0, bytes: 0, kbps: 0, elapsedMs: Math.max(Date.now() - startedAt, 0), curlCode: -1, error: error?.message || "curl spawn failed" });
-    });
-    child.once("exit", code => {
-      clearTimeout(timeout);
-      const lines = stdout.trim().split(/\\r?\\n/).map(v => v.trim());
-      const httpCode = Number(lines[0] || 0) || 0;
-      const bytes = Number(lines[1] || 0) || 0;
-      const curlSeconds = Number(lines[2] || 0);
-      const elapsedSeconds = Number.isFinite(curlSeconds) && curlSeconds > 0
-        ? curlSeconds
-        : Math.max((Date.now() - startedAt) / 1000, 0.001);
-      const kbps = bytes > 0 ? (bytes / 1024) / elapsedSeconds : 0;
-      const isHttpSuccess = httpCode >= 200 && httpCode < 400;
-      const completedOrTimedOut = code === 0 || code === 28;
-      const ok =
-        completedOrTimedOut &&
-        isHttpSuccess &&
-        bytes >= XRAY_SPEED_FALLBACK_MIN_BYTES &&
-        kbps >= XRAY_SPEED_FALLBACK_MIN_KBPS;
-      finish({
-        ok,
-        httpCode,
-        bytes,
-        kbps: Math.round(kbps * 10) / 10,
-        elapsedMs: Math.round(elapsedSeconds * 1000),
-        curlCode: Number(code),
-        error: ok ? "" : (stderr.trim().slice(0, 500) || `curl=${code}, HTTP=${httpCode || "?"}, ${bytes} bytes, ${Math.round(kbps * 10) / 10} KB/s`),
-      });
-    });
-  });
-}
-
-async function testExactLinkWithXray(link) {
-  if (!XRAY_ENABLED) return { verdict: "SKIPPED-XRAY", attempts: [], target: "", latencyMs: 0 };
-  const attempts = [];
-  for (let attempt = 1; attempt <= XRAY_LINK_ATTEMPTS; attempt += 1) {
-    const started = Date.now();
-    const xray = await startXrayForLink(link);
-    if (!xray.ok) {
-      const failed = { attempt, ok: false, error: xray.error, targetResults: [] };
-      attempts.push(failed);
-      if (attempt < XRAY_LINK_ATTEMPTS) await sleep(XRAY_RETRY_DELAY_MS);
-      continue;
-    }
-
-    const targetResults = [];
-    let speedFallback = null;
-    try {
-      for (const target of XRAY_TARGETS) {
-        const result = await curlViaXrayOnce(xray.socksPort, target);
-        targetResults.push({ target, ...result });
-        if (result.ok) break;
-      }
-
-      if (!targetResults.some(result => result.ok) && XRAY_SPEED_FALLBACK_ENABLED) {
-        speedFallback = await curlViaXraySpeedOnce(xray.socksPort, XRAY_SPEED_FALLBACK_URL);
-      }
-    } finally {
-      await xray.cleanup();
-    }
-
-    const success = targetResults.find(result => result.ok);
-    const row = {
-      attempt,
-      ok: Boolean(success || speedFallback?.ok),
-      latencyMs: success?.latencyMs || speedFallback?.elapsedMs || 0,
-      target: success?.target || (speedFallback?.ok ? XRAY_SPEED_FALLBACK_URL : ""),
-      targetResults,
-      speedFallback,
-      durationMs: Math.max(Date.now() - started, 0),
-    };
-    attempts.push(row);
-    if (success) {
-      return {
-        verdict: "PASS-XRAY",
-        confidence: `xray-${targetResults.length}/${XRAY_TARGETS.length}`,
-        attempts,
-        target: success.target,
-        latencyMs: success.latencyMs,
-      };
-    }
-    if (speedFallback?.ok) {
-      return {
-        verdict: "PASS-XRAY-CLOUDFLARE",
-        confidence: `cloudflare-speed-${Math.round(speedFallback.kbps)}KBps`,
-        attempts,
-        target: XRAY_SPEED_FALLBACK_URL,
-        latencyMs: speedFallback.elapsedMs,
-        speedFallback,
-      };
-    }
-    if (attempt < XRAY_LINK_ATTEMPTS) await sleep(XRAY_RETRY_DELAY_MS);
-  }
-
-  return {
-    verdict: "FAIL-XRAY",
-    confidence: `xray-${attempts.length}/${XRAY_TARGETS.length || 1}`,
-    attempts,
-    target: "",
-    latencyMs: 0,
-  };
-}
-
-async function runXrayCandidateChecks(items, endpointRows) {
-  if (DRY_RUN || !XRAY_ENABLED) return new Map(items.map(item => [String(item.id), { verdict: "SKIPPED-XRAY" }]));
-  const endpointByKey = new Map(endpointRows.map(row => [row.key, row]));
-  const candidates = [];
-  for (const item of items) {
-    const link = String(item?.link || "").trim();
-    if (!link) continue;
-    let key;
-    try { key = endpointKey(link); } catch { continue; }
-    const endpoint = endpointByKey.get(key);
-    if (!endpoint) continue;
-    if (XRAY_ONLY_ON_TRANSPORT_PASS && !xrayPassCandidateVerdict(endpoint.verdict)) continue;
-    candidates.push({ id: String(item.id), link });
-  }
-
-  const results = new Map();
-  let cursor = 0;
-  const worker = async () => {
-    while (true) {
-      const index = cursor++;
-      if (index >= candidates.length) return;
-      const candidate = candidates[index];
-      try {
-        results.set(candidate.id, await testExactLinkWithXray(candidate.link));
-      } catch (error) {
-        results.set(candidate.id, { verdict: "UNKNOWN-XRAY", attempts: [], error: error?.message || String(error) });
-      }
-      console.log(`RUSSIA TEST V3 XRAY ${index + 1}/${candidates.length}: ${candidate.link.slice(0, 90)}`);
-    }
-  };
-  await Promise.all(Array.from({ length: Math.min(XRAY_LINK_CONCURRENCY, Math.max(1, candidates.length)) }, worker));
-  return results;
-}
-
-function buildEndpointWorkset(items) {
-  const byKey = new Map();
-  for (const item of items) {
-    const link = String(item?.link || "").trim();
-    if (!link) continue;
-    try {
-      const { protocol, transport } = parseUrl(link);
-      const key = endpointKey(link);
-      const existing = byKey.get(key) || { key, link, protocol, transport, members: [] };
-      existing.members.push({ id: item.id, remarks: item.remarks || "", link });
-      byKey.set(key, existing);
-    } catch {}
-  }
-  return [...byKey.values()].sort((a, b) => a.key.localeCompare(b.key));
-}
-
-async function runPool(items, fn) {
-  const out = new Array(items.length);
-  let cursor = 0;
-  const worker = async () => {
-    while (true) {
-      const index = cursor++;
-      if (index >= items.length) return;
-      try { out[index] = await fn(items[index]); }
-      catch (error) { out[index] = { verdict: "UNKNOWN", confidence: "checker-error", nodes: [], error: error?.message || String(error) }; }
-      if ((index + 1) % 10 === 0 || index + 1 === items.length) console.log(`RUSSIA TEST V3 PROGRESS ${index + 1}/${items.length}`);
-    }
-  };
-  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, Math.max(1, items.length)) }, worker));
-  return out;
-}
-
-function expandPassingLinks(items, endpointRows) {
-  const byKey = new Map(endpointRows.map(row => [row.key, row]));
-  const links = [];
-  for (const item of items) {
-    const link = String(item?.link || "").trim();
-    if (!link) continue;
-    let key;
-    try { key = endpointKey(link); } catch { continue; }
-    const endpoint = byKey.get(key);
-    const verdict = endpoint?.verdict;
-    // Only the Russian Check-Host baseline may populate the broad transport list.
-    // Globalping/host.tools are additional transport diagnostics, not HAPP proof.
-    // UDP non-refusal is also not enough to prove a Hysteria/QUIC handshake.
-    if (["PASS", "PASS-PARTIAL", "DRY-RUN"].includes(verdict)) links.push(link);
-  }
-  return [...new Set(links)];
-}
-
-function exactXrayPassing(item, xrayById) {
-  return ["PASS-XRAY", "PASS-XRAY-CLOUDFLARE"].includes(
-    xrayById.get(String(item?.id))?.verdict
-  );
-}
-
-async function discoverCheckHostRussiaNodes() {
-  if (!DISCOVER_CHECK_HOST_RU || DRY_RUN) return { discovered: false, nodes: [] };
-  try {
-    const data = await fetchJson(`${CHECK_HOST_BASE}/nodes/hosts`, {}, 12000);
-    const rows = Object.entries(data?.nodes || {})
-      .map(([id, value]) => ({ id, country: value?.location?.[0], city: value?.location?.[2], ip: value?.ip, asn: value?.asn }))
-      .filter(row => String(row.country).toLowerCase() === "ru")
-      .sort((a, b) => String(a.city).localeCompare(String(b.city)) || a.id.localeCompare(b.id));
-    return { discovered: true, nodes: rows };
-  } catch (error) {
-    return { discovered: false, nodes: [], error: error?.message || String(error) };
-  }
-}
-
-async function getGlobalpingProbes() {
-  if (!GLOBALPING_ENABLED || DRY_RUN) return [];
-  const data = await withRetry(() => fetchJson(
-    `${GLOBALPING_BASE}/probes`,
-    GLOBALPING_TOKEN
-      ? { headers: { authorization: `Bearer ${GLOBALPING_TOKEN}` } }
-      : {},
-    GLOBALPING_TIMEOUT_MS
-  ));
-  return Array.isArray(data) ? data : (Array.isArray(data?.probes) ? data.probes : []);
-}
-
-function chooseGlobalpingCities(probes) {
-  const byCity = new Map();
-  for (const probe of probes) {
-    const location = probe?.location || {};
-    if (String(location.country || "").toUpperCase() !== "RU") continue;
-    const city = String(location.city || "").trim();
-    if (!city) continue;
-    const key = city.toLowerCase();
-    const row = byCity.get(key) || {
-      city,
-      count: 0,
-      eyeball: 0,
-      datacenter: 0,
-    };
-    row.count += 1;
-    const tags = new Set(Array.isArray(probe?.tags) ? probe.tags.map(String) : []);
-    if (tags.has("eyeball-network")) row.eyeball += 1;
-    if (tags.has("datacenter-network")) row.datacenter += 1;
-    byCity.set(key, row);
-  }
-
-  const picked = [];
-  const used = new Set();
-  for (const city of PRIORITY_RUSSIA_CITIES) {
-    const row = byCity.get(city.toLowerCase());
-    if (!row) continue;
-    picked.push(row);
-    used.add(city.toLowerCase());
-    if (picked.length >= GLOBALPING_CITY_LIMIT) break;
-  }
-
-  if (picked.length < GLOBALPING_CITY_LIMIT) {
-    for (const row of [...byCity.values()].sort(
-      (a, b) =>
-        b.eyeball - a.eyeball ||
-        b.count - a.count ||
-        a.city.localeCompare(b.city)
-    )) {
-      if (used.has(row.city.toLowerCase())) continue;
-      picked.push(row);
-      used.add(row.city.toLowerCase());
-      if (picked.length >= GLOBALPING_CITY_LIMIT) break;
-    }
-  }
-
-  return picked;
-}
-
-function normalizeLocationName(value) {
-  return String(value || "")
-    .trim()
-    .toLowerCase()
-    .replaceAll("ё", "е")
-    .replace(/\s+/g, " ");
-}
-
-function isGlobalpingCoreCity(value) {
-  return new Set([
-    "moscow",
-    "moscow city",
-    "saint petersburg",
-    "st petersburg",
-    "st. petersburg",
-    "санкт-петербург",
-  ]).has(normalizeLocationName(value));
-}
-
-function chooseGlobalpingRecoveryCities(cities) {
-  const preferred = [
-    "Kazan",
-    "Novosibirsk",
-    "Krasnodar",
-    "Ufa",
-    "Kursk",
-    "Samara",
-    "Rostov-on-Don",
-    "Nizhny Novgorod",
-    "Perm",
-    "Voronezh",
-    "Chelyabinsk",
-    "Yekaterinburg",
-  ];
-
-  const available = new Map(
-    (cities || [])
-      .filter(row => !isGlobalpingCoreCity(row?.city))
-      .filter(row => Number(row?.count) > 0)
-      .filter(row => !GLOBALPING_RECOVERY_REQUIRE_EYEBALL || Number(row?.eyeball) > 0)
-      .map(row => [normalizeLocationName(row.city), row])
-  );
-  const selected = [];
-
-  for (const name of preferred) {
-    const row = available.get(normalizeLocationName(name));
-    if (!row) continue;
-    selected.push(row);
-    if (selected.length >= GLOBALPING_RECOVERY_CITY_LIMIT) break;
-  }
-
-  if (selected.length < GLOBALPING_RECOVERY_CITY_LIMIT) {
-    for (const row of [...available.values()].sort(
-      (a, b) =>
-        b.eyeball - a.eyeball ||
-        b.count - a.count ||
-        a.city.localeCompare(b.city)
-    )) {
-      if (selected.some(item => normalizeLocationName(item.city) === normalizeLocationName(row.city))) continue;
-      selected.push(row);
-      if (selected.length >= GLOBALPING_RECOVERY_CITY_LIMIT) break;
-    }
-  }
-
-  return selected;
-}
-
-function mtrResultReachedTarget(result, targetHost) {
-  const probeResult = result?.result || {};
-  if (String(probeResult.status || "").toLowerCase() !== "finished") return false;
-
-  const target = String(probeResult.resolvedAddress || targetHost || "").trim().toLowerCase();
-  const hops = Array.isArray(probeResult.hops) ? probeResult.hops : [];
-  const raw = String(probeResult.rawOutput || "");
-  if (!target) return false;
-
-  if (/destination host unreachable|network unreachable|no route to host/i.test(raw)) return false;
-
-  const finalHop = [...hops].reverse().find(hop => {
-    const address = String(hop?.resolvedAddress || "").trim().toLowerCase();
-    return address && (address === target || address === String(targetHost || "").trim().toLowerCase());
-  });
-
-  if (finalHop) {
-    const loss = Number(finalHop?.stats?.loss);
-    return !Number.isFinite(loss) || loss < 100;
-  }
-
-  // If Globalping does not expose the destination hop, only accept an explicit
-  // occurrence of the resolved destination in raw output. An intermediate hop
-  // replying is not enough to call the endpoint reachable.
-  const resolved = String(probeResult.resolvedAddress || "").trim().toLowerCase();
-  if (resolved) {
-    const escaped = resolved.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    if (new RegExp(escaped, "i").test(raw)) return true;
-  }
-
-  return false;
-}
-
-function buildGlobalpingMeasurementOptions(host, port) {
-  return {
-    protocol: "TCP",
-    port,
-    packets: 3,
-    // Globalping accepts ipVersion for hostname targets. Literal IP targets
-    // must omit it; otherwise the API rejects the measurement.
-    ...(net.isIP(host) === 0 ? { ipVersion: 4 } : {}),
-  };
-}
-
-async function createGlobalpingMtr(endpoint, cities) {
-  const { transport, port, host } = parseUrl(endpoint.link);
-  if (!host || !cities.length) throw new Error("Globalping gate has no target or cities");
-  if (GLOBALPING_RECOVERY_TCP_ONLY && transport !== "tcp") {
-    return {
-      measurementId: "",
-      target: host,
-      transport,
-      port,
-      cities: [],
-      reachedCities: 0,
-      validReachedCities: 0,
-      verdict: "SKIPPED-GLOBALPING-NON-TCP",
-      note: "Globalping transport checks are not sufficient to prove a Hysteria/QUIC handshake.",
-    };
-  }
-
-  const measurementOptions = buildGlobalpingMeasurementOptions(host, port);
-
-  const body = {
-    type: "mtr",
-    target: host,
-    timeout: GLOBALPING_MTR_TIMEOUT_SECONDS,
-    locations: cities.map(city => ({
-      country: "RU",
-      city: city.city,
-      ...(GLOBALPING_RECOVERY_REQUIRE_EYEBALL ? { tags: ["eyeball-network"] } : {}),
-      limit: 1,
-    })),
-    measurementOptions,
-  };
-
-  const created = await fetchJson(
-    `${GLOBALPING_BASE}/measurements`,
-    {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        ...(GLOBALPING_TOKEN ? { authorization: `Bearer ${GLOBALPING_TOKEN}` } : {}),
-      },
-      body: JSON.stringify(body),
-    },
-    GLOBALPING_TIMEOUT_MS
-  );
-
-  const id = String(created?.id || "").trim();
-  if (!id) throw new Error("Globalping gate response has no measurement id");
-
-  const started = Date.now();
-  let data = null;
-  while (Date.now() - started <= GLOBALPING_TIMEOUT_MS) {
-    await sleep(GLOBALPING_POLL_MS);
-    data = await getGlobalpingMeasurement(id);
-    const status = String(data?.status || "").toLowerCase();
-    if (status && status !== "in-progress") break;
-  }
-
-  const finalStatus = String(data?.status || "").toLowerCase();
-  if (finalStatus === "in-progress" || finalStatus === "pending") {
-    return {
-      measurementId: id,
-      target: host,
-      transport,
-      port,
-      cities: [],
-      reachedCities: 0,
-      validReachedCities: 0,
-      requiredDistinctCities: GLOBALPING_RECOVERY_MIN_DISTINCT_CITIES,
-      verdict: "UNKNOWN-GLOBALPING",
-      error: `Globalping measurement ${id} did not finish before timeout`,
-      measurementFailure: true,
-    };
-  }
-
-  const resultRows = Array.isArray(data?.results) ? data.results : [];
-  const cityRows = resultRows.map((row, index) => {
-    const probe = row?.probe || {};
-    const requestedCity = cities[index]?.city || "";
-    const actualCity = probe?.city || probe?.location?.city || "";
-    const country = String(probe?.country || probe?.location?.country || "").toUpperCase();
-    const tags = Array.isArray(probe?.tags) ? probe.tags.map(String) : [];
-    const normalizedTags = new Set(tags.map(tag => tag.trim().toLowerCase()));
-    const cityMatches = Boolean(actualCity) && normalizeLocationName(actualCity) === normalizeLocationName(requestedCity);
-    const countryMatches = country === "RU";
-    const hasEyeballTag = normalizedTags.has("eyeball-network");
-    const hasDatacenterTag = normalizedTags.has("datacenter-network");
-    const eyeballMatches = !GLOBALPING_RECOVERY_REQUIRE_EYEBALL || (hasEyeballTag && !hasDatacenterTag);
-    const validProbe = cityMatches && countryMatches && eyeballMatches;
-    return {
-      requestedCity,
-      city: actualCity,
-      country,
-      network: probe?.network || probe?.location?.network || "",
-      tags,
-      latitude: Number(probe?.latitude ?? probe?.location?.latitude) || null,
-      longitude: Number(probe?.longitude ?? probe?.location?.longitude) || null,
-      status: String(row?.result?.status || data?.status || "unknown"),
-      validProbe,
-      validation: { cityMatches, countryMatches, eyeballMatches, hasEyeballTag, hasDatacenterTag },
-      reachedTarget: mtrResultReachedTarget(row, host),
-      resolvedAddress: row?.result?.resolvedAddress || "",
-      finalHopLoss: Number([...((row?.result?.hops) || [])].at(-1)?.stats?.loss),
-    };
-  });
-
-  const reachedCities = cityRows.filter(row => row.reachedTarget).length;
-  const validReachedCities = new Set(
-    cityRows
-      .filter(row => row.validProbe && row.reachedTarget)
-      .map(row => normalizeLocationName(row.city))
-      .filter(Boolean)
-  ).size;
-  const verdict = validReachedCities >= GLOBALPING_RECOVERY_MIN_DISTINCT_CITIES
-    ? "PASS-GLOBALPING"
-    : validReachedCities > 0
-      ? "PARTIAL-GLOBALPING"
-      : "FAIL-GLOBALPING";
-
-  return {
-    measurementId: id,
-    target: host,
-    transport,
-    port,
-    cities: cityRows,
-    reachedCities,
-    validReachedCities,
-    requiredDistinctCities: GLOBALPING_RECOVERY_MIN_DISTINCT_CITIES,
-    verdict,
-  };
-}
-
-async function getGlobalpingMeasurement(id) {
-  return fetchJson(
-    `${GLOBALPING_BASE}/measurements/${encodeURIComponent(id)}`,
-    GLOBALPING_TOKEN
-      ? { headers: { authorization: `Bearer ${GLOBALPING_TOKEN}` } }
-      : {},
-    GLOBALPING_TIMEOUT_MS
-  );
-}
-
-async function runGlobalpingGate(endpoint, context) {
-  if (!GLOBALPING_ENABLED || !GLOBALPING_RECOVERY_ENABLED || DRY_RUN) return null;
-  if (!context?.gateCities?.length) {
-    return {
-      verdict: "UNKNOWN-GLOBALPING",
-      error: context?.error || "Globalping has no selected Russian gate cities",
-      cities: [],
-      reachedCities: 0,
-      validReachedCities: 0,
-      serviceFailure: true,
-    };
-  }
-
-  return serializeGlobalpingRecovery(async () => {
-    try {
-      return await createGlobalpingMtr(endpoint, context.gateCities);
-    } catch (error) {
-      return {
-        verdict: "UNKNOWN-GLOBALPING",
-        status: Number(error?.status || 0),
-        error: error?.message || String(error),
-        cities: [],
-        reachedCities: 0,
-        validReachedCities: 0,
-        serviceFailure: true,
-      };
-    }
-  });
-}
-
-async function getGlobalpingLimits() {
-  if (!GLOBALPING_ENABLED || DRY_RUN) return null;
-  try {
-    const data = await fetchJson(
-      `${GLOBALPING_BASE}/limits`,
-      GLOBALPING_TOKEN
-        ? { headers: { authorization: `Bearer ${GLOBALPING_TOKEN}` } }
-        : {},
-      GLOBALPING_TIMEOUT_MS
-    );
-    const create = data?.rateLimit?.measurements?.create || data?.rateLimits?.measurements?.create || {};
-    const remaining = Number(create?.remaining);
-    const limit = Number(create?.limit);
-    const reset = Number(create?.reset);
-    return {
-      remaining: Number.isFinite(remaining) ? remaining : null,
-      limit: Number.isFinite(limit) ? limit : null,
-      resetSeconds: Number.isFinite(reset) ? reset : null,
-    };
-  } catch (error) {
-    return {
-      remaining: null,
-      limit: null,
-      resetSeconds: null,
-      error: error?.message || String(error),
-    };
-  }
-}
-
-function globalpingGateRank(endpoint, xrayById = new Map()) {
-  const members = Array.isArray(endpoint.members) ? endpoint.members : [];
-  const xrayRows = members.map(member => xrayById.get(String(member.id))).filter(Boolean);
-  const hasXrayPass = xrayRows.some(row => ["PASS-XRAY", "PASS-XRAY-CLOUDFLARE"].includes(row?.verdict));
-  if (!hasXrayPass) return Number.POSITIVE_INFINITY;
-
-  // Among Xray-passing endpoints, prefer Check-Host-strong endpoints first.
-  // This does not change the gate; it only determines which endpoints are tested first if a hard budget is hit.
-  if (endpoint.verdict === "PASS") return 0;
-  if (endpoint.verdict === "PASS-PARTIAL") return 1;
-  return 2;
-}
-
-function chooseGlobalpingGateTargets(endpointRows, xrayById) {
-  return [...endpointRows]
-    .filter(endpoint => {
-      const members = Array.isArray(endpoint.members) ? endpoint.members : [];
-      return members.some(member => {
-        const row = xrayById.get(String(member.id));
-        return ["PASS-XRAY", "PASS-XRAY-CLOUDFLARE"].includes(row?.verdict);
-      });
-    })
-    .sort((a, b) => globalpingGateRank(a, xrayById) - globalpingGateRank(b, xrayById))
-    .slice(0, GLOBALPING_RECOVERY_MAX_ENDPOINTS);
-}
-
-async function runGlobalpingGatePass(endpointRows, items, xrayById, context) {
-  if (!GLOBALPING_ENABLED || !GLOBALPING_RECOVERY_ENABLED || DRY_RUN) {
-    return { attempted: 0, passed: 0, skipped: "disabled", serviceAvailable: false, failOpen: true, endpoints: [] };
-  }
-  const cities = Array.isArray(context?.gateCities) ? context.gateCities : [];
-  if (cities.length !== 3) {
-    return {
-      attempted: 0,
-      passed: 0,
-      skipped: cities.length ? `need-3-russian-cities-got-${cities.length}` : "not-enough-russian-cities",
-      serviceAvailable: false,
-      failOpen: true,
-      endpoints: [],
-      limits: context?.limits || null,
-    };
-  }
-
-  const limits = context?.limits || await getGlobalpingLimits();
-  const remaining = Number(limits?.remaining);
-  const reserve = GLOBALPING_RECOVERY_RESERVE_TESTS;
-  const perEndpointTests = cities.length; // one probe/test per requested city
-  const budgetEndpoints = Number.isFinite(remaining)
-    ? Math.max(0, Math.floor(Math.max(0, remaining - reserve) / perEndpointTests))
-    : 0;
-  if (!Number.isFinite(remaining)) {
-    return {
-      attempted: 0,
-      passed: 0,
-      skipped: "globalping-limit-unavailable",
-      serviceAvailable: false,
-      failOpen: true,
-      endpoints: [],
-      limits,
-    };
-  }
-
-  const targets = chooseGlobalpingGateTargets(endpointRows, xrayById)
-    .filter(endpoint => !GLOBALPING_RECOVERY_TCP_ONLY || endpoint.transport === "tcp")
-    .slice(0, budgetEndpoints);
-  if (!targets.length) {
-    return {
-      attempted: 0,
-      passed: 0,
-      skipped: Number.isFinite(remaining) ? `budget-${remaining}-tests-or-no-targets` : "no-targets",
-      serviceAvailable: budgetEndpoints > 0 || remaining > reserve,
-      failOpen: true,
-      endpoints: [],
-      limits,
-    };
-  }
-
-  const rows = [];
-  let stoppedOnRateLimit = false;
-  let serviceFailure = false;
-  for (let index = 0; index < targets.length; index += 1) {
-    const endpoint = targets[index];
-    let result;
-    try {
-      result = await runGlobalpingGate(endpoint, context);
-    } catch (error) {
-      result = {
-        verdict: "UNKNOWN-GLOBALPING",
-        error: error?.message || String(error),
-        cities: [],
-        reachedCities: 0,
-        validReachedCities: 0,
-        serviceFailure: true,
-      };
-    }
-    endpoint.globalpingGate = result;
-    if (result?.verdict === "PASS-GLOBALPING") {
-      endpoint.globalpingVerdict = "PASS-GLOBALPING";
-    } else if (result?.verdict === "PARTIAL-GLOBALPING") {
-      endpoint.globalpingVerdict = "PARTIAL-GLOBALPING";
-    }
-    rows.push({
-      key: endpoint.key,
-      verdict: result?.verdict || "UNKNOWN-GLOBALPING",
-      reachedCities: result?.reachedCities || 0,
-      validReachedCities: result?.validReachedCities || 0,
-      requiredDistinctCities: result?.requiredDistinctCities || 2,
-      cities: result?.cities || [],
-      error: result?.error || "",
-      serviceFailure: Boolean(result?.serviceFailure),
-    });
-    console.log(`RUSSIA TEST V3 GLOBALPING ${index + 1}/${targets.length}: ${endpoint.key} => ${result?.verdict || "UNKNOWN"} (${result?.validReachedCities || 0}/3)`);
-
-    if (result?.serviceFailure) serviceFailure = true;
-    if (result?.status === 429 || /(^|\b)HTTP 429\b|rate.?limit/i.test(String(result?.error || ""))) {
-      stoppedOnRateLimit = true;
-      serviceFailure = true;
-      break;
-    }
-  }
-
-  return {
-    attempted: rows.length,
-    passed: rows.filter(row => row.verdict === "PASS-GLOBALPING").length,
-    passed2of3: rows.filter(row => Number(row.validReachedCities) >= 2).length,
-    passed3of3: rows.filter(row => Number(row.validReachedCities) >= 3).length,
-    skipped: stoppedOnRateLimit ? "stopped-on-rate-limit" : "",
-    endpoints: rows,
-    limits,
-    stoppedOnRateLimit,
-    serviceAvailable: !serviceFailure,
-    failOpen: serviceFailure || stoppedOnRateLimit || rows.length === 0,
-  };
-}
-
-async function prepareGlobalpingContext() {
-  if (!GLOBALPING_ENABLED || DRY_RUN) {
-    return {
-      enabled: false,
-      probesInRussia: 0,
-      cities: [],
-      gateCities: [],
-    };
-  }
-
-  try {
-    const probes = await getGlobalpingProbes();
-    const cities = chooseGlobalpingCities(probes);
-    const gateCities = chooseGlobalpingRecoveryCities(cities);
-    const limits = await getGlobalpingLimits();
-
-    return {
-      enabled: true,
-      probesInRussia: probes.filter(
-        probe => String(probe?.location?.country || "").toUpperCase() === "RU"
-      ).length,
-      cities,
-      gateCities,
-      limits,
-      readyForThreeCityGate: gateCities.length === 3 && Number.isFinite(Number(limits?.remaining)),
-    };
-  } catch (error) {
-    return {
-      enabled: true,
-      probesInRussia: 0,
-      cities: [],
-      gateCities: [],
-      limits: null,
-      readyForThreeCityGate: false,
-      error: `probe discovery failed: ${error?.message || String(error)}`,
-    };
-  }
-}
-
-function protocolSummary(items) {
-  const counts = {};
-  for (const item of items) {
-    const protocol = protocolOf(item?.link || "");
-    counts[protocol] = (counts[protocol] || 0) + 1;
-  }
-  return counts;
-}
-
-function runSelfTest() {
-  const samples = [
-    ["vless://11111111-1111-1111-1111-111111111111@example.com:443?security=tls&type=tcp&sni=example.com", "vless", "tcp"],
-    ["trojan://password@example.com:443?sni=example.com", "trojan", "tcp"],
-    ["hysteria2://password@example.com:443?sni=example.com&alpn=h3", "hysteria2", "udp"],
-    ["hysteria://password@example.com:443?sni=example.com&alpn=h3", "hysteria", "udp"],
-    ["tuic://password@example.com:443?sni=example.com", "tuic", "udp"],
-  ];
-  for (const [link, expectedProtocol, expectedTransport] of samples) {
-    const actual = parseUrl(link);
-    if (actual.protocol !== expectedProtocol || actual.transport !== expectedTransport) throw new Error(`protocol self-test failed for ${link}`);
-  }
-  const outboundVless = buildOutbound(parseLink(samples[0][0]), "probe-vless");
-  const outboundTrojan = buildOutbound(parseLink(samples[1][0]), "probe-trojan");
-  const outboundHysteria = buildOutbound(parseLink(samples[2][0]), "probe-hysteria");
-  if (outboundVless?.protocol !== "vless" || outboundTrojan?.protocol !== "trojan" || outboundHysteria?.protocol !== "hysteria") {
-    throw new Error("exact-link outbound protocol self-test failed");
-  }
-  const normalizedExtraNull = normalizeLinkForXrayProbe("vless://11111111-1111-1111-1111-111111111111@example.com:443?type=xhttp&mode=packet-up&extra=null&sni=example.com");
-  if (/extra=null/i.test(normalizedExtraNull)) throw new Error("xhttp extra=null normalization self-test failed");
-  const tcpOk = parseNodeResult([{ time: 0.041, address: "203.0.113.10" }], "ru2", "tcp");
-  if (tcpOk.state !== "reachable" || tcpOk.latencyMs <= 0) throw new Error("TCP array parser self-test failed");
-  const filtered = parseNodeResult([{ error: "Open or filtered" }], "ru2", "udp");
-  const refused = parseNodeResult([{ error: "Connection refused" }], "ru2", "udp");
-  if (filtered.state !== "udp-filtered" || refused.state !== "refused") throw new Error("UDP parser self-test failed");
-  if (decide([{state:"udp-filtered"},{state:"udp-filtered"}], "udp").verdict !== "PASS-UDP-STRONG") throw new Error("UDP decision self-test failed");
-  const selectedCities = chooseGlobalpingRecoveryCities([
-    { city: "Moscow", count: 20, eyeball: 20, datacenter: 0 },
-    { city: "Saint Petersburg", count: 20, eyeball: 20, datacenter: 0 },
-    { city: "Yekaterinburg", count: 8, eyeball: 0, datacenter: 8 },
-    { city: "Kazan", count: 7, eyeball: 1, datacenter: 6 },
-    { city: "Novosibirsk", count: 6, eyeball: 2, datacenter: 4 },
-    { city: "Krasnodar", count: 2, eyeball: 1, datacenter: 1 },
-  ]);
-  if (selectedCities.length !== 3 || selectedCities.some(city => isGlobalpingCoreCity(city.city)) || selectedCities.some(city => !city.eyeball)) {
-    throw new Error("Globalping gate city selector self-test failed");
-  }
-  const ipOptions = buildGlobalpingMeasurementOptions("203.0.113.10", 443);
-  if (Object.prototype.hasOwnProperty.call(ipOptions, "ipVersion")) {
-    throw new Error("Globalping IP-target options must omit ipVersion");
-  }
-  const hostOptions = buildGlobalpingMeasurementOptions("example.com", 443);
-  if (hostOptions.ipVersion !== 4) throw new Error("Globalping hostname-target options must prefer IPv4");
-  const gateTargetInput = [
-    { key: "tcp|203.0.113.10|443", verdict: "PASS", members: [{ id: "good" }] },
-    { key: "tcp|203.0.113.11|443", verdict: "PASS", members: [{ id: "bad" }] },
-  ];
-  const gateTargets = chooseGlobalpingGateTargets(gateTargetInput, new Map([
-    ["good", { verdict: "PASS-XRAY" }],
-    ["bad", { verdict: "FAIL-XRAY" }],
-  ]));
-  if (gateTargets.length !== 1 || gateTargets[0].key !== "tcp|203.0.113.10|443") {
-    throw new Error("Globalping gate Xray-order self-test failed");
-  }
-
-  const flattenedProbe = { probe: { city: "Kazan", country: "RU", tags: ["eyeball-network"] }, result: { status: "finished", resolvedAddress: "203.0.113.10", hops: [{ resolvedAddress: "203.0.113.10", stats: { loss: 0 } }] } };
-  const probeMeta = flattenedProbe.probe;
-  if (probeMeta.city !== "Kazan" || !probeMeta.tags.includes("eyeball-network")) {
-    throw new Error("Globalping flattened probe self-test failed");
-  }
-  const mtrOk = mtrResultReachedTarget({
-    result: {
-      status: "finished",
-      resolvedAddress: "203.0.113.10",
-      hops: [{ resolvedAddress: "203.0.113.10", stats: { loss: 0 } }]
-    }
-  }, "203.0.113.10");
-  if (!mtrOk) throw new Error("Globalping MTR parser self-test failed");
-  const hostToolsSummary = summarizeHostToolsEvents([{ location: { city: "Yekaterinburg", country: "RU" }, ok: true, status: "open", latencyMs: 41 }]);
-  if (hostToolsSummary.passedOtherCities !== 1) throw new Error("host.tools city parser self-test failed");
-  const sampleLink = "vless://11111111-1111-1111-1111-111111111111@y:443?security=tls&type=tcp";
-  const nonAuthoritativeVerdicts = [
-    "PASS-GLOBALPING",
-    "PASS-HOSTTOOLS",
-    "PASS-HOSTTOOLS-STRONG",
-    "PASS-UDP-STRONG",
-    "PASS-UDP-NOT-REFUSED",
-  ];
-  for (const verdict of nonAuthoritativeVerdicts) {
-    const expanded = expandPassingLinks([{ link: sampleLink, id: `non-authoritative-${verdict}` }], [{ key: "tcp|y|443", verdict }]);
-    if (expanded.length !== 0) throw new Error(`non-authoritative verdict expansion self-test failed: ${verdict}`);
-  }
-  const expandedCheckHost = expandPassingLinks([{ link: sampleLink, id: "check-host-test" }], [{ key: "tcp|y|443", verdict: "PASS" }]);
-  if (expandedCheckHost.length !== 1) throw new Error("Check-Host verdict expansion self-test failed");
-
-  const gpItems = [
-    { id: "gp-a", link: sampleLink },
-    { id: "gp-b", link: "vless://22222222-2222-2222-2222-222222222222@z:443?security=tls&type=tcp" },
-  ];
-  const gpXray = new Map([
-    ["gp-a", { verdict: "PASS-XRAY" }],
-    ["gp-b", { verdict: "PASS-XRAY" }],
-  ]);
-  const gpEndpoints = new Map([
-    ["tcp|y|443", { key: "tcp|y|443", transport: "tcp", globalpingGate: { verdict: "PASS-GLOBALPING", validReachedCities: 2 } }],
-    ["tcp|z|443", { key: "tcp|z|443", transport: "tcp", globalpingGate: { verdict: "PASS-GLOBALPING", validReachedCities: 3 } }],
-  ]);
-  if (globalpingStrictLinks(gpItems, gpXray, gpEndpoints, 2).length !== 2) throw new Error("Globalping 2/3 self-test failed");
-  if (globalpingStrictLinks(gpItems, gpXray, gpEndpoints, 3).length !== 1) throw new Error("Globalping 3/3 self-test failed");
-  const safeWhenDown = buildGlobalpingSafeLinks(gpItems, gpXray, gpEndpoints, { attempted: 0, serviceAvailable: false, failOpen: true });
-  if (safeWhenDown.length !== 2) throw new Error("Globalping fail-open self-test failed");
-  gpEndpoints.get("tcp|y|443").globalpingGate = { verdict: "FAIL-GLOBALPING", validReachedCities: 0 };
-  const safeAfterRealFail = buildGlobalpingSafeLinks(gpItems, gpXray, gpEndpoints, { attempted: 2, serviceAvailable: true, failOpen: false });
-  if (safeAfterRealFail.length !== 1 || !safeAfterRealFail.includes(gpItems[1].link)) throw new Error("Globalping real-fail filtering self-test failed");
-  console.log("RUSSIA TEST V3 SELF-TEST: PASS");
-}
-
-function getXrayVerifiedLinks(items, xrayById) {
-  return [...new Set(items
-    .filter(item => exactXrayPassing(item, xrayById))
-    .map(item => String(item.link || "").trim())
-    .filter(Boolean))];
-}
-
-function linkEndpointRow(link, endpointByKey) {
-  try { return endpointByKey.get(endpointKey(link)) || null; }
-  catch { return null; }
-}
-
-function globalpingStrictLinks(items, xrayById, endpointByKey, minimumCities) {
-  return [...new Set(items
-    .filter(item => exactXrayPassing(item, xrayById))
-    .filter(item => {
-      const endpoint = linkEndpointRow(String(item.link || "").trim(), endpointByKey);
-      if (!endpoint || endpoint.transport !== "tcp") return false;
-      const reached = Number(endpoint?.globalpingGate?.validReachedCities);
-      return Number.isFinite(reached) && reached >= minimumCities && reached <= 3;
-    })
-    .map(item => String(item.link || "").trim())
-    .filter(Boolean))];
-}
-
-function buildGlobalpingSafeLinks(items, xrayById, endpointByKey, globalpingGate) {
-  const baseline = getXrayVerifiedLinks(items, xrayById);
-  if (!baseline.length) return [];
-
-  const serviceUnavailable = !globalpingGate?.attempted || globalpingGate?.serviceAvailable === false || globalpingGate?.failOpen === true;
-  if (serviceUnavailable) return baseline;
-
-  return baseline.filter(link => {
-    const endpoint = linkEndpointRow(link, endpointByKey);
-    if (!endpoint) return true;
-    if (endpoint.transport !== "tcp") return true; // Globalping TCP gate does not certify UDP/Hysteria.
-    const result = endpoint.globalpingGate;
-    if (!result) return true; // Not tested because of budget/rate-limit: fail-open for this endpoint.
-    if (result.verdict === "UNKNOWN-GLOBALPING") return true; // Service/measurement failure: fail-open.
-    return Number(result.validReachedCities) >= 2;
-  });
-}
-
-function globalpingFilesSummary(beforeLinks, twoOfThreeLinks, threeOfThreeLinks, safeLinks, gate) {
-  return {
-    beforeGlobalping: beforeLinks.length,
-    strict2of3: twoOfThreeLinks.length,
-    strict3of3: threeOfThreeLinks.length,
-    safeAfterGlobalping: safeLinks.length,
-    removedByStrict2of3: Math.max(0, beforeLinks.filter(Boolean).length - twoOfThreeLinks.length),
-    attemptedEndpoints: gate?.attempted || 0,
-    tested2of3: gate?.passed2of3 || 0,
-    tested3of3: gate?.passed3of3 || 0,
-    failOpen: Boolean(gate?.failOpen),
-    serviceAvailable: gate?.serviceAvailable !== false,
-  };
-}
-
-  runLteRussiaCheckerV3 = async function runLteRussiaCheckerV3(items) {
-    if (SELF_TEST) runSelfTest();
-
-    const safeItems = Array.isArray(items) ? items.filter(Boolean) : [];
-    if (!safeItems.length) {
-      return {
-        byId: new Map(),
-        diagnostics: {
-          generatedAt: new Date().toISOString(),
-          scope: "lte",
-          candidates: 0,
-          endpoints: 0,
-          xray: {},
-          globalping: { attempted: 0, passed2of3: 0, passed3of3: 0, failOpen: true, skipped: "no-candidates" },
-          hostToolsRecovery: { attempted: 0, recovered: 0, strongRecovered: 0, skipped: "no-candidates" },
-        },
-      };
-    }
-
-    const checkHostDiscovery = await discoverCheckHostRussiaNodes();
-    const globalping = await prepareGlobalpingContext();
-
-    const endpointWorkset = buildEndpointWorkset(safeItems);
-    console.log(
-      `LTE V3 WORKSET: candidates=${safeItems.length}; ` +
-      `uniqueEndpoints=${endpointWorkset.length}; protocols=${JSON.stringify(protocolSummary(safeItems))}`
-    );
-
-    const rawResults = await runPool(
-      endpointWorkset,
-      endpoint => checkEndpoint(endpoint, globalping)
-    );
-
-    const endpoints = rawResults.map((result, i) => ({
-      key: endpointWorkset[i].key,
-      link: endpointWorkset[i].link,
-      protocol: endpointWorkset[i].protocol,
-      transport: endpointWorkset[i].transport,
-      ...result,
-      members: endpointWorkset[i].members,
-      candidateIds: endpointWorkset[i].members.map(member => member.id),
-      remarks: endpointWorkset[i].members.map(member => member.remarks).filter(Boolean).slice(0, 3),
-    }));
-
-    const xrayById = await runXrayCandidateChecks(safeItems, endpoints);
-    const globalpingGate = await runGlobalpingGatePass(
-      endpoints,
-      safeItems,
-      xrayById,
-      globalping
-    );
-    const hostToolsRecovery = await runHostToolsRecoveryPass(
-      endpoints,
-      safeItems,
-      xrayById
-    );
-
-    const endpointByKey = new Map(endpoints.map(endpoint => [endpoint.key, endpoint]));
-    const safeLinks = buildGlobalpingSafeLinks(
-      safeItems,
-      xrayById,
-      endpointByKey,
-      globalpingGate
-    );
-    const safeLinkSet = new Set(safeLinks);
-
-    const byId = new Map();
-    for (const item of safeItems) {
-      const id = String(item?.id || "");
-      const link = String(item?.link || "").trim();
-      let endpoint = null;
-      try {
-        endpoint = endpointByKey.get(endpointKey(link)) || null;
-      } catch {}
-
-      const xray = xrayById.get(id) || null;
-      const gp = endpoint?.globalpingGate || null;
-      const transport = endpoint?.transport || transportOf(protocolOf(link));
-      const ok = safeLinkSet.has(link);
-
-      let reason = "";
-      if (!ok) {
-        if (!endpoint) {
-          reason = "LTE v3: endpoint was not checked";
-        } else if (!xray || !["PASS-XRAY", "PASS-XRAY-CLOUDFLARE"].includes(xray.verdict)) {
-          reason = `LTE v3 Xray failed: ${xray?.verdict || "UNKNOWN-XRAY"}`;
-        } else if (transport === "tcp" && gp?.verdict === "FAIL-GLOBALPING") {
-          reason =
-            `LTE v3 Globalping failed: ${Number(gp?.validReachedCities || 0)}/` +
-            `${globalpingGate?.endpoints?.find(row => row.key === endpoint.key)?.requiredDistinctCities || 2} valid Russian cities`;
-        } else {
-          reason = `LTE v3 rejected: ${gp?.verdict || "no-final-verdict"}`;
-        }
-      }
-
-      const xrayStages = xray
-        ? `${xray.verdict}${xray.confidence ? ` (${xray.confidence})` : ""}`
-        : "not-run";
-      const gpStages = transport === "tcp"
-        ? (
-            gp?.verdict
-              ? ` + Globalping ${gp.verdict} ${Number(gp.validReachedCities || 0)}/3`
-              : " + Globalping not-tested/fail-open"
-          )
-        : " + Globalping skipped for UDP";
-      const stages =
-        `Check-Host ${endpoint?.verdict || "UNKNOWN"}` +
-        ` + Xray ${xrayStages}` +
-        gpStages;
-
-      byId.set(id, {
-        ok,
-        protocol: protocolOf(link),
-        transport,
-        stages,
-        reason,
-        endpoint,
-        xray,
-        globalping: gp,
-        hostToolsRecovery,
-        quality: xray?.speedFallback || null,
-      });
-    }
-
-    return {
-      byId,
-      diagnostics: {
-        generatedAt: new Date().toISOString(),
-        scope: "lte",
-        candidates: safeItems.length,
-        uniqueEndpoints: endpoints.length,
-        checkHostDiscovery,
-        globalping,
-        globalpingGate,
-        hostToolsRecovery,
-        xrayById: Object.fromEntries(xrayById),
-        endpointVerdicts: endpoints.reduce((acc, row) => {
-          const key = String(row.verdict || "UNKNOWN");
-          acc[key] = (acc[key] || 0) + 1;
-          return acc;
-        }, {}),
-        safeLinks,
-        beforeGlobalpingLinks: getXrayVerifiedLinks(safeItems, xrayById),
-        globalping2of3Links: globalpingStrictLinks(safeItems, xrayById, endpointByKey, 2),
-        globalping3of3Links: globalpingStrictLinks(safeItems, xrayById, endpointByKey, 3),
-      },
-    };
-  };
-}
 
 function extractWhiteListCountryFromRemarks(remarks = "") {
     const value = String(remarks || "").trim();
@@ -2759,7 +1036,7 @@ function parseCheckHostNode(raw, node, transport = "tcp") {
 
         // Check-Host's UDP result may encode a non-refused probe as a raw
         // object like { address: "…", timeout: 1 } without an `error` field.
-        // The experimental LTE checker intentionally treated that state as
+        // The LTE transport policy intentionally treats that state as
         // "open or filtered"/UDP-usable and left the real protocol proof to
         // Xray. Preserve the same semantics in the production gate so
         // Hysteria2/TUIC candidates are not discarded before Xray.
@@ -2953,7 +1230,7 @@ function evaluateCheckHostPayload(payload, transport, nodes, requiredReachable =
     const reachable = parsed.filter(x => x.reachable);
     const unresolved = parsed.filter(x => x.inconclusive);
     // UDP Check-Host cannot prove a Hysteria/QUIC handshake. For the first
-    // Russian transport gate, however, the experimental LTE checker treated
+    // Russian transport gate, however, the LTE transport policy treats
     // "open or filtered"/timeout as a non-refused UDP result. Preserve that
     // conservative prefilter semantics here; exact Xray health remains the
     // authoritative application-level check.
@@ -3490,13 +1767,11 @@ function selectUpdateVpnPool(healthResults, history, limit = 10) {
             return false;
         }
 
-        // UPDATE VPN has a stricter gate than an ordinary whitelist health pass:
-        // the node must reach the configured service endpoint through its own Xray path.
-        if (!result?.ok || result?.updateConnectivity?.ok !== true) {
-            return false;
-        }
-
-        return true;
+        // LTE no longer runs UPDATE service/Yandex/connection checks. Its
+        // publication gate is Russia Gate + exact-link Xray + (for TCP)
+        // Globalping. Therefore a successful LTE health result is sufficient
+        // here; historical stability remains the main ranking signal.
+        return result?.ok === true;
     });
 
     // Prefer the best-scoring variant for each physical endpoint. Different
@@ -3526,10 +1801,9 @@ function selectUpdateVpnPool(healthResults, history, limit = 10) {
             ? (Number(h.recentFailures) || 0)
             : 0;
 
-        const serviceLatency =
-            Number(result?.updateConnectivity?.latencyMs) ||
-            Number(h.lastServiceLatencyMs) ||
-            Infinity;
+        const serviceLatency = result?.whiteList
+            ? (Number(h.lastServiceLatencyMs) || Infinity)
+            : (Number(result?.updateConnectivity?.latencyMs) || Number(h.lastServiceLatencyMs) || Infinity);
         const speed =
             Number(result?.quality?.medianKbps ?? result?.quality?.kbps) ||
             Number(h.lastKbps) ||
@@ -3728,7 +2002,8 @@ function getFreePort() {
 }
 
 async function waitForPort(
-    port
+    port,
+    timeoutMs = XRAY_START_TIMEOUT_MS
 ) {
     const started =
         Date.now();
@@ -3736,7 +2011,7 @@ async function waitForPort(
     while (
         Date.now() -
         started <
-        XRAY_START_TIMEOUT_MS
+        timeoutMs
     ) {
         const available =
             await tcpProbe(
@@ -3754,7 +2029,7 @@ async function waitForPort(
     return false;
 }
 
-async function startXray(link) {
+async function startXray(link, { udp = false, startTimeoutMs = XRAY_START_TIMEOUT_MS } = {}) {
     const socksPort = await getFreePort();
     const tempDir = await fs.mkdtemp(
         path.join(
@@ -3769,7 +2044,8 @@ async function startXray(link) {
 
     const config = buildXrayConfig(
         link,
-        socksPort
+        socksPort,
+        { udp }
     );
 
     await fs.writeFile(
@@ -3884,7 +2160,7 @@ async function startXray(link) {
         });
 
         const started = await Promise.race([
-            waitForPort(socksPort).then(
+            waitForPort(socksPort, startTimeoutMs).then(
                 available => ({
                     ok: available
                 })
@@ -5633,7 +3909,7 @@ function selectFeaturedFastServers(results, limit = FAST_TOP_N, allowedCountries
         const country = String(result.country || '').trim();
         if (!country) continue;
         const countryKey = country.toLowerCase();
-        if (!allowedCountries.has(countryKey) || FEATURED_EXCLUDED_COUNTRIES.has(countryKey)) continue;
+        if (!allowedCountries.has(countryKey)) continue;
 
         // Fast is a location feature: one physical server per selected country.
         if (selectedCountries.has(countryKey)) continue;
@@ -5673,12 +3949,7 @@ function selectFeaturedGamingServers(
     for (const result of candidates) {
         const country = String(result.country || "").trim();
         const key = country.toLowerCase();
-        if (
-            !country ||
-            excluded.has(key) ||
-            !allowedCountries.has(key) ||
-            FEATURED_EXCLUDED_COUNTRIES.has(key)
-        ) continue;
+        if (!country || excluded.has(key) || !allowedCountries.has(key)) continue;
 
         const bucket = groups.get(key) || { country, members: [] };
         bucket.members.push(result);
@@ -5995,35 +4266,194 @@ async function main() {
     const healthStartedAt = Date.now();
     const checkedLinkMeta = new Map();
 
+    async function runLteXrayValidation(link) {
+        const attempts = [];
+        const targets = [...new Set(LTE_XRAY_TARGET_URLS)];
+
+        for (let attempt = 1; attempt <= LTE_XRAY_ATTEMPTS; attempt += 1) {
+            const startedAt = Date.now();
+            let xray = null;
+
+            try {
+                xray = await startXray(link, {
+                    udp: true,
+                    startTimeoutMs: LTE_XRAY_START_TIMEOUT_MS,
+                });
+
+                if (!xray.ok) {
+                    attempts.push({
+                        attempt,
+                        xrayStarted: false,
+                        ok: false,
+                        error: xray.error || "xray startup failed",
+                        targetResults: [],
+                        speedFallback: null,
+                    });
+
+                    if (attempt < LTE_XRAY_ATTEMPTS) {
+                        await sleep(LTE_XRAY_RETRY_DELAY_MS);
+                    }
+                    continue;
+                }
+
+                const targetResults = [];
+                for (const target of targets) {
+                    const result = await probeTargetOnceWithRetries(
+                        xray.socksPort,
+                        target
+                    );
+                    targetResults.push(result);
+                    if (result.ok) break;
+                }
+
+                const directPass = targetResults.find(result => result?.ok);
+                let speedFallback = null;
+
+                if (!directPass) {
+                    speedFallback = await runLteXraySpeedFallback(xray.socksPort);
+                }
+
+                const passed = Boolean(directPass || speedFallback?.ok);
+                attempts.push({
+                    attempt,
+                    xrayStarted: true,
+                    ok: passed,
+                    targetResults,
+                    speedFallback,
+                    durationMs: Math.max(Date.now() - startedAt, 0),
+                });
+
+                if (passed) {
+                    return {
+                        ok: true,
+                        verdict: directPass ? "PASS-XRAY" : "PASS-XRAY-CLOUDFLARE",
+                        attempts,
+                        target: directPass?.targetUrl || LTE_XRAY_SPEED_FALLBACK_URL,
+                        latencyMs: Number(directPass?.latencyMs || speedFallback?.elapsedMs) || 0,
+                    };
+                }
+            } catch (error) {
+                attempts.push({
+                    attempt,
+                    xrayStarted: Boolean(xray?.ok),
+                    ok: false,
+                    error: error?.message || String(error),
+                    targetResults: [],
+                    speedFallback: null,
+                    durationMs: Math.max(Date.now() - startedAt, 0),
+                });
+            } finally {
+                if (xray?.stop) await xray.stop();
+            }
+
+            if (attempt < LTE_XRAY_ATTEMPTS) {
+                await sleep(LTE_XRAY_RETRY_DELAY_MS);
+            }
+        }
+
+        return {
+            ok: false,
+            verdict: "FAIL-XRAY",
+            attempts,
+            target: "",
+            latencyMs: 0,
+        };
+    }
+
+    async function runLteXraySpeedFallback(socksPort) {
+        return new Promise(resolve => {
+            const startedAt = Date.now();
+            const args = [
+                "--silent",
+                "--show-error",
+                "--fail",
+                "--connect-timeout",
+                "4",
+                "--max-time",
+                String(Math.ceil(LTE_XRAY_SPEED_TIMEOUT_MS / 1000)),
+                "--proxy",
+                `socks5h://127.0.0.1:${socksPort}`,
+                LTE_XRAY_SPEED_FALLBACK_URL,
+                "--output",
+                "/dev/null",
+                "--write-out",
+                "\n%{http_code}\n%{size_download}\n%{time_total}\n",
+            ];
+
+            const child = spawn("curl", args, {
+                stdio: ["ignore", "pipe", "pipe"]
+            });
+            let stdout = "";
+            let stderr = "";
+            let settled = false;
+
+            const finish = result => {
+                if (settled) return;
+                settled = true;
+                resolve(result);
+            };
+
+            child.stdout.on("data", chunk => { stdout += String(chunk); });
+            child.stderr.on("data", chunk => { stderr += String(chunk); });
+
+            const timeout = setTimeout(() => {
+                try { child.kill("SIGKILL"); } catch {}
+            }, LTE_XRAY_SPEED_TIMEOUT_MS);
+
+            child.once("error", error => {
+                clearTimeout(timeout);
+                finish({
+                    ok: false,
+                    url: LTE_XRAY_SPEED_FALLBACK_URL,
+                    httpCode: 0,
+                    bytes: 0,
+                    elapsedMs: Math.max(Date.now() - startedAt, 0),
+                    kbps: 0,
+                    error: error?.message || "curl startup failed",
+                });
+            });
+
+            child.once("exit", code => {
+                clearTimeout(timeout);
+                const lines = stdout.trim().split(/\r?\n/).map(value => value.trim()).filter(Boolean);
+                const httpCode = Number(lines.at(-3)) || 0;
+                const bytes = Number(lines.at(-2)) || 0;
+                const totalSeconds = Number(lines.at(-1)) || 0;
+                const elapsedMs = totalSeconds > 0
+                    ? Math.round(totalSeconds * 1000)
+                    : Math.max(Date.now() - startedAt, 0);
+                const kbps = elapsedMs > 0
+                    ? (bytes / 1024) / (elapsedMs / 1000)
+                    : 0;
+                const ok = code === 0 && httpCode >= 200 && httpCode < 400 &&
+                    bytes >= LTE_XRAY_SPEED_MIN_BYTES && kbps >= LTE_XRAY_SPEED_MIN_KBPS;
+
+                finish({
+                    ok,
+                    url: LTE_XRAY_SPEED_FALLBACK_URL,
+                    httpCode,
+                    bytes,
+                    elapsedMs,
+                    kbps: Math.round(kbps * 10) / 10,
+                    error: ok
+                        ? ""
+                        : (stderr.trim() || `curl=${code}, HTTP=${httpCode || "?"}, ${bytes} bytes, ${Math.round(kbps * 10) / 10} KB/s`).slice(0, 700),
+                });
+            });
+        });
+    }
+
     async function checkItem(
         item,
         russiaProbe = null
     ) {
-        const linkFile =
-            path.join(
-                LINKS_DIR,
-                `${item.id}.link`
-            );
-
+        const linkFile = path.join(LINKS_DIR, `${item.id}.link`);
         let link;
 
         try {
-            link =
-                (
-                    await fs.readFile(
-                        linkFile,
-                        "utf8"
-                    )
-                ).trim();
+            link = (await fs.readFile(linkFile, "utf8")).trim();
         } catch {
-            return {
-                item,
-                ok:
-                    false,
-
-                reason:
-                    "missing link file"
-            };
+            return { item, ok: false, reason: "missing link file" };
         }
 
         const linkFingerprint = fingerprintLink(link);
@@ -6033,46 +4463,72 @@ async function main() {
         });
 
         let url;
-
         try {
-            url =
-                new URL(
-                    link
-                );
+            url = new URL(link);
         } catch {
+            return { item, ok: false, reason: "invalid URL" };
+        }
+
+        const protocol = getProtocol(link);
+        const sourceMeta = candidateMap[linkFingerprint] || null;
+        const isWhiteListCandidate = Boolean(
+            sourceMeta?.whiteList ||
+            item?.whiteList === true ||
+            MANAGED_WHITE_LIST_RE.test(String(item.id || ""))
+        );
+
+        // Russia Gate is shared. It is deliberately the only pre-Xray gate
+        // for LTE; regular servers continue to use their original local TCP
+        // probe plus the full heavy health pipeline below.
+        if (russiaProbe && !russiaProbe.gatePassed && !russiaProbe.gatePending) {
             return {
                 item,
-                ok:
-                    false,
-
-                reason:
-                    "invalid URL"
+                ok: false,
+                protocol,
+                russiaProbe,
+                reason: `Russia reachability failed: Check-Host ${russiaProbe.checkHost?.nodesReachable || 0}/${russiaProbe.checkHost?.nodesTested || 0}`,
             };
         }
 
-        const protocol =
-            getProtocol(
-                link
-            );
+        // LTE/whitelist uses only the dedicated LTE pipeline:
+        // Russia Gate -> exact-link Xray validation -> LTE-only Globalping.
+        // Do not run the ordinary HTTPS/Yandex/service/speed/gaming checks.
+        if (isWhiteListCandidate) {
+            const lteXray = await runLteXrayValidation(link);
 
-        const sourceMeta = candidateMap[linkFingerprint] || null;
-
-        // Russia reachability is a pre-gate for every managed candidate.
-        // Servers definitely unreachable from Russia never consume the expensive
-        // Xray + HTTPS + multi-provider speed budget.
-        if (russiaProbe) {
-            if (!russiaProbe.gatePassed && !russiaProbe.gatePending) {
+            if (!lteXray.ok) {
                 return {
                     item,
                     ok: false,
                     protocol,
                     russiaProbe,
-                    reason:
-                        `Russia reachability failed: Check-Host ${russiaProbe.checkHost?.nodesReachable || 0}/${russiaProbe.checkHost?.nodesTested || 0}`,
+                    reason: `Russia Gate PASS + LTE Xray validation failed (${lteXray.attempts.length} attempt(s))`,
+                    quality: null,
+                    connection: null,
+                    gaming: null,
+                    remote: [],
+                    updateConnectivity: null,
+                    lteXray,
                 };
             }
+
+            return {
+                item,
+                ok: true,
+                protocol,
+                russiaProbe,
+                stages: `Russia Gate PASS + Xray ${lteXray.verdict === "PASS-XRAY-CLOUDFLARE" ? "PASS (Cloudflare fallback)" : "PASS"} -> Globalping LTE gate`,
+                quality: null,
+                connection: null,
+                gaming: null,
+                remote: [],
+                updateConnectivity: null,
+                lteXray,
+            };
         }
 
+        // REGULAR SERVERS: this block intentionally preserves the previous
+        // production heavy-health behavior.
         const transport = getTransportType(protocol);
         const stage1 = transport === "tcp"
             ? await tcpProbe(url.hostname, url.port)
@@ -6089,6 +4545,12 @@ async function main() {
         }
 
         let xray = null;
+        const updateConnectivity = {
+            ok: false,
+            url: SERVICE_BASE_URL,
+            latencyMs: 0,
+            error: "not tested",
+        };
 
         try {
             xray = await startXray(link);
@@ -6103,10 +4565,9 @@ async function main() {
                 };
             }
 
+            const targetPool = HEALTH_TARGET_URLS;
             const targets = [...new Set(
-                HEALTH_TARGET_URLS
-                    .map(value => String(value || "").trim())
-                    .filter(Boolean)
+                targetPool.map(value => String(value || "").trim()).filter(Boolean)
             )];
 
             if (targets.length < 1) {
@@ -6114,26 +4575,16 @@ async function main() {
             }
 
             const remote = await Promise.all(
-                targets.map(target =>
-                    probeTargetOnceWithRetries(
-                        xray.socksPort,
-                        target
-                    )
-                )
+                targets.map(target => probeTargetOnceWithRetries(xray.socksPort, target))
             );
-
             const passedTargets = remote.filter(result => result?.ok);
             const failedTargets = remote.filter(result => !result?.ok);
-            const connection = connectionMetrics(remote);
+            const connection = connectionMetrics(remote, { whiteList: false });
 
-            // Synthetic HTTPS targets are diagnostic-only for regular servers.
-            // Real download quality remains the authoritative heavy health signal.
             const quality = await runIndependentSpeedCheck(xray.socksPort);
 
             const details = failedTargets
-                .map(result =>
-                    `${result.targetUrl}: ${result.error || "proxy request failed"}`
-                )
+                .map(result => `${result.targetUrl}: ${result.error || "proxy request failed"}`)
                 .join(" | ");
 
             if (!quality.ok) {
@@ -6154,10 +4605,7 @@ async function main() {
                 };
             }
 
-            const gamingLatency = await measureGamingLatency(
-                item.link,
-                connection
-            );
+            const gamingLatency = await measureGamingLatency(item.link, connection);
             const gaming = getGamingMetrics(remote, quality, gamingLatency);
 
             return {
@@ -6167,22 +4615,18 @@ async function main() {
                 russiaProbe,
                 stages:
                     `${transport.toUpperCase()} + Xray + ${passedTargets.length}/${targets.length} HTTPS + ` +
-                    `quality ${quality.passedCount}/${quality.providerCount} probes passed ` +
-                    `(avg passing ${quality.kbps} KB/s)`,
+                    `quality ${quality.passedCount}/${quality.providerCount} probes passed (avg passing ${quality.kbps} KB/s)`,
                 quality,
                 connection,
-                gaming: {
-                    ...gaming,
-                    latencyProbeError: gamingLatency.error || "",
-                },
+                gaming: { ...gaming, latencyProbeError: gamingLatency.error || "" },
                 remote,
-                updateConnectivity: null,
+                updateConnectivity,
             };
-
         } catch (error) {
             return {
                 item,
                 ok: false,
+                protocol,
                 reason: error?.message || "xray health probe error",
             };
         } finally {
@@ -6266,7 +4710,8 @@ async function main() {
                 remote: result.remote || [],
                 updateConnectivity: result.updateConnectivity || null,
                 russiaProbe: result.russiaProbe || null,
-                telegram: result.telegram || null
+                telegram: result.telegram || null,
+                lteXray: result.lteXray || null,
             });
 
             const completed = passed + failed;
@@ -6299,9 +4744,9 @@ async function main() {
     }
 
     // Russia reachability is a dedicated pipeline stage. In `russia-gate` mode
-    // every regular candidate is checked (or reused from a recent cached result),
+    // every managed candidate is checked (or reused from a recent cached result),
     // then the full gate is persisted for the next job. The normal health mode
-    // only consumes that immutable gate output for regular servers; LTE uses v3 Check-Host independently.
+    // only consumes that immutable gate output and never calls Check-Host again.
     const russiaProbeByFingerprint = new Map();
     // These counters are also consumed by the normal heavy-health mode below.
     // Keep them in the main function scope so an russia-gate run can populate
@@ -6338,15 +4783,15 @@ async function main() {
         );
 
         console.log(
-            `RUSSIA GATE START: Check-Host=${ACTIVE_CHECK_HOST_RUSSIA_NODES.length} live Russian nodes for regular candidates; ` +
+            `RUSSIA GATE START: Check-Host=${ACTIVE_CHECK_HOST_RUSSIA_NODES.length} live Russian nodes for all managed candidates; ` +
             `strategy=${russiaCheckerMode === "dual" ? "strict-positive-reachability-2-of-2" : russiaCheckerMode === "single" ? "single-live-node-warning-mode" : "skipped-all-checkers-unavailable"}; ` +
             `cache=${RUSSIA_GATE_USE_CACHE ? "enabled" : "disabled"}; ` +
-            `LTE checker v3 is integrated into Heavy; ` +
+            `Globalping=LTE-only post-Xray gate; ` +
             `adaptive-pacing=global-api>=${CHECK_HOST_TOTAL_MIN_INTERVAL_MS}ms; ` +
             `nodes=${ACTIVE_CHECK_HOST_RUSSIA_NODES.join(",") || "none"}`
         );
 
-        const requiredRussiaItems = managedItems.filter(item => !isLteCandidate(item, candidateMap[fingerprintLink(item?.link || "")] || null));
+        const requiredRussiaItems = [...managedItems];
 
         if (ACTIVE_CHECK_HOST_GATE_QUORUM === 0) {
             for (const item of requiredRussiaItems) {
@@ -6621,33 +5066,6 @@ async function main() {
 
         const gateResults = managedItems.map(item => {
             const fp = fingerprintLink(item.link || "");
-            const sourceMeta = candidateMap[fp] || null;
-            const lte = isLteCandidate(item, sourceMeta);
-
-            if (lte) {
-                return {
-                    id: item.id,
-                    link: String(item.link || "").trim(),
-                    source: sourceMeta?.source || item.source || "retained/manual",
-                    country: sourceMeta?.country || "",
-                    required: false,
-                    gatePassed: true,
-                    gatePending: false,
-                    skipped: true,
-                    checkedAt: Date.now(),
-                    reason: "LTE is checked by the integrated Russia checker v3 during Heavy health stage",
-                    probe: {
-                        provider: "integrated-russia-checker-v3",
-                        required: false,
-                        skipped: true,
-                        gatePassed: true,
-                        gatePending: false,
-                        checkedAt: Date.now(),
-                        reason: "LTE is intentionally excluded from the legacy Russia Gate",
-                    },
-                };
-            }
-
             const probe = russiaProbeByFingerprint.get(fp) || {
                 required: true,
                 gatePassed: false,
@@ -6655,7 +5073,7 @@ async function main() {
                 checkedAt: Date.now(),
                 reason: "Russia gate result missing"
             };
-
+            const sourceMeta = candidateMap[fp] || null;
             return {
                 id: item.id,
                 link: String(item.link || "").trim(),
@@ -6724,109 +5142,78 @@ async function main() {
         russiaProbeByFingerprint.set(String(row?.link || "") ? fingerprintLink(row.link) : String(row.id || ""), row.probe || row);
     }
 
-    russiaGateChecked = Number(gateReport?.requiredCandidates) || 0;
+    russiaGateChecked = checked;
     russiaGatePassed = Number(gateReport?.allowedCandidates) || 0;
     russiaGateFailures = Number(gateReport?.failedCandidates) || 0;
     russiaGatePending = Math.max(0, Number(gateReport?.requiredCandidates) - russiaGatePassed - russiaGateFailures);
 
-    // Regular candidates must first pass the legacy Russia Gate.
-    // LTE/whitelist candidates intentionally bypass that legacy gate and are
-    // checked exclusively by the integrated Russia checker v3 below.
+    // Only candidates positively verified by the Russia gate proceed to their
+    // protocol-specific health branch. Pending/unknown reachability is
+    // deliberately excluded from publication.
     const healthEligibleItems = [];
-    const lteItems = [];
     for (const item of managedItems) {
         const fp = fingerprintLink(item.link || "");
-        const sourceMeta = candidateMap[fp] || null;
-        const lte = isLteCandidate(item, sourceMeta);
-
-        if (lte) {
-            lteItems.push(item);
-            healthEligibleItems.push(item);
-            continue;
-        }
-
         const probe = russiaProbeByFingerprint.get(fp);
         if (probe?.gatePassed) {
             healthEligibleItems.push(item);
             continue;
         }
 
+        const sourceMeta = candidateMap[fp] || null;
         const resolvedCountry = sourceMeta?.country || String(item.remarks || "").replace(/^\S+\s*/, "").replace(/\s+\d+$/, "");
         healthResults.push({
             id: item.id, remarks: item.remarks || "", link: String(item.link || "").trim(),
             configFile: item.configFile || null, sourceKind: item.sourceKind || null, country: resolvedCountry,
             whiteList: false, source: sourceMeta?.source || item.source || "retained/manual", linkFingerprint: fp,
             ok: false, protocol: getProtocol(item.link || ""), stages: "",
-            reason: `Russia reachability failed: Check-Host ${probe?.checkHost?.nodesReachable || 0}/${probe?.checkHost?.nodesTested || 0}`,
+            reason: `Russia reachability failed: Check-Host ${probe.checkHost?.nodesReachable || 0}/${probe.checkHost?.nodesTested || 0}`,
             quality: null, connection: null, gaming: null, remote: [], updateConnectivity: null,
-            russiaProbe: probe || null, telegram: null
+            russiaProbe: probe, telegram: null
         });
     }
 
-    const regularHealthItems = healthEligibleItems.filter(
-        item => !isLteCandidate(item, candidateMap[fingerprintLink(item?.link || "")] || null)
-    );
-
-    console.log(
-        `HEALTH AFTER RUSSIA GATE: regular=${regularHealthItems.length}/${checked}; ` +
-        `LTE delegated exclusively to integrated Russia checker v3=${lteItems.length}`
-    );
+    const regularEligibleCount = healthEligibleItems.filter(item => !MANAGED_WHITE_LIST_RE.test(String(item?.id || ""))).length;
+    const lteEligibleCount = healthEligibleItems.length - regularEligibleCount;
+    console.log(`HEALTH AFTER RUSSIA GATE: ${healthEligibleItems.length}/${checked} candidates continue; regular=${regularEligibleCount} -> Heavy, LTE=${lteEligibleCount} -> LTE Xray/Globalping`);
 
     cursor = 0;
-    managedItems.splice(0, managedItems.length, ...regularHealthItems);
+    managedItems.splice(0, managedItems.length, ...healthEligibleItems);
     const heavyChecked = managedItems.length;
 
     const workerCount = Math.min(HEALTH_CONCURRENCY, managedItems.length || 1);
     await Promise.all(Array.from({ length: workerCount }, () => worker()));
 
-    let lteV3Diagnostics = null;
-    if (lteItems.length) {
-        const lteV3 = await runLteRussiaCheckerV3(lteItems);
-        lteV3Diagnostics = lteV3.diagnostics;
+    // LTE-only Globalping gate. It runs after the dedicated LTE Xray stage,
+    // uses three non-Moscow/non-Saint-Petersburg Russian eyeball cities, and
+    // accepts a minimum of 2/3. 3/3 is recorded as a stronger diagnostic tier.
+    const lteGlobalping = await runLteGlobalpingGate({
+        healthResults,
+        enabled: GLOBALPING_LTE_ENABLED,
+        apiBase: GLOBALPING_API_BASE,
+        token: GLOBALPING_TOKEN,
+        cityLimit: GLOBALPING_LTE_CITY_LIMIT,
+        minDistinctCities: GLOBALPING_LTE_MIN_DISTINCT_CITIES,
+        requireEyeball: GLOBALPING_LTE_REQUIRE_EYEBALL,
+        maxEndpoints: GLOBALPING_LTE_MAX_ENDPOINTS,
+        reserveTests: GLOBALPING_LTE_RESERVE_TESTS,
+        timeoutMs: GLOBALPING_LTE_TIMEOUT_MS,
+        pollMs: GLOBALPING_LTE_POLL_MS,
+        mtrTimeoutSeconds: GLOBALPING_LTE_MTR_TIMEOUT_SECONDS,
+    });
 
-        for (const item of lteItems) {
-            const fp = fingerprintLink(item.link || "");
-            const sourceMeta = candidateMap[fp] || null;
-            const row = lteV3.byId.get(String(item.id)) || {};
-            const resolvedCountry =
-                normalizeCountryName(sourceMeta?.country || "") ||
-                normalizeCountryName(extractWhiteListCountryFromRemarks(item.remarks || "")) ||
-                "Europe";
+    for (const result of healthResults) {
+        const gp = lteGlobalping.endpointByLinkFingerprint?.[String(result.linkFingerprint || "")];
+        if (gp) result.globalping = gp;
+    }
 
-            healthResults.push({
-                id: item.id,
-                remarks: item.remarks || "",
-                link: String(item.link || "").trim(),
-                configFile: item.configFile || null,
-                sourceKind: item.sourceKind || null,
-                country: resolvedCountry,
-                whiteList: true,
-                source: sourceMeta?.source || item.source || "retained/manual",
-                linkFingerprint: fp,
-                ok: Boolean(row.ok),
-                protocol: row.protocol || getProtocol(item.link || ""),
-                stages: row.stages || "LTE Russia checker v3",
-                reason: row.reason || "",
-                quality: row.quality || null,
-                connection: null,
-                gaming: null,
-                remote: row.endpoint?.nodes || [],
-                updateConnectivity: null,
-                russiaProbe: null,
-                globalping: row.globalping || null,
-                lteV3: {
-                    endpointVerdict: row.endpoint?.verdict || "UNKNOWN",
-                    xrayVerdict: row.xray?.verdict || "UNKNOWN-XRAY",
-                    globalpingVerdict: row.globalping?.verdict || null,
-                },
-                telegram: null,
-            });
-
-            if (row.ok) {
-                passed += 1;
-            } else {
-                failed += 1;
-            }
+    if (lteGlobalping.excludedLinkFingerprints?.size) {
+        for (const result of healthResults) {
+            if (!result.whiteList || !result.ok) continue;
+            const fp = String(result.linkFingerprint || "");
+            if (!lteGlobalping.excludedLinkFingerprints.has(fp)) continue;
+            const gp = lteGlobalping.endpointByLinkFingerprint?.[fp];
+            result.ok = false;
+            result.reason = `Globalping Russia gate failed: ${Number(gp?.validReachedCities || 0)}/${lteGlobalping.cityCount} selected Russian cities reached the endpoint`;
         }
     }
 
@@ -7164,6 +5551,32 @@ async function main() {
         report = JSON.parse(await fs.readFile(reportFile, "utf8"));
     } catch {}
 
+    await fs.writeFile(
+        path.join(ROOT, "lte-russia-globalping-diagnostic.json"),
+        `${JSON.stringify(lteGlobalping.diagnostic, null, 2)}\n`,
+        "utf8"
+    );
+    await fs.writeFile(
+        path.join(ROOT, "lte-russia-before-globalping.txt"),
+        `${lteGlobalping.beforeGlobalpingLinks.join("\n")}${lteGlobalping.beforeGlobalpingLinks.length ? "\n" : ""}`,
+        "utf8"
+    );
+    await fs.writeFile(
+        path.join(ROOT, "lte-russia-globalping-2of3.txt"),
+        `${lteGlobalping.globalping2of3Links.join("\n")}${lteGlobalping.globalping2of3Links.length ? "\n" : ""}`,
+        "utf8"
+    );
+    await fs.writeFile(
+        path.join(ROOT, "lte-russia-globalping-3of3.txt"),
+        `${lteGlobalping.globalping3of3Links.join("\n")}${lteGlobalping.globalping3of3Links.length ? "\n" : ""}`,
+        "utf8"
+    );
+    await fs.writeFile(
+        path.join(ROOT, "lte-russia-globalping-final.txt"),
+        `${lteGlobalping.finalPublishedLinks.join("\n")}${lteGlobalping.finalPublishedLinks.length ? "\n" : ""}`,
+        "utf8"
+    );
+
     report.healthCheck = {
         generatedAt: new Date().toISOString(),
         checked,
@@ -7181,10 +5594,9 @@ async function main() {
             mlabLocateUrl: MLAB_LOCATE_URL,
         },
         russiaReachability: {
-            gatedNonLte: true,
-            gatedAllManagedCandidates: false,
+            gatedNonLte: false,
+            gatedAllManagedCandidates: true,
             lteDiagnosticOnly: false,
-            lteCheckerV3: true,
             checkHostNodes: Array.isArray(gateReport?.checkHostNodes)
                 ? gateReport.checkHostNodes
                 : CHECK_HOST_RUSSIA_NODES,
@@ -7196,19 +5608,22 @@ async function main() {
             checkHostConcurrency: CHECK_HOST_CONCURRENCY,
             globalpingTokenConfigured: Boolean(GLOBALPING_TOKEN),
             globalpingDiagnosticOnly: false,
-            lteCheckerV3: lteV3Diagnostics
-                ? {
-                    candidates: lteV3Diagnostics.candidates,
-                    uniqueEndpoints: lteV3Diagnostics.uniqueEndpoints,
-                    globalping: lteV3Diagnostics.globalpingGate || null,
-                    xray: lteV3Diagnostics.xrayById || {},
-                    safeLinks: lteV3Diagnostics.safeLinks || [],
-                }
-                : null,
+            globalpingLteEnabled: GLOBALPING_LTE_ENABLED,
+            globalpingLteCityLimit: GLOBALPING_LTE_CITY_LIMIT,
+            globalpingLteMinDistinctCities: GLOBALPING_LTE_MIN_DISTINCT_CITIES,
+            globalpingLteMaxEndpoints: GLOBALPING_LTE_MAX_ENDPOINTS,
+            globalpingLteReserveTests: GLOBALPING_LTE_RESERVE_TESTS,
+            lteXrayAttempts: LTE_XRAY_ATTEMPTS,
+            lteXrayTargets: LTE_XRAY_TARGET_URLS,
+            lteXraySpeedFallback: LTE_XRAY_SPEED_FALLBACK_URL,
+            globalpingLteAttemptedEndpoints: lteGlobalping.attemptedEndpoints,
+            globalpingLtePassed2of3: lteGlobalping.passed2of3Endpoints,
+            globalpingLtePassed3of3: lteGlobalping.passed3of3Endpoints,
+            globalpingLteFailOpen: lteGlobalping.failOpen,
             russiaGatePassed,
             russiaGateFailures,
             russiaGatePending,
-            policy: "Russia Gate uses the preferred geographically independent checker pairs ru2+ru3, then ru1+ru3, then ru1+ru2. With two live nodes, both must positively verify the candidate; with one live node, that node is used in warning mode; with zero live nodes, Russia Gate is skipped and candidates proceed directly to Heavy. Check-Host 429/5xx/timeout or unresolved results are UNKNOWN/PENDING and never an automatic PASS while a checker is available. The Russia transport gate applies to LTE/whitelist candidates too. Globalping is LTE-only, runs after Xray, accepts 2/3 selected Russian eyeball cities, keeps 3/3 as a stronger diagnostic tier, and is fail-open on Globalping service failure. Regular servers never use Globalping."
+            policy: "Russia Gate is shared by regular and LTE candidates and uses two independent Russian Check-Host nodes when available. Regular servers then follow the existing local TCP + Xray + HTTPS diagnostics + independent multi-provider speed + gaming pipeline. LTE/whitelist servers skip those regular checks and use only exact-link Xray validation (with a bounded Cloudflare download fallback) followed by the LTE-only Globalping gate for TCP protocols. Globalping accepts 2/3 selected Russian eyeball cities, keeps 3/3 as a stronger diagnostic tier, and is fail-open only when the Globalping service itself is unavailable. Globalping is never used for regular servers and does not certify Hysteria/QUIC UDP handshakes."
         },
         gamingCriteria: {
             minKbps:
@@ -7453,10 +5868,11 @@ async function main() {
             `- Retained from previous pool: ${report.retainedFromPreviousPool ?? "?"}`,
             `- Before health-check: ${report.totalBeforeHealthCheck ?? "?"}`,
             `- Health-check: **${passed} passed / ${failed} failed**`,
-            `- HTTPS health targets: ${HEALTH_TARGET_URLS.length} configured; ${HEALTH_MIN_TARGET_PASSES} must pass`,
-            `- Independent speed providers: ${INDEPENDENT_SPEED_PROVIDERS.map(provider => provider.label).join(", ")}`,
-            `- Independent speed rule: ${INDEPENDENT_SPEED_PROVIDER_MIN_PASSES}/${INDEPENDENT_SPEED_PROVIDERS.length} providers + median >= ${INDEPENDENT_SPEED_MIN_MEDIAN_KBPS} KB/s`,
-            `- Regular-server synthetic HTTPS targets are diagnostics only; they no longer decide server eligibility`,
+            `- Regular: local TCP (TCP only) + Xray + synthetic HTTPS diagnostics + independent speed providers + Gaming metrics`,
+            `- LTE: Russia Gate + exact-link Xray (${LTE_XRAY_ATTEMPTS} attempt(s); Cloudflare fallback) + LTE-only Globalping (TCP protocols)`,
+            `- Independent speed providers for regular servers: ${INDEPENDENT_SPEED_PROVIDERS.map(provider => provider.label).join(", ")}`,
+            `- Regular speed rule: ${INDEPENDENT_SPEED_PROVIDER_MIN_PASSES}/${INDEPENDENT_SPEED_PROVIDERS.length} providers + median >= ${INDEPENDENT_SPEED_MIN_MEDIAN_KBPS} KB/s`,
+            `- Synthetic HTTPS targets are diagnostics only; they no longer decide server eligibility`,
             `- Independent speed tests run sequentially per candidate to avoid sharing one VPN route between providers`,
             `- Temporary quarantine: 90 minutes after a failed health check`,
             `- Final managed servers: **${report.finalManagedServers}**`,
