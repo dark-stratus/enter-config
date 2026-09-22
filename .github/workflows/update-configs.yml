@@ -649,7 +649,7 @@ jobs:
           console.log(`Service connectivity URL configured: ${url.origin}`);
           NODE
 
-      - name: Run heavy VPN health check
+      - name: Run production VPN health check
         if: ${{ steps.restore_inputs.outcome == 'success' }}
         id: health
         timeout-minutes: 45
@@ -690,47 +690,48 @@ jobs:
           HEALTHCHECK_GAMING_BACKUP_MIN_QUALITY_PASSES: 1
           HEALTHCHECK_MAX_MEDIAN_CONNECTION_MS: 2500
           HEALTHCHECK_MAX_SINGLE_CONNECTION_MS: 6000
-          RUSSIA_TEST_SELF_TEST: "1"
-          RUSSIA_TEST_GLOBALPING: "1"
-          RUSSIA_TEST_GLOBALPING_RECOVERY: "1"
-          RUSSIA_TEST_GLOBALPING_CITY_LIMIT: "12"
-          RUSSIA_TEST_GLOBALPING_RECOVERY_CITY_LIMIT: "3"
-          RUSSIA_TEST_GLOBALPING_MIN_DISTINCT_CITIES: "2"
-          RUSSIA_TEST_GLOBALPING_REQUIRE_EYEBALL: "1"
-          RUSSIA_TEST_GLOBALPING_TCP_ONLY: "1"
-          RUSSIA_TEST_GLOBALPING_MAX_RECOVERY_ENDPOINTS: "164"
-          RUSSIA_TEST_GLOBALPING_RESERVE_TESTS: "10"
-          RUSSIA_TEST_GLOBALPING_TOKEN: ${{ secrets.GLOBALPING_API_TOKEN }}
-          RUSSIA_TEST_HOSTTOOLS: "0"
-          RUSSIA_TEST_HOSTTOOLS_MAX_REQUESTS: "80"
-          RUSSIA_TEST_HOSTTOOLS_RESERVE_REQUESTS: "15"
-          RUSSIA_TEST_HOSTTOOLS_RU_STRONG_CITIES: "2"
-          RUSSIA_TEST_CORE_NODES: ru1.node.check-host.net,ru2.node.check-host.net,ru3.node.check-host.net
-          RUSSIA_TEST_STRONG_QUORUM: "2"
-          RUSSIA_TEST_MIN_PASS_NODES: "1"
-          RUSSIA_TEST_RECHECK_NONPASS: "1"
-          RUSSIA_TEST_CONCURRENCY: "2"
-          RUSSIA_TEST_CREATE_INTERVAL_MS: "1800"
-          RUSSIA_TEST_MAX_POLL_MS: "16000"
-          RUSSIA_TEST_POLL_MS: "1200"
-          RUSSIA_TEST_RETRIES: "5"
-          RUSSIA_TEST_XRAY: "1"
-          RUSSIA_TEST_XRAY_BIN: ${{ github.workspace }}/.xray/xray
-          RUSSIA_TEST_XRAY_LINK_CONCURRENCY: "4"
-          RUSSIA_TEST_XRAY_LINK_ATTEMPTS: "2"
-          RUSSIA_TEST_XRAY_ONLY_ON_TRANSPORT_PASS: "0"
-          RUSSIA_TEST_XRAY_RETRY_DELAY_MS: "1200"
-          RUSSIA_TEST_XRAY_TARGETS: "https://www.gstatic.com/generate_204,https://www.cloudflare.com/cdn-cgi/trace,https://cp.cloudflare.com/generate_204"
-          RUSSIA_TEST_XRAY_SPEED_FALLBACK: "1"
-          RUSSIA_TEST_XRAY_SPEED_TIMEOUT_MS: "9000"
-          RUSSIA_TEST_XRAY_SPEED_MIN_BYTES: "262144"
-          RUSSIA_TEST_XRAY_SPEED_MIN_KBPS: "1024"
+          HEALTHCHECK_GLOBALPING_API_TOKEN: ${{ secrets.GLOBALPING_API_TOKEN }}
+          HEALTHCHECK_LTE_XRAY_ATTEMPTS: 2
+          HEALTHCHECK_LTE_XRAY_START_TIMEOUT_MS: 12000
+          HEALTHCHECK_LTE_XRAY_RETRY_DELAY_MS: 1200
+          HEALTHCHECK_LTE_XRAY_TARGET_URLS: >-
+            https://www.gstatic.com/generate_204,
+            https://www.cloudflare.com/cdn-cgi/trace
+          HEALTHCHECK_LTE_XRAY_SPEED_URL: https://speed.cloudflare.com/__down?bytes=4194304
+          HEALTHCHECK_LTE_XRAY_SPEED_TIMEOUT_MS: 9000
+          HEALTHCHECK_LTE_XRAY_SPEED_MIN_BYTES: 262144
+          HEALTHCHECK_LTE_XRAY_SPEED_MIN_KBPS: 1024
+          HEALTHCHECK_GLOBALPING_LTE_ENABLED: 1
+          HEALTHCHECK_GLOBALPING_LTE_CITY_LIMIT: 3
+          HEALTHCHECK_GLOBALPING_LTE_MIN_DISTINCT_CITIES: 2
+          HEALTHCHECK_GLOBALPING_LTE_REQUIRE_EYEBALL: 1
+          HEALTHCHECK_GLOBALPING_MAX_ENDPOINTS: 164
+          HEALTHCHECK_GLOBALPING_RESERVE_TESTS: 10
+          HEALTHCHECK_GLOBALPING_TIMEOUT_MS: 30000
+          HEALTHCHECK_GLOBALPING_POLL_MS: 700
+          HEALTHCHECK_GLOBALPING_MTR_TIMEOUT_SECONDS: 12
           HEALTHCHECK_TARGET_URLS: >-
             https://www.gstatic.com/generate_204,
             https://www.google.com/generate_204,
             https://cp.cloudflare.com/generate_204
+          HEALTHCHECK_WHITE_LIST_TARGET_URLS: >-
+            https://ya.ru/,
+            https://yandex.ru/
         run: node scripts/check-source-health.mjs
 
+      - name: Upload LTE Globalping diagnostics
+        if: ${{ always() && hashFiles('lte-russia-globalping-diagnostic.json') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: lte-globalping-diagnostics-${{ github.run_id }}
+          path: |
+            lte-russia-globalping-diagnostic.json
+            lte-russia-before-globalping.txt
+            lte-russia-globalping-2of3.txt
+            lte-russia-globalping-3of3.txt
+            lte-russia-globalping-final.txt
+          if-no-files-found: warn
+          retention-days: 7
 
       - name: Verify UPDATE VPN pool
         if: ${{ steps.health.outcome == 'success' }}
