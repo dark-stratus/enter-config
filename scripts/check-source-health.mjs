@@ -6145,8 +6145,16 @@ async function main() {
                 })
             ),
         featuredCountryAssignments: {
-            fast: [...featuredFastCountries],
-            gaming: [...featuredGamingCountries],
+            fast: [...new Set(
+                featured.fast
+                    .map(item => String(item.country || '').trim())
+                    .filter(Boolean)
+            )],
+            gaming: [...new Set(
+                featured.gaming
+                    .map(item => String(item.country || '').trim())
+                    .filter(Boolean)
+            )],
         },
         selectedWhiteListCountries:
             selectedWhiteListCountries.map(
