@@ -636,7 +636,9 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p .xray
-          XRAY_URL="https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-64.zip"
+          XRAY_VERSION="v26.3.27"
+          XRAY_URL="https://github.com/XTLS/Xray-core/releases/download/${XRAY_VERSION}/Xray-linux-64.zip"
+          echo "Installing pinned Xray ${XRAY_VERSION} for deterministic health checks"
           curl -fL --retry 4 --retry-delay 2 --retry-connrefused "$XRAY_URL" -o .xray/xray.zip
           unzip -o .xray/xray.zip -d .xray
           chmod +x .xray/xray
