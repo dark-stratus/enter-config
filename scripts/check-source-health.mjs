@@ -299,15 +299,11 @@ const CHECK_HOST_COORDINATOR_FINAL_DRAIN_MS = Math.max(30000, Math.min(300000,
 const CHECK_HOST_COORDINATOR_FINAL_POLL_MS = Math.max(750, Math.min(5000,
     Number(process.env.HEALTHCHECK_RUSSIA_COORDINATOR_FINAL_POLL_MS) || 1500
 ));
-const CHECK_HOST_PREFLIGHT_QUORUM = 2;
-
-// The Russian checker pair is selected by actual reachability quality, not by a
-// fixed node-name preference. We still preserve geographic coverage: whenever the
-// Saint Petersburg checker is healthy, it is paired with the best healthy Moscow
-// checker. If Saint Petersburg is degraded, the two healthy Moscow checkers are used.
+// Current Russian Check-Host node geography. These defaults are only metadata for
+// deterministic pair selection; actual node health is derived from canary results.
 const RUSSIA_CHECKER_LOCATION_DEFAULTS = {
     "ru1.node.check-host.net": { city: "Moscow", cityGroup: "moscow" },
-    "ru2.node.check-host.net": { city: "Moscow", cityGroup: "moscow" },
+    "ru2.node.check-host.net": { city: "Krasnodar", cityGroup: "south" },
     "ru3.node.check-host.net": { city: "Saint Petersburg", cityGroup: "saint-petersburg" },
 };
 const RUSSIA_GATE_CANARY_COUNT = Math.max(6, Math.min(12,
@@ -1427,54 +1423,6 @@ async function pollCheckHostRequestUntilNodesSettled(request, { timeoutMs = RUSS
     };
 }
 
-function selectRussiaCheckerPair(nodeStats, canaryReliable) {
-    const healthyNodes = canaryReliable
-        ? nodeStats.filter(row => row.eligible).sort((a, b) => b.score - a.score)
-        : nodeStats.filter(row => row.selfReachable).sort((a, b) => a.node.localeCompare(b.node));
-
-    const saintPetersburg = healthyNodes
-        .filter(row => row.cityGroup === "saint-petersburg")
-        .sort((a, b) => b.score - a.score)[0] || null;
-    const moscow = healthyNodes
-        .filter(row => row.cityGroup === "moscow")
-        .sort((a, b) => b.score - a.score);
-
-    if (saintPetersburg && moscow.length >= 1) {
-        return {
-            selectedPair: [moscow[0].node, saintPetersburg.node],
-            selectionReason: canaryReliable
-                ? "Saint Petersburg canary is healthy; preserve Moscow + Saint Petersburg geographic coverage."
-                : "Canary data was not reliable; preserve Moscow + Saint Petersburg from self-preflight.",
-        };
-    }
-
-    if (canaryReliable && moscow.length >= 2) {
-        return {
-            selectedPair: [moscow[0].node, moscow[1].node],
-            selectionReason: "Saint Petersburg canary is degraded or unavailable; use the two healthiest Moscow checkers.",
-        };
-    }
-
-    if (!canaryReliable && healthyNodes.length >= 2) {
-        return {
-            selectedPair: healthyNodes.slice(0, 2).map(row => row.node),
-            selectionReason: "Canary data was inconclusive; use the two self-preflight-healthy checkers.",
-        };
-    }
-
-    if (healthyNodes.length >= 2) {
-        return {
-            selectedPair: healthyNodes.slice(0, 2).map(row => row.node),
-            selectionReason: "Selected the two healthiest eligible Russian checkers by canary score.",
-        };
-    }
-
-    return {
-        selectedPair: null,
-        selectionReason: "No healthy dual-checker pair was available.",
-    };
-}
-
 function buildRussiaCanaryNodeStats(configuredNodes, canaryOutcomes, canaryCount) {
     return configuredNodes.map(node => {
         const samples = [];
@@ -1501,7 +1449,7 @@ function buildRussiaCanaryNodeStats(configuredNodes, canaryOutcomes, canaryCount
             successRate: Number(successRate.toFixed(4)),
             coverageRate: Number(coverageRate.toFixed(4)),
             score: Number(((successRate * 0.85 + coverageRate * 0.15) * 100).toFixed(1)),
-            selfReachable: false,
+            minLatencyMs: reachable.length ? Math.min(...reachable.map(row => Number(row.latencyMs) || 0)) : 0,
             eligibleByCanary: resolved >= Math.min(RUSSIA_GATE_CANARY_MIN_RESOLVED, canaryCount) &&
                 successRate >= RUSSIA_GATE_CANARY_MIN_SUCCESS_RATE,
         };
@@ -1518,43 +1466,14 @@ async function checkHostProviderPreflight(items = []) {
         );
     }
 
-    let nodeProbes;
-    try {
-        const request = await createCheckHostRequest(
-            new URL("https://check-host.net:443"),
-            "https",
-            configured
-        );
-        const probe = await pollCheckHostRequestUntilNodesSettled(request, {
-            timeoutMs: Math.min(18000, CHECK_HOST_MAX_POLL_MS + CHECK_HOST_GRACE_POLL_MS + 8000),
-            pollMs: Math.min(1500, RUSSIA_GATE_CANARY_POLL_MS),
-        });
-        nodeProbes = configured.map(node => {
-            const nodeResult = probe.results.find(row => row?.node === node);
-            return {
-                node,
-                reachable: nodeResult?.reachable === true,
-                inconclusive: Boolean(nodeResult?.inconclusive),
-                timeout: /timeout|timed out|aborted/i.test(String(nodeResult?.error || probe?.error || "")),
-                rateLimited: false,
-                error: nodeResult?.error || probe?.error || "",
-                latencyMs: Number(nodeResult?.latencyMs) || 0,
-            };
-        });
-    } catch (error) {
-        nodeProbes = configured.map(node => ({
-            node,
-            reachable: false,
-            inconclusive: false,
-            timeout: /timeout|timed out|aborted/i.test(String(error?.message || "")),
-            rateLimited: Number(error?.status || 0) === 429,
-            error: error?.message || String(error),
-            latencyMs: 0,
-        }));
-    }
-
+    // Do not probe check-host.net from its own Russian nodes. That is not a
+    // reliable liveness test for the checker node and can report every node as
+    // dead even while the nodes are serving normal third-party checks.
+    // The official API returns a per-node result for the real canary endpoints,
+    // so we use those results as the node-health signal instead.
     const canaries = selectRussiaGateCanaryItems(items);
     const canaryOutcomes = [];
+
     for (const canary of canaries) {
         try {
             const request = await createCheckHostRequest(canary.url, "tcp", configured);
@@ -1582,24 +1501,77 @@ async function checkHostProviderPreflight(items = []) {
     }
 
     const canaryStats = buildRussiaCanaryNodeStats(configured, canaryOutcomes, canaries.length);
-    for (const row of canaryStats) {
-        const self = nodeProbes.find(probe => probe.node === row.node);
-        row.selfReachable = Boolean(self?.reachable);
-        row.selfPreflightError = self?.error || "";
-        row.eligible = row.selfReachable && (canaryOutcomes.length < RUSSIA_GATE_CANARY_MIN_RESOLVED
-            ? true
-            : row.eligibleByCanary);
-    }
-
     const reliableCanaryChecks = canaryOutcomes.filter(outcome => outcome.settled).length;
     const canaryReliable = canaryOutcomes.length >= RUSSIA_GATE_CANARY_MIN_RESOLVED &&
         reliableCanaryChecks >= RUSSIA_GATE_CANARY_MIN_RESOLVED;
 
-    const { selectedPair, selectionReason } = selectRussiaCheckerPair(canaryStats, canaryReliable);
+    // A node is operational for gate purposes when Check-Host returns
+    // definitive results from that node. Reachability of the tested VPN host is
+    // intentionally NOT required here: a dead target and a dead checker are
+    // different conditions. This prevents the old "0/3 usable nodes" false
+    // negative while still excluding nodes that never return a result.
+    const observedNodes = canaryStats
+        .filter(row => row.resolved > 0)
+        .sort((a, b) =>
+            Number(b.score) - Number(a.score) ||
+            Number(b.resolved) - Number(a.resolved) ||
+            Number(b.reachable) - Number(a.reachable) ||
+            a.node.localeCompare(b.node)
+        );
 
-    const liveNodes = nodeProbes.filter(row => row.reachable).map(row => row.node);
-    const selectedLiveNodes = selectedPair || liveNodes.slice(0, 2);
-    const checkerMode = selectedLiveNodes.length >= 2 ? "dual" : selectedLiveNodes.length === 1 ? "single" : "skipped";
+    const eligibleNodes = canaryReliable
+        ? canaryStats
+            .filter(row => row.resolved >= Math.min(RUSSIA_GATE_CANARY_MIN_RESOLVED, canaries.length) &&
+                row.successRate >= RUSSIA_GATE_CANARY_MIN_SUCCESS_RATE)
+            .sort((a, b) => Number(b.score) - Number(a.score) || a.node.localeCompare(b.node))
+        : observedNodes.filter(row => row.coverageRate >= 0.25);
+
+    const selectableNodes = [...new Map(
+        [...eligibleNodes, ...observedNodes]
+            .map(row => [row.node, row])
+    ).values()];
+
+    const saintPetersburg = selectableNodes
+        .filter(row => row.cityGroup === "saint-petersburg")
+        .sort((a, b) => Number(b.score) - Number(a.score))[0] || null;
+    const moscow = selectableNodes
+        .filter(row => row.cityGroup === "moscow")
+        .sort((a, b) => Number(b.score) - Number(a.score));
+
+    let selectedPair = null;
+    let selectionReason = "No Russian Check-Host node returned a definitive canary result.";
+
+    // Preserve Moscow + Saint Petersburg when both are demonstrably alive.
+    if (saintPetersburg && moscow.length >= 1) {
+        selectedPair = [moscow[0].node, saintPetersburg.node];
+        selectionReason = "Selected Moscow + Saint Petersburg from canary-observed healthy nodes.";
+    } else if (selectableNodes.length >= 2) {
+        selectedPair = selectableNodes.slice(0, 2).map(row => row.node);
+        selectionReason = canaryReliable
+            ? "Selected the two healthiest Russian Check-Host nodes by canary quality."
+            : "Canary quorum was not fully reliable; selected the two nodes with the strongest observed definitive results.";
+    } else if (selectableNodes.length === 1) {
+        selectedPair = [selectableNodes[0].node];
+        selectionReason = "Only one Russian Check-Host node returned definitive canary results; single-node fallback enabled.";
+    }
+
+    const liveNodes = observedNodes.map(row => row.node);
+    const selectedLiveNodes = selectedPair || [];
+    const checkerMode = selectedLiveNodes.length >= 2
+        ? "dual"
+        : selectedLiveNodes.length === 1
+            ? "single"
+            : "skipped";
+
+    const nodeProbes = canaryStats.map(row => ({
+        node: row.node,
+        reachable: row.resolved > 0,
+        inconclusive: row.resolved === 0,
+        timeout: row.timeouts > 0,
+        rateLimited: false,
+        error: row.resolved > 0 ? "" : "No definitive canary result from this node",
+        latencyMs: row.reachable > 0 ? Number(row.minLatencyMs || 0) : 0,
+    }));
 
     return {
         nodeProbes,
@@ -1620,14 +1592,21 @@ async function checkHostProviderPreflight(items = []) {
         liveNodes,
         selectedLiveNodes,
         nodesTested: configured.length,
+        nodesUsable: liveNodes.length,
+        // Kept for compatibility with older diagnostics consumers. In the
+        // preflight this means "returned a definitive canary result", not
+        // "successfully reached the canary endpoint".
         nodesReachable: liveNodes.length,
-        quorumRequired: selectedLiveNodes.length >= 2 ? 2 : selectedLiveNodes.length === 1 ? 1 : 0,
+        quorumRequired: selectedLiveNodes.length >= 2
+            ? 2
+            : selectedLiveNodes.length === 1
+                ? 1
+                : 0,
         quorumMet: selectedLiveNodes.length >= 1,
         checkerMode,
         selectionReason,
     };
 }
-
 
 async function runRussiaGateEndpointCoordinator(endpointGroups, { maxInFlight = CHECK_HOST_MAX_IN_FLIGHT } = {}) {
     const startedAt = Date.now();
@@ -5213,10 +5192,10 @@ async function main() {
         ACTIVE_CHECK_HOST_RUSSIA_NODES = await resolveRussianCheckHostNodes();
         const requiredRussiaItems = [...managedItems];
 
-        // Verify the checker itself and then run a small deterministic canary set
-        // against real production endpoints. Node selection is based on that
-        // observed quality while preserving Moscow + Saint Petersburg coverage
-        // whenever Saint Petersburg is healthy.
+        // Run a small deterministic canary set against real production endpoints.
+        // Node selection is based on definitive results returned by each Russian
+        // checker while preserving Moscow + Saint Petersburg coverage whenever
+        // Saint Petersburg is healthy.
         const russiaPreflight = await checkHostProviderPreflight(requiredRussiaItems);
         const liveRussiaNodes = Array.isArray(russiaPreflight?.selectedLiveNodes)
             ? [...new Set(russiaPreflight.selectedLiveNodes)]
@@ -5227,7 +5206,7 @@ async function main() {
         const russiaCheckerMode = russiaPreflight?.checkerMode || (liveRussiaNodes.length >= 2 ? "dual" : liveRussiaNodes.length === 1 ? "single" : "skipped");
 
         console.log(
-            `RUSSIA CHECKER PREFLIGHT: ${russiaPreflight.nodesReachable}/${russiaPreflight.nodesTested} ` +
+            `RUSSIA CHECKER PREFLIGHT: ${russiaPreflight.nodesUsable ?? russiaPreflight.nodesReachable ?? 0}/${russiaPreflight.nodesTested} ` +
             `usable Russian node(s); mode=${russiaCheckerMode}; selected=${ACTIVE_CHECK_HOST_RUSSIA_NODES.join(",") || "none"}`
         );
 
