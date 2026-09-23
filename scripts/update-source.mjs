@@ -448,17 +448,18 @@ function countryFromRemark(
     }
   }
 
-  const flag = extractFlag(
-    remarks,
-    metadata
-  );
+  // For LTE/White List remarks, a leading flag is not authoritative: feeds
+  // often attach a generic 🇷🇺 flag even when no actual country is specified.
+  // An explicit country word/alias above still wins; otherwise the caller
+  // will place the entry into the neutral Europe bucket.
+  const flag = isWhiteListRemark(remarkText)
+    ? ""
+    : extractFlag(remarks, metadata);
 
   if (flag) {
     const country =
       FLAG_TO_COUNTRY[flag] ||
-      countryFromFlagValue(
-        flag
-      );
+      countryFromFlagValue(flag);
 
     if (country) {
       return {
@@ -518,21 +519,14 @@ function normalizeCountryRemark(
   }
 
   // Some Source White List profiles intentionally have no country
-  // in `remarks` (for example `🌐 Белый интернет`). Keep them instead
-  // of silently dropping them. When Source provides structured country
-  // metadata it is preferred above; otherwise use the requested Russia
-  // fallback for unflagged White List profiles.
+  // in `remarks` (for example `🌐 Белый интернет`). These are LTE/White
+  // List locations, not Russian locations. When no explicit country is
+  // present, keep them in the neutral Europe bucket.
   if (isWhiteListRemark(original)) {
     return {
-      flag:
-        flag ||
-        "🇷🇺",
-
-      country:
-        flag ? country : "Russia",
-
-      whiteList:
-        true,
+      flag: "🇪🇺",
+      country: "Europe",
+      whiteList: true,
     };
   }
 
@@ -2160,8 +2154,9 @@ function buildRetainedEntries(
     }
 
     const remarks = String(item?.remarks || "").trim();
-    const flag = extractFlag(remarks);
     const isWhiteList = MANAGED_WHITE_LIST_RE.test(item.id);
+    const explicitFlag = isWhiteList ? "" : extractFlag(remarks);
+    const flag = explicitFlag;
 
     let country = "Unknown";
     if (flag) {
@@ -2188,10 +2183,14 @@ function buildRetainedEntries(
 
     if (!isWhiteList && !isAllowedRegularCountry(country)) continue;
 
+    if (isWhiteList && country === "Unknown") {
+      country = "Europe";
+    }
+
     retained.push({
       link,
       remarks,
-      flag: flag || "🇷🇺",
+      flag: flag || (isWhiteList && country === "Europe" ? "🇪🇺" : ""),
       country,
       whiteList: isWhiteList,
       source,

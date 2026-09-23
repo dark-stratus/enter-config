@@ -143,7 +143,7 @@ function normalizeCountryName(value = "") {
     return aliases[aliasKey] || cleaned;
 }
 
-const WHITE_LIST_GEO_CACHE = new Map();
+
 
 const ROOT =
     path.resolve(
@@ -375,7 +375,7 @@ const RUSSIA_GATE_USE_CACHE =
     );
 // Bump whenever the gate semantics change so old cached verdicts cannot be
 // reused after changing providers or reachability rules.
-const RUSSIA_GATE_ALGORITHM_VERSION = Math.max(1, Number(process.env.HEALTHCHECK_RUSSIA_GATE_ALGORITHM_VERSION) || 36);
+const RUSSIA_GATE_ALGORITHM_VERSION = Math.max(1, Number(process.env.HEALTHCHECK_RUSSIA_GATE_ALGORITHM_VERSION) || 38);
 // Russia Gate is deliberately single-process. A per-shard limiter would create
 // multiple independent API streams and can trigger Check-Host 429 responses.
 const RUSSIA_GATE_SHARD_INDEX = 0;
@@ -413,17 +413,14 @@ const WHITE_LIST_CONNECTION_TIME_MAX_SINGLE_MS =
 // after the 3 HTTPS connectivity probes.
 const INDEPENDENT_SPEED_PROVIDER_MIN_PASSES =
     Math.max(
-        1,
-        Math.min(
-            3,
-            Number(process.env.HEALTHCHECK_SPEED_MIN_PROVIDER_PASSES) || 1
-        )
+        2,
+        Math.min(3, Number(process.env.HEALTHCHECK_SPEED_MIN_PROVIDER_PASSES) || 2)
     );
 
 const INDEPENDENT_SPEED_MIN_MEDIAN_KBPS =
     Math.max(
-        64,
-        Number(process.env.HEALTHCHECK_SPEED_MIN_MEDIAN_KBPS) || 1024
+        2048,
+        Number(process.env.HEALTHCHECK_SPEED_MIN_MEDIAN_KBPS) || 2048
     );
 
 const INDEPENDENT_SPEED_TIMEOUT_MS =
@@ -569,15 +566,6 @@ const GAMING_BACKUP_MIN_QUALITY_PASSES =
         )
     );
 
-const SPEED_PROVIDER_CONCURRENCY =
-    Math.max(
-        1,
-        Math.min(
-            INDEPENDENT_SPEED_PROVIDERS.length,
-            Number(process.env.HEALTHCHECK_SPEED_PROVIDER_CONCURRENCY) || 4
-        )
-    );
-
 const FAST_TOP_N = Math.max(1, Number(process.env.HEALTHCHECK_FAST_TOP_N) || 3);
 const GAMING_TOP_N = Math.max(1, Number(process.env.HEALTHCHECK_GAMING_TOP_N) || 3);
 const GAMING_SERVERS_PER_COUNTRY = Math.max(
@@ -683,45 +671,6 @@ function extractWhiteListCountryFromRemarks(remarks = "") {
     }
 
     return "";
-}
-
-async function resolveWhiteListCountry(link, remarks = "") {
-    const fromRemarks = extractWhiteListCountryFromRemarks(remarks);
-    if (fromRemarks) return fromRemarks;
-
-    try {
-        const url = new URL(String(link || ""));
-        const host = url.hostname;
-        if (!host) return "";
-
-        if (WHITE_LIST_GEO_CACHE.has(host)) {
-            return WHITE_LIST_GEO_CACHE.get(host);
-        }
-
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 5000);
-
-        try {
-            const response = await fetch(
-                `https://ipwho.is/${encodeURIComponent(host)}?fields=success,country`,
-                { signal: controller.signal, headers: { accept: "application/json" } }
-            );
-
-            if (!response.ok) return "";
-            const data = await response.json();
-            const country =
-                data?.success && typeof data?.country === "string"
-                    ? data.country.trim()
-                    : "";
-
-            if (country) WHITE_LIST_GEO_CACHE.set(host, normalizeCountryName(country));
-            return normalizeCountryName(country);
-        } finally {
-            clearTimeout(timeout);
-        }
-    } catch {
-        return "";
-    }
 }
 
 function countryFlag(country = "") {
@@ -3576,50 +3525,37 @@ async function runYandexSpeedProvider(
 async function runIndependentSpeedCheck(
     socksPort
 ) {
-    // Measure all four providers in one wall-clock window to cut the expensive
-    // serial wait roughly in half/quarter while retaining all provider samples.
-    const providers = new Array(INDEPENDENT_SPEED_PROVIDERS.length);
-    let nextIndex = 0;
+    // Measure providers sequentially for each candidate. Running several large
+    // downloads through the same Xray tunnel at once makes the measurements
+    // compete with each other and can under-report a genuinely fast server.
+    // Cross-candidate concurrency is still bounded by the global limiter.
+    const providers = [];
 
-    async function worker() {
-        while (true) {
-            const index = nextIndex++;
-            if (index >= INDEPENDENT_SPEED_PROVIDERS.length) return;
-
-            const provider = INDEPENDENT_SPEED_PROVIDERS[index];
-            try {
-                let result;
-                result = await speedProviderLimiter(async () => {
-                    if (provider.type === "ndt7") {
-                        return runMlabSpeedProvider(socksPort);
-                    } else if (provider.type === "yandex") {
-                        return runYandexSpeedProvider(socksPort);
-                    }
-                    return runIndependentCurlSpeedProvider(socksPort, provider);
-                });
-                providers[index] = result;
-            } catch (error) {
-                providers[index] = {
-                    provider: provider.id,
-                    label: provider.label,
-                    type: provider.type,
-                    ok: false,
-                    kbps: 0,
-                    bytes: 0,
-                    elapsedMs: 0,
-                    error: error?.message || "provider error",
-                    attempts: [],
-                };
-            }
+    for (const provider of INDEPENDENT_SPEED_PROVIDERS) {
+        try {
+            const result = await speedProviderLimiter(async () => {
+                if (provider.type === "ndt7") {
+                    return runMlabSpeedProvider(socksPort);
+                } else if (provider.type === "yandex") {
+                    return runYandexSpeedProvider(socksPort);
+                }
+                return runIndependentCurlSpeedProvider(socksPort, provider);
+            });
+            providers.push(result);
+        } catch (error) {
+            providers.push({
+                provider: provider.id,
+                label: provider.label,
+                type: provider.type,
+                ok: false,
+                kbps: 0,
+                bytes: 0,
+                elapsedMs: 0,
+                error: error?.message || "provider error",
+                attempts: [],
+            });
         }
     }
-
-    await Promise.all(
-        Array.from(
-            { length: Math.min(SPEED_PROVIDER_CONCURRENCY, INDEPENDENT_SPEED_PROVIDERS.length) },
-            () => worker()
-        )
-    );
 
     const orderedProviders = providers.filter(Boolean);
 
@@ -4119,6 +4055,17 @@ function buildCountryHealthPool(
                 const bSpeed = Number(b.quality?.kbps) || 0;
                 if (aSpeed !== bSpeed) return bSpeed - aSpeed;
 
+                // Speed remains the primary criterion. When speeds tie, prefer
+                // candidates backed by more independent providers, then lower
+                // measured connection latency, then lower gaming latency.
+                const aProviders = Number(a.quality?.passedCount) || 0;
+                const bProviders = Number(b.quality?.passedCount) || 0;
+                if (aProviders !== bProviders) return bProviders - aProviders;
+
+                const aConnection = Number(a.connection?.medianMs) || Infinity;
+                const bConnection = Number(b.connection?.medianMs) || Infinity;
+                if (aConnection !== bConnection) return aConnection - bConnection;
+
                 const aLatency = Number(a.gaming?.medianLatencyMs) || Infinity;
                 const bLatency = Number(b.gaming?.medianLatencyMs) || Infinity;
                 return aLatency - bLatency;
@@ -4234,15 +4181,27 @@ function resultConnectionMs(result) {
 }
 
 function percentileRank(value, values, { ascending = true } = {}) {
-    const finite = values.filter(Number.isFinite).slice().sort((a, b) => a - b);
+    const finite = values
+        .filter(Number.isFinite)
+        .slice();
+
     if (!finite.length || !Number.isFinite(value)) return 0;
     if (finite.length === 1) return 1;
-    let below = 0;
-    for (const candidate of finite) {
-        if (ascending ? candidate <= value : candidate >= value) below += 1;
-        else break;
-    }
-    return below / finite.length;
+
+    // Percentile is expressed as "how much of the population is no better
+    // than this value". For a higher-is-better metric (speed), more values
+    // must be <= the candidate. For a lower-is-better metric (latency), more
+    // values must be >= the candidate. The previous implementation inverted
+    // this relationship and could promote slower servers into Fast.
+    const noBetterCount = finite.reduce(
+        (count, candidate) =>
+            count + (ascending
+                ? (candidate >= value ? 1 : 0)
+                : (candidate <= value ? 1 : 0)),
+        0
+    );
+
+    return noBetterCount / finite.length;
 }
 
 function selectFeaturedFastServers(results, limit = FAST_TOP_N, allowedCountries = FEATURED_COUNTRIES) {
@@ -4327,7 +4286,10 @@ function selectFeaturedGamingServers(
                 result.ok &&
                 !result.whiteList &&
                 result.country &&
-                Number(result.gaming?.tier || 0) > 0
+                // Featured Gaming is intentionally strict: only the primary
+                // Tier-1 gaming class is eligible. Tier-2 remains diagnostic
+                // data but is never promoted merely to fill the target.
+                Number(result.gaming?.tier || 0) === 1
         );
 
     const excluded = new Set(
@@ -4363,25 +4325,14 @@ function selectFeaturedGamingServers(
                 return resultSpeed(b) - resultSpeed(a);
             });
 
-            // Prefer one primary Gaming node per country. A second node from
-            // the same country is used only when the requested server count
-            // cannot otherwise be filled.
-            const primary = sorted.find(item =>
-                Number(item.gaming?.tier) === 1 ||
-                Number(item.gaming?.tier) === 2
-            );
+            // Only Tier-1 candidates reach this function, so the first ranked
+            // member is the strict primary Gaming node for this country.
+            const primary = sorted[0];
             if (!primary) return null;
-
-            const backup = sorted.find(item =>
-                item.linkFingerprint !== primary.linkFingerprint &&
-                Number(item.gaming?.tier) > 0 &&
-                Number(item.gaming?.tier) <= 2
-            );
 
             return {
                 country: group.country,
                 primary,
-                backup,
             };
         })
         .filter(Boolean)
@@ -4402,18 +4353,9 @@ function selectFeaturedGamingServers(
         selected.push(group.primary);
     }
 
-    // Only then use second/backup nodes from already represented countries.
-    if (selected.length < maxServers) {
-        for (const group of rankedCountries) {
-            if (selected.length >= maxServers) break;
-            if (!group.backup) continue;
-            if (selected.some(item =>
-                item.linkFingerprint === group.backup.linkFingerprint
-            )) continue;
-            selected.push(group.backup);
-        }
-    }
-
+    // Do not pad the target with a second node from an already selected
+    // country. If fewer distinct Tier-1 gaming countries exist, publish fewer
+    // Gaming locations rather than weakening the quality or country invariant.
     return selected.slice(0, maxServers);
 }
 
@@ -4446,21 +4388,52 @@ function applyFeaturedRegularBadges(
         selectedFingerprints.has(result.linkFingerprint)
     );
 
-    const fast = selectFeaturedFastServers(featuredCandidates, targets.fast);
-    const fastFingerprints = new Set(fast.map(item => item.linkFingerprint));
-    // Fast and Gaming are mutually exclusive at the country level. Once a
-    // country is assigned to Fast, Gaming is allowed to choose only from the
-    // remaining eligible countries. The same country can therefore appear in
-    // exactly one featured category, never in Fast + Gaming simultaneously.
-    const fastCountries = new Set(
-        fast.map(item => String(item.country || '').trim().toLowerCase()).filter(Boolean)
-    );
+    // Gaming gets first claim on the strongest low-latency countries. This
+    // prevents Fast from consuming a country that is the only valid Gaming
+    // candidate. Fast is then selected only from countries left over.
     const gaming = selectFeaturedGamingServers(
         featuredCandidates,
-        fastCountries,
+        new Set(),
         targets.gaming
     );
+    if (gaming.some(item => String(item.country || "").trim().toLowerCase() === "russia")) {
+        throw new Error("Russia must never be assigned to Gaming");
+    }
+
+    const gamingCountries = new Set(
+        gaming
+            .map(item => String(item.country || "").trim().toLowerCase())
+            .filter(Boolean)
+    );
+
+    const fastAllowedCountries = new Set(
+        [...FEATURED_COUNTRIES].filter(country => !gamingCountries.has(country))
+    );
+
+    const fast = selectFeaturedFastServers(
+        featuredCandidates,
+        targets.fast,
+        fastAllowedCountries
+    );
+    if (fast.some(item => String(item.country || "").trim().toLowerCase() === "russia")) {
+        throw new Error("Russia must never be assigned to Fast");
+    }
+    const fastFingerprints = new Set(fast.map(item => item.linkFingerprint));
     const gamingFingerprints = new Set(gaming.map(item => item.linkFingerprint));
+
+    const featuredCountryOwners = new Map();
+    for (const [category, items] of [["gaming", gaming], ["fast", fast]]) {
+        for (const item of items) {
+            const key = String(item.country || "").trim().toLowerCase();
+            if (!key) continue;
+            const owner = featuredCountryOwners.get(key);
+            if (owner && owner !== category) {
+                throw new Error(`Featured country conflict: ${item.country} is both ${owner} and ${category}`);
+            }
+            featuredCountryOwners.set(key, category);
+        }
+    }
+
     const byFingerprint = new Map(healthResults.map(result => [result.linkFingerprint, result]));
 
     const fastMeta = fast.map((item, index) => ({
@@ -5038,6 +5011,26 @@ async function main() {
             const failedTargets = remote.filter(result => !result?.ok);
             const connection = connectionMetrics(remote, { whiteList: false });
 
+            // A successful proxy request is not enough for an ordinary server:
+            // measured effective connection latency is itself a publication gate.
+            // Keep this strict so slow/unsteady endpoints do not reach Happ just
+            // because their bulk-speed provider happened to be fast.
+            if (!connection.eligible) {
+                return {
+                    item,
+                    ok: false,
+                    protocol,
+                    russiaProbe,
+                    reason:
+                        `${transport.toUpperCase()} + Xray + connection latency gate failed ` +
+                        `(median ${connection.medianMs || "?"} ms, max ${Number.isFinite(connection.maxMs) ? connection.maxMs : "?"} ms; ` +
+                        `required <= ${connection.limits?.medianMs} ms median / <= ${connection.limits?.singleMs} ms single)`,
+                    quality: null,
+                    connection,
+                    remote,
+                };
+            }
+
             const quality = await runIndependentSpeedCheck(xray.socksPort);
 
             const details = failedTargets
@@ -5127,10 +5120,7 @@ async function main() {
                 isWhiteList && result.ok
                     ? (
                         remarkCountry ||
-                        await resolveWhiteListCountry(
-                            String(item.link || ""),
-                            String(item.remarks || "")
-                        )
+                        "Europe"
                     )
                     : (
                         meta.sourceMeta?.country ||
@@ -6374,12 +6364,12 @@ async function main() {
             `- Retained from previous pool: ${report.retainedFromPreviousPool ?? "?"}`,
             `- Before health-check: ${report.totalBeforeHealthCheck ?? "?"}`,
             `- Health-check: **${passed} passed / ${failed} failed**`,
-            `- Regular: local TCP (TCP only) + Xray + synthetic HTTPS diagnostics + independent speed providers + Gaming metrics`,
+            `- Regular: local TCP (TCP only) + Xray + measured connection-latency gate + independent speed providers + Gaming metrics`,
             `- LTE: Russia Gate + exact-link Xray (${LTE_XRAY_ATTEMPTS} attempt(s); Cloudflare fallback) + LTE-only Globalping (TCP protocols)`,
             `- Independent speed providers for regular servers: ${INDEPENDENT_SPEED_PROVIDERS.map(provider => provider.label).join(", ")}`,
             `- Regular speed rule: ${INDEPENDENT_SPEED_PROVIDER_MIN_PASSES}/${INDEPENDENT_SPEED_PROVIDERS.length} providers + median >= ${INDEPENDENT_SPEED_MIN_MEDIAN_KBPS} KB/s`,
-            `- Synthetic HTTPS targets are diagnostics only; they no longer decide server eligibility`,
-            `- Independent speed tests run sequentially per candidate to avoid sharing one VPN route between providers`,
+            `- Synthetic HTTPS targets are diagnostics only; measured connection latency and independent speed are hard eligibility gates`,
+            `- Independent speed tests run sequentially per candidate; candidates remain globally concurrent via the speed limiter`,
             `- Temporary quarantine: 90 minutes after a failed health check`,
             `- Final managed servers: **${report.finalManagedServers}**`,
         ];
