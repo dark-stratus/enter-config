@@ -2,6 +2,11 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import crypto from "node:crypto";
+import {
+  REGULAR_COUNTRY_ORDER,
+  REGULAR_COUNTRY_RANK,
+  isAllowedRegularCountry,
+} from "./pool-policy.mjs";
 
 const ROOT = process.env.GITHUB_WORKSPACE
   ? path.resolve(process.env.GITHUB_WORKSPACE)
@@ -13,38 +18,6 @@ const UPDATE_STATUS_FILE = path.join(ROOT, "config", "source-update-status.json"
 
 const REGULAR_LIMIT = Number.POSITIVE_INFINITY;
 const AUTO_WHITE_LIST_LIMIT = Number.POSITIVE_INFINITY;
-
-const ALLOWED_REGULAR_COUNTRIES = new Set([
-  "Germany",
-  "Netherlands",
-  "United Kingdom",
-  "United States",
-  "Canada",
-  "France",
-  "Switzerland",
-  "Sweden",
-  "Finland",
-  "Poland",
-  "Estonia",
-  "Austria",
-  "Italy",
-  "Hungary",
-  "Bulgaria",
-]);
-
-const REGULAR_COUNTRY_ORDER = [
-  "Germany", "Netherlands", "United Kingdom", "United States", "Canada",
-  "France", "Switzerland", "Sweden", "Finland", "Poland", "Estonia",
-  "Austria", "Italy", "Hungary", "Bulgaria",
-];
-const REGULAR_COUNTRY_RANK = new Map(
-  REGULAR_COUNTRY_ORDER.map((country, index) => [country.toLowerCase(), index])
-);
-
-function isAllowedRegularCountry(country) {
-  return ALLOWED_REGULAR_COUNTRIES.has(String(country || "").trim());
-}
-
 
 // 15 logical source slots: 1-8 regular, 9-15 whitelist.
 // External URLs are supplied by GitHub Secrets through the workflow.
@@ -2691,9 +2664,9 @@ async function main() {
     merged.regular
   );
 
-  // Keep all White List candidates until after health-check. We do not
-  // assign countries or rewrite names here: only a passed candidate gets
-  // grouped later into a country LTE balancer.
+  // Keep all White List candidates until after health-check. Their country
+  // metadata is preserved when the source already provides it, but whitelist
+  // publication still remains independent from the ordinary country policy.
   const automaticWhiteList = merged.whiteList
     .filter(item => item && item.link)
     .map(item => ({
@@ -2750,6 +2723,9 @@ async function main() {
       remarks: item.remarks || "",
       link: String(item.link || "").trim(),
       ...(item.source ? { source: item.source } : {}),
+      ...(item.country ? { country: item.country } : {}),
+      ...(item.flag ? { flag: item.flag } : {}),
+      whiteList: false,
       ...(item.sourceKind === "json" ? {
         configFile: `source-regular-${String(index + 1).padStart(2, "0")}.json`,
         sourceKind: "json",
@@ -2760,6 +2736,9 @@ async function main() {
       remarks: item.remarks || "",
       link: String(item.link || "").trim(),
       ...(item.source ? { source: item.source } : {}),
+      ...(item.country ? { country: item.country } : {}),
+      ...(item.flag ? { flag: item.flag } : {}),
+      whiteList: true,
       ...(item.sourceKind === "json" ? {
         configFile: `source-whitelist-${String(index + 1).padStart(2, "0")}.json`,
         sourceKind: "json",

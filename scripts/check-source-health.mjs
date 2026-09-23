@@ -8,6 +8,12 @@ import crypto from "node:crypto";
 import { spawn } from "node:child_process";
 import { parseLink, buildOutbound } from "./link-runtime.mjs";
 import { runLteGlobalpingGate } from "./lte-globalping-gate.mjs";
+import {
+    FEATURED_COUNTRIES,
+    REGULAR_COUNTRY_RANK,
+    MAX_SERVERS_PER_REGULAR_COUNTRY,
+    calculateFeaturedTargetCounts,
+} from "./pool-policy.mjs";
 
 const COUNTRY_BY_FLAG = {
     "🇪🇺": "Europe",
@@ -520,8 +526,9 @@ const COUNTRY_POOL_SIZE =
     Math.max(
         1,
         Math.min(
-            3,
-            Number(process.env.HEALTHCHECK_COUNTRY_POOL_SIZE) || 3
+            MAX_SERVERS_PER_REGULAR_COUNTRY,
+            Number(process.env.HEALTHCHECK_COUNTRY_POOL_SIZE) ||
+                MAX_SERVERS_PER_REGULAR_COUNTRY
         )
     );
 
@@ -576,35 +583,6 @@ const SPEED_PROVIDER_CONCURRENCY =
     );
 
 const FAST_TOP_N = Math.max(1, Number(process.env.HEALTHCHECK_FAST_TOP_N) || 3);
-const FEATURED_COUNTRY_ORDER = [
-    "Netherlands",
-    "Germany",
-    "Sweden",
-    "Finland",
-    "Estonia",
-    "Poland",
-];
-const FEATURED_COUNTRIES = new Set(FEATURED_COUNTRY_ORDER.map(country => country.toLowerCase()));
-
-// Europe is a permanent visible location and therefore counts toward the
-// Fast/Gaming thresholds used for the final subscription layout.
-function calculateFeaturedTargetCounts(visibleLocationCount) {
-    const count = Math.max(0, Number(visibleLocationCount) || 0);
-
-    if (count > 15) {
-        return { total: 6, fast: 3, gaming: 3 };
-    }
-
-    if (count > 10) {
-        return { total: 4, fast: 2, gaming: 2 };
-    }
-
-    if (count > 5) {
-        return { total: 2, fast: 1, gaming: 1 };
-    }
-
-    return { total: 0, fast: 0, gaming: 0 };
-}
 const GAMING_TOP_N = Math.max(1, Number(process.env.HEALTHCHECK_GAMING_TOP_N) || 3);
 const GAMING_SERVERS_PER_COUNTRY = Math.max(
     1,
@@ -2521,12 +2499,17 @@ async function startXray(link, { udp = false, startTimeoutMs = XRAY_START_TIMEOU
                     if (settled) return;
                     settled = true;
 
-                    const details =
-                        stderr.trim() ||
-                        `xray exited with code ${code}` +
-                        (signal
-                            ? ` (${signal})`
-                            : "");
+                    const details = [
+                        stderr.trim()
+                            ? stderr.trim().replace(/\s+/g, " ").slice(0, 400)
+                            : "",
+                        code !== null
+                            ? `exit=${code}`
+                            : "",
+                        signal
+                            ? `signal=${signal}`
+                            : "",
+                    ].filter(Boolean).join(" | ") || "xray exited without diagnostics";
 
                     resolve({
                         ok: false,
@@ -4192,7 +4175,26 @@ function buildCountryHealthPool(
                 goodServerCount: speeds.length,
             };
         })
-        .sort((a, b) => b.countryScore - a.countryScore);
+        .sort((a, b) => {
+            // Ordinary locations use the fixed product order. Score is only a
+            // tie-breaker, so a slow/poor country can never reorder the UX.
+            // Whitelist/LTE remains score-driven because it is an independent
+            // reachability pool rather than the ordinary location menu.
+            if (!whiteListOnly) {
+                const aRank =
+                    REGULAR_COUNTRY_RANK.get(
+                        String(a.country || "").trim().toLowerCase()
+                    ) ?? Number.MAX_SAFE_INTEGER;
+                const bRank =
+                    REGULAR_COUNTRY_RANK.get(
+                        String(b.country || "").trim().toLowerCase()
+                    ) ?? Number.MAX_SAFE_INTEGER;
+
+                if (aRank !== bRank) return aRank - bRank;
+            }
+
+            return b.countryScore - a.countryScore;
+        });
 
     return entries.slice(0, MAX_VISIBLE_COUNTRIES);
 }
@@ -4307,6 +4309,9 @@ function selectFeaturedGamingServers(
     limit = GAMING_TOP_N,
     allowedCountries = FEATURED_COUNTRIES
 ) {
+    const maxServers = Math.max(0, Number(limit) || 0);
+    if (maxServers === 0) return [];
+
     const candidates = results
         .filter(
             result =>
@@ -4336,18 +4341,22 @@ function selectFeaturedGamingServers(
     const rankedCountries = [...groups.values()]
         .map(group => {
             const sorted = group.members.slice().sort((a, b) => {
-                const tierDiff = (Number(a.gaming?.tier) || 9) - (Number(b.gaming?.tier) || 9);
+                const tierDiff =
+                    (Number(a.gaming?.tier) || 9) -
+                    (Number(b.gaming?.tier) || 9);
                 if (tierDiff) return tierDiff;
-                const scoreDiff = (Number(b.gaming?.score) || 0) - (Number(a.gaming?.score) || 0);
+
+                const scoreDiff =
+                    (Number(b.gaming?.score) || 0) -
+                    (Number(a.gaming?.score) || 0);
                 if (scoreDiff) return scoreDiff;
+
                 return resultSpeed(b) - resultSpeed(a);
             });
 
-            // A Gaming country may be represented by either a strict Tier-1
-            // server or a Tier-2 backup when no Tier-1 candidate exists.
-            // This keeps the requested Gaming location count achievable without
-            // relaxing the underlying Gaming quality/latency tiers: Tier-2
-            // candidates remain explicitly marked as backup-tier Gaming nodes.
+            // Prefer one primary Gaming node per country. A second node from
+            // the same country is used only when the requested server count
+            // cannot otherwise be filled.
             const primary = sorted.find(item =>
                 Number(item.gaming?.tier) === 1 ||
                 Number(item.gaming?.tier) === 2
@@ -4362,21 +4371,49 @@ function selectFeaturedGamingServers(
 
             return {
                 country: group.country,
-                members: backup ? [primary, backup] : [primary]
+                primary,
+                backup,
             };
         })
         .filter(Boolean)
         .sort((a, b) => {
-            const scoreDiff = (Number(b.members[0]?.gaming?.score) || 0) - (Number(a.members[0]?.gaming?.score) || 0);
+            const scoreDiff =
+                (Number(b.primary?.gaming?.score) || 0) -
+                (Number(a.primary?.gaming?.score) || 0);
             if (scoreDiff) return scoreDiff;
-            return resultSpeed(b.members[0]) - resultSpeed(a.members[0]);
-        })
-        .slice(0, Math.max(1, limit));
 
-    return rankedCountries.flatMap(country => country.members);
+            return resultSpeed(b.primary) - resultSpeed(a.primary);
+        });
+
+    const selected = [];
+
+    // First fill the target with distinct countries.
+    for (const group of rankedCountries) {
+        if (selected.length >= maxServers) break;
+        selected.push(group.primary);
+    }
+
+    // Only then use second/backup nodes from already represented countries.
+    if (selected.length < maxServers) {
+        for (const group of rankedCountries) {
+            if (selected.length >= maxServers) break;
+            if (!group.backup) continue;
+            if (selected.some(item =>
+                item.linkFingerprint === group.backup.linkFingerprint
+            )) continue;
+            selected.push(group.backup);
+        }
+    }
+
+    return selected.slice(0, maxServers);
 }
 
-function applyFeaturedRegularBadges(indexEntries, healthResults, featuredTargets) {
+function applyFeaturedRegularBadges(
+    indexEntries,
+    healthResults,
+    featuredTargets,
+    selectedCountries = []
+) {
     const targets = featuredTargets || calculateFeaturedTargetCounts(
         new Set(
             healthResults
@@ -4384,7 +4421,23 @@ function applyFeaturedRegularBadges(indexEntries, healthResults, featuredTargets
                 .map(result => String(result.country).trim().toLowerCase())
         ).size
     );
-    const fast = selectFeaturedFastServers(healthResults, targets.fast);
+
+    // Featured nodes must come from the same per-country top-3 pool that will
+    // be published. Otherwise Fast/Gaming could promote a fourth server from a
+    // country and silently violate the ordinary three-server country cap.
+    const selectedFingerprints = new Set(
+        (Array.isArray(selectedCountries) ? selectedCountries : [])
+            .flatMap(country => country.members || [])
+            .map(member => member?.linkFingerprint)
+            .filter(Boolean)
+    );
+    const featuredCandidates = healthResults.filter(result =>
+        !result.whiteList &&
+        result.ok &&
+        selectedFingerprints.has(result.linkFingerprint)
+    );
+
+    const fast = selectFeaturedFastServers(featuredCandidates, targets.fast);
     const fastFingerprints = new Set(fast.map(item => item.linkFingerprint));
     // Fast and Gaming are mutually exclusive at the country level. Once a
     // country is assigned to Fast, Gaming is allowed to choose only from the
@@ -4588,6 +4641,19 @@ async function main() {
     } catch {}
 
     const candidateMap = diagnosticReport.candidateMap || {};
+    const candidateManifestByFingerprint = new Map(
+        candidates
+            .filter(item => item && item.link)
+            .map(item => [
+                fingerprintLink(item.link),
+                item,
+            ])
+    );
+
+    const getCandidateMeta = fingerprint => ({
+        ...(candidateMap[fingerprint] || {}),
+        ...(candidateManifestByFingerprint.get(fingerprint) || {}),
+    });
 
     const expectedCandidateCount =
         Number(diagnosticReport.totalBeforeHealthCheck) || 0;
@@ -4841,7 +4907,7 @@ async function main() {
         const linkFingerprint = fingerprintLink(link);
         checkedLinkMeta.set(item.id, {
             linkFingerprint,
-            sourceMeta: candidateMap[linkFingerprint] || null,
+            sourceMeta: getCandidateMeta(linkFingerprint) || null,
         });
 
         let url;
@@ -4852,7 +4918,7 @@ async function main() {
         }
 
         const protocol = getProtocol(link);
-        const sourceMeta = candidateMap[linkFingerprint] || null;
+        const sourceMeta = getCandidateMeta(linkFingerprint) || null;
         const isWhiteListCandidate = Boolean(
             sourceMeta?.whiteList ||
             item?.whiteList === true ||
@@ -5227,8 +5293,8 @@ async function main() {
                 results: managedItems.map(item => ({
                     id: item.id,
                     link: String(item.link || "").trim(),
-                    source: candidateMap[fingerprintLink(item.link || "")]?.source || item.source || "retained/manual",
-                    country: candidateMap[fingerprintLink(item.link || "")]?.country || "",
+                    source: getCandidateMeta(fingerprintLink(item.link || ""))?.source || item.source || "retained/manual",
+                    country: getCandidateMeta(fingerprintLink(item.link || ""))?.country || "",
                     required: false,
                     gatePassed: true,
                     gatePending: false,
@@ -5449,7 +5515,7 @@ async function main() {
                 checkedAt: Date.now(),
                 reason: "Russia gate result missing"
             };
-            const sourceMeta = candidateMap[fp] || null;
+            const sourceMeta = getCandidateMeta(fp) || null;
             return {
                 id: item.id,
                 link: String(item.link || "").trim(),
@@ -5536,7 +5602,7 @@ async function main() {
             continue;
         }
 
-        const sourceMeta = candidateMap[fp] || null;
+        const sourceMeta = getCandidateMeta(fp) || null;
         const resolvedCountry = sourceMeta?.country || String(item.remarks || "").replace(/^\S+\s*/, "").replace(/\s+\d+$/, "");
         healthResults.push({
             id: item.id, remarks: item.remarks || "", link: String(item.link || "").trim(),
@@ -5623,7 +5689,8 @@ async function main() {
     const featured = applyFeaturedRegularBadges(
         managedItems,
         healthResults,
-        featuredTargets
+        featuredTargets,
+        selectedCountries
     );
     const featuredById = new Map(
         managedItems
@@ -5635,12 +5702,30 @@ async function main() {
     const selectedWhiteListCountries =
         buildCountryHealthPool(healthResults, true);
 
-    const selectedRegularFingerprints =
-        new Set(
-            selectedNormalCountries.flatMap(
-                country => country.members.map(member => member.linkFingerprint)
-            )
-        );
+    // Featured Fast/Gaming are badges on ordinary servers, not replacements
+    // for their whole country. Keep every selected healthy server except the
+    // exact featured members; this prevents an entire country from disappearing
+    // merely because one of its servers is Fast/Gaming.
+    const featuredRegularFingerprints = new Set([
+        ...featured.fast,
+        ...featured.gaming,
+    ].map(item => item.linkFingerprint).filter(Boolean));
+
+    const selectedNormalCountries = selectedCountries
+        .map(country => ({
+            ...country,
+            members: country.members.filter(
+                member => !featuredRegularFingerprints.has(member.linkFingerprint)
+            ),
+        }))
+        .filter(country => country.members.length > 0);
+
+    const selectedRegularFingerprints = new Set([
+        ...featuredRegularFingerprints,
+        ...selectedNormalCountries.flatMap(
+            country => country.members.map(member => member.linkFingerprint)
+        ),
+    ]);
 
     const selectedWhiteListFingerprints =
         new Set(
@@ -5650,16 +5735,15 @@ async function main() {
         );
 
     const selectedRegularIds =
-        new Set([
-            ...featuredFastIds,
-            ...healthResults
+        new Set(
+            healthResults
                 .filter(result =>
                     result.ok &&
                     !result.whiteList &&
                     selectedRegularFingerprints.has(result.linkFingerprint)
                 )
                 .map(result => result.id)
-        ]);
+        );
 
     const selectedWhiteListIds =
         new Set(
@@ -5708,20 +5792,6 @@ async function main() {
         }
     }
 
-    const featuredFastCountries = new Set(
-        featured.fast.map(item => String(item.country || '').trim().toLowerCase()).filter(Boolean)
-    );
-    const featuredGamingCountries = new Set(
-        featured.gaming.map(item => String(item.country || '').trim().toLowerCase()).filter(Boolean)
-    );
-    const featuredCountries = new Set([
-        ...featuredFastCountries,
-        ...featuredGamingCountries,
-    ]);
-    const selectedNormalCountries = selectedCountries.filter(country =>
-        !featuredCountries.has(String(country.country || '').trim().toLowerCase())
-    );
-
     const gamingAssignments =
         await buildGamingAssignments(
             selectedNormalCountries,
@@ -5757,6 +5827,7 @@ async function main() {
 
     const selectedRegularOrder = [
         ...featured.fast.map(item => item.id),
+        ...featured.gaming.map(item => item.id),
         ...selectedNormalCountries.flatMap(
             country => country.members
                 .filter(member => !featuredFastIds.has(member.id))

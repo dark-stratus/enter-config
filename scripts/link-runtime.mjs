@@ -215,8 +215,21 @@ function buildVlessStream(server) {
         let extra = {};
         if (server.extra) {
             try {
-                extra = JSON.parse(safeDecodeURIComponent(server.extra));
-            } catch {}
+                const parsedExtra = JSON.parse(
+                    safeDecodeURIComponent(server.extra)
+                );
+                if (
+                    parsedExtra &&
+                    typeof parsedExtra === "object" &&
+                    !Array.isArray(parsedExtra)
+                ) {
+                    extra = parsedExtra;
+                }
+            } catch {
+                // `extra=null` and malformed optional metadata are treated as
+                // an empty XHTTP extra object; the explicit host/path/mode
+                // fields remain authoritative.
+            }
         }
 
         stream.network = "xhttp";
