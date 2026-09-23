@@ -550,7 +550,7 @@ jobs:
           HEALTHCHECK_RUSSIA_GATE_USE_CACHE: 0
           HEALTHCHECK_RUSSIA_GATE_STATE_MAX_AGE_MS: 21600000
           HEALTH_CANDIDATES_FILE: ${{ github.workspace }}/config/source-health-candidates.json
-          HEALTHCHECK_RUSSIA_GATE_ALGORITHM_VERSION: 37
+          HEALTHCHECK_RUSSIA_GATE_ALGORITHM_VERSION: 38
         run: |
           set -euo pipefail
           node scripts/check-source-health.mjs
@@ -673,9 +673,9 @@ jobs:
           HEALTHCHECK_MLAB_PROBE_SCRIPT: ${{ github.workspace }}/scripts/ndt7-probe.py
           HEALTHCHECK_MLAB_LOCATE_URL: https://locate.measurementlab.net/v2/nearest/ndt/ndt7
           HEALTHCHECK_MLAB_LOCATE_TIMEOUT_MS: 8000
-          HEALTHCHECK_SPEED_MIN_PROVIDER_PASSES: 1
+          HEALTHCHECK_SPEED_MIN_PROVIDER_PASSES: 2
           HEALTHCHECK_REQUIRED_SPEED_PROVIDER_IDS: ""
-          HEALTHCHECK_SPEED_MIN_MEDIAN_KBPS: 1024
+          HEALTHCHECK_SPEED_MIN_MEDIAN_KBPS: 2048
           HEALTHCHECK_SPEED_TIMEOUT_MS: 10000
           HEALTHCHECK_SPEED_PROVIDER_GLOBAL_CONCURRENCY: 20
           HEALTHCHECK_MLAB_LOCATE_CONCURRENCY: 3
@@ -689,7 +689,6 @@ jobs:
           RUSSIA_GATE_FILE: ${{ github.workspace }}/config/source-russia-gate.json
           UPDATE_CONNECTIVITY_URL: ${{ vars.UPDATE_CONNECTIVITY_URL }}
           HEALTHCHECK_CONCURRENCY: 16
-          HEALTHCHECK_SPEED_PROVIDER_CONCURRENCY: 4
           HEALTHCHECK_FAST_TOP_N: 3
           HEALTHCHECK_GAMING_TOP_N: 4
           HEALTHCHECK_MAX_COUNTRIES: 20
