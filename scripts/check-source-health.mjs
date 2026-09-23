@@ -4177,6 +4177,36 @@ function buildCountryHealthPool(
 
     return entries.slice(0, MAX_VISIBLE_COUNTRIES);
 }
+function assertFeaturedCountryPartition(featured, ordinaryCountries) {
+    const owners = new Map();
+
+    const register = (country, category) => {
+        const key = String(country || "").trim().toLowerCase();
+        if (!key) return;
+
+        const existing = owners.get(key);
+        if (existing && existing !== category) {
+            throw new Error(
+                `Featured country partition conflict: ${country} assigned to both ${existing} and ${category}`
+            );
+        }
+        owners.set(key, category);
+    };
+
+    for (const item of Array.isArray(featured?.fast) ? featured.fast : []) {
+        register(item?.country, "fast");
+    }
+
+    for (const item of Array.isArray(featured?.gaming) ? featured.gaming : []) {
+        register(item?.country, "gaming");
+    }
+
+    for (const country of Array.isArray(ordinaryCountries) ? ordinaryCountries : []) {
+        register(country?.country, "ordinary");
+    }
+}
+
+
 function sanitizeId(
     value
 ) {
@@ -4426,7 +4456,7 @@ function applyFeaturedRegularBadges(
         fast.map(item => String(item.country || '').trim().toLowerCase()).filter(Boolean)
     );
     const gaming = selectFeaturedGamingServers(
-        healthResults,
+        featuredCandidates,
         fastCountries,
         targets.gaming
     );
@@ -5661,7 +5691,7 @@ async function main() {
     );
 
     console.log(
-        `FEATURED TARGETS: ordinaryLocations=${selectedCountries.length}; ` +
+        `FEATURED TARGETS: eligibleLocations=${selectedCountries.length}; ` +
         `total=${featuredTargets.total}; fast=${featuredTargets.fast}; gaming=${featuredTargets.gaming}`
     );
 
@@ -5681,23 +5711,34 @@ async function main() {
     const selectedWhiteListCountries =
         buildCountryHealthPool(healthResults, true);
 
-    // Featured Fast/Gaming are badges on ordinary servers, not replacements
-    // for their whole country. Keep every selected healthy server except the
-    // exact featured members; this prevents an entire country from disappearing
-    // merely because one of its servers is Fast/Gaming.
+    // Fast/Gaming reserve the entire country. A country may appear in exactly
+    // one subscription section: Fast, Gaming, or ordinary.
     const featuredRegularFingerprints = new Set([
         ...featured.fast,
         ...featured.gaming,
     ].map(item => item.linkFingerprint).filter(Boolean));
 
+    // A regular country has exactly one role in the subscription: ordinary,
+    // Fast, or Gaming. Once a country is assigned to either featured role,
+    // keep its ordinary location out of the published pool entirely.
+    const featuredCountryKeys = new Set([
+        ...featured.fast,
+        ...featured.gaming,
+    ]
+        .map(item => String(item.country || '').trim().toLowerCase())
+        .filter(Boolean));
+
     const selectedNormalCountries = selectedCountries
-        .map(country => ({
-            ...country,
-            members: country.members.filter(
-                member => !featuredRegularFingerprints.has(member.linkFingerprint)
-            ),
-        }))
-        .filter(country => country.members.length > 0);
+        .filter(country =>
+            !featuredCountryKeys.has(
+                String(country.country || '').trim().toLowerCase()
+            )
+        );
+
+    assertFeaturedCountryPartition(
+        featured,
+        selectedNormalCountries
+    );
 
     const selectedRegularFingerprints = new Set([
         ...featuredRegularFingerprints,
