@@ -1,0 +1,187 @@
+{
+  "dns": {
+    "servers": [
+      "8.8.8.8",
+      "1.1.1.1"
+    ],
+    "queryStrategy": "UseIPv4"
+  },
+  "log": {
+    "loglevel": "error"
+  },
+  "inbounds": [
+    {
+      "tag": "socks",
+      "port": 10808,
+      "listen": "127.0.0.1",
+      "protocol": "socks",
+      "settings": {
+        "udp": true,
+        "auth": "noauth"
+      },
+      "sniffing": {
+        "enabled": true,
+        "routeOnly": false,
+        "destOverride": [
+          "http",
+          "tls",
+          "quic"
+        ]
+      }
+    },
+    {
+      "tag": "http",
+      "port": 10809,
+      "listen": "127.0.0.1",
+      "protocol": "http",
+      "settings": {
+        "allowTransparent": false
+      },
+      "sniffing": {
+        "enabled": true,
+        "routeOnly": false,
+        "destOverride": [
+          "http",
+          "tls",
+          "quic"
+        ]
+      }
+    }
+  ],
+  "outbounds": [
+    {
+      "tag": "proxy",
+      "protocol": "vless",
+      "settings": {
+        "vnext": [
+          {
+            "address": "cdn.nodefetch.top",
+            "port": 443,
+            "users": [
+              {
+                "id": "0b33fbf1-bc8b-5c39-bbd4-e8f72d5c73af",
+                "encryption": "none",
+                "flow": ""
+              }
+            ]
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "ws",
+        "wsSettings": {
+          "path": "/stream/updates/1975bbbb",
+          "headers": {
+            "Host": "cdn.nodefetch.top"
+          }
+        },
+        "security": "tls",
+        "tlsSettings": {
+          "serverName": "cdn.nodefetch.top",
+          "fingerprint": "chrome",
+          "allowInsecure": false,
+          "alpn": [
+            "http/1.1"
+          ]
+        }
+      }
+    },
+    {
+      "tag": "direct",
+      "protocol": "freedom",
+      "streamSettings": {
+        "sockopt": {
+          "domainStrategy": "ForceIPv4"
+        }
+      }
+    },
+    {
+      "tag": "block",
+      "protocol": "blackhole",
+      "settings": {
+        "response": {
+          "type": "http"
+        }
+      }
+    }
+  ],
+  "routing": {
+    "domainMatcher": "hybrid",
+    "domainStrategy": "IPIfNonMatch",
+    "rules": [
+      {
+        "type": "field",
+        "outboundTag": "direct",
+        "domain": [
+          "regexp:(^|.*\\.)[a-z0-9-]+\\.ru$",
+          "regexp:(^|.*\\.)[a-z0-9-]+\\.xn--p1ai$",
+          "full:go.yandex",
+          "domain:ya.ru",
+          "domain:yandex.ru",
+          "domain:yandex.net",
+          "domain:yandex.com",
+          "domain:yastatic.net",
+          "domain:yandexcloud.net",
+          "domain:vk.ru",
+          "domain:vk.com",
+          "domain:vk.cc",
+          "domain:vk.link",
+          "domain:vkontakte.ru",
+          "domain:vkontakte.com",
+          "domain:vk-cdn.net",
+          "domain:userapi.com",
+          "domain:vkuser.net",
+          "domain:vkuseraudio.com",
+          "domain:vkuseraudio.net",
+          "domain:vkuservideo.com",
+          "domain:vkuservideo.net",
+          "domain:vkuserlive.com",
+          "domain:vkuserlive.net",
+          "domain:vkvideo.ru",
+          "domain:vk.company",
+          "domain:vkcs.cloud",
+          "domain:vkpay.io",
+          "domain:vkpay.com",
+          "domain:vkpay.app",
+          "domain:mail.ru",
+          "domain:tech-mail.ru",
+          "domain:vmailru.net",
+          "domain:smailru.net",
+          "domain:appsmail.ru",
+          "domain:oneme.ru",
+          "domain:max.ru",
+          "domain:sferum-dev.ru",
+          "domain:okcdn.ru",
+          "domain:ok.ru",
+          "domain:odkl.ru",
+          "domain:tamtam.chat",
+          "domain:mycdn.me",
+          "domain:ok.me",
+          "domain:apiok.ru",
+          "domain:apptracer.ru",
+          "domain:dzen.ru",
+          "domain:dzeninfra.ru",
+          "domain:vkplay.ru",
+          "domain:my.games",
+          "domain:algoritmika.org",
+          "domain:yaklass.ru",
+          "domain:umschool.net",
+          "domain:code-class.ru",
+          "domain:summerstage.ru",
+          "domain:vk-stadium.ru",
+          "domain:tetrika-school.ru"
+        ]
+      },
+      {
+        "type": "field",
+        "inboundTag": [
+          "socks",
+          "http"
+        ],
+        "network": "tcp,udp",
+        "outboundTag": "proxy"
+      }
+    ]
+  },
+  "remarks": "Finland 52 🇫🇮 → [📃 Белые списки]"
+}
