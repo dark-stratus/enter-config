@@ -389,14 +389,22 @@ const CHECK_HOST_MAX_IN_FLIGHT = Math.max(2, Math.min(12, Number(process.env.HEA
 // bounded globally, not per candidate, so 16 health workers cannot fan out into
 // dozens of simultaneous upstream measurements and trigger provider throttling.
 const SPEED_PROVIDER_GLOBAL_CONCURRENCY = Math.max(2, Math.min(20, Number(process.env.HEALTHCHECK_SPEED_PROVIDER_GLOBAL_CONCURRENCY) || 20));
+const SPEED_PROVIDER_CONCURRENCY =
+    Math.max(
+        1,
+        Math.min(
+            INDEPENDENT_SPEED_PROVIDERS.length,
+            Number(process.env.HEALTHCHECK_SPEED_PROVIDER_CONCURRENCY) || 4
+        )
+    );
 const MLAB_LOCATE_CONCURRENCY = Math.max(1, Math.min(6, Number(process.env.HEALTHCHECK_MLAB_LOCATE_CONCURRENCY) || 3));
 const YANDEX_PROBE_CONCURRENCY = Math.max(1, Math.min(6, Number(process.env.HEALTHCHECK_YANDEX_PROBE_CONCURRENCY) || 3));
 
 const CONNECTION_TIME_MAX_MEDIAN_MS =
-    Math.max(500, Number(process.env.HEALTHCHECK_MAX_MEDIAN_CONNECTION_MS) || 2500);
+    Math.max(1000, Number(process.env.HEALTHCHECK_MAX_MEDIAN_CONNECTION_MS) || 3000);
 
 const CONNECTION_TIME_MAX_SINGLE_MS =
-    Math.max(1000, Number(process.env.HEALTHCHECK_MAX_SINGLE_CONNECTION_MS) || 6000);
+    Math.max(2000, Number(process.env.HEALTHCHECK_MAX_SINGLE_CONNECTION_MS) || 5000);
 
 // White-list nodes are a fallback for users who otherwise have no working
 // internet path. Their connection-time gate is intentionally much more
@@ -419,8 +427,8 @@ const INDEPENDENT_SPEED_PROVIDER_MIN_PASSES =
 
 const INDEPENDENT_SPEED_MIN_MEDIAN_KBPS =
     Math.max(
-        2048,
-        Number(process.env.HEALTHCHECK_SPEED_MIN_MEDIAN_KBPS) || 2048
+        1536,
+        Number(process.env.HEALTHCHECK_SPEED_MIN_MEDIAN_KBPS) || 1536
     );
 
 const INDEPENDENT_SPEED_TIMEOUT_MS =
@@ -3525,37 +3533,55 @@ async function runYandexSpeedProvider(
 async function runIndependentSpeedCheck(
     socksPort
 ) {
-    // Measure providers sequentially for each candidate. Running several large
-    // downloads through the same Xray tunnel at once makes the measurements
-    // compete with each other and can under-report a genuinely fast server.
-    // Cross-candidate concurrency is still bounded by the global limiter.
-    const providers = [];
+    // Run the independent providers in parallel for each candidate. This keeps
+    // the wall-clock cost bounded while the global limiter prevents the full
+    // health run from exploding into too many simultaneous upstream requests.
+    const providers = new Array(INDEPENDENT_SPEED_PROVIDERS.length);
+    let nextIndex = 0;
 
-    for (const provider of INDEPENDENT_SPEED_PROVIDERS) {
-        try {
-            const result = await speedProviderLimiter(async () => {
-                if (provider.type === "ndt7") {
-                    return runMlabSpeedProvider(socksPort);
-                } else if (provider.type === "yandex") {
-                    return runYandexSpeedProvider(socksPort);
-                }
-                return runIndependentCurlSpeedProvider(socksPort, provider);
-            });
-            providers.push(result);
-        } catch (error) {
-            providers.push({
-                provider: provider.id,
-                label: provider.label,
-                type: provider.type,
-                ok: false,
-                kbps: 0,
-                bytes: 0,
-                elapsedMs: 0,
-                error: error?.message || "provider error",
-                attempts: [],
-            });
+    async function worker() {
+        while (true) {
+            const index = nextIndex++;
+            if (index >= INDEPENDENT_SPEED_PROVIDERS.length) return;
+
+            const provider = INDEPENDENT_SPEED_PROVIDERS[index];
+            try {
+                const result = await speedProviderLimiter(async () => {
+                    if (provider.type === "ndt7") {
+                        return runMlabSpeedProvider(socksPort);
+                    } else if (provider.type === "yandex") {
+                        return runYandexSpeedProvider(socksPort);
+                    }
+                    return runIndependentCurlSpeedProvider(socksPort, provider);
+                });
+                providers[index] = result;
+            } catch (error) {
+                providers[index] = {
+                    provider: provider.id,
+                    label: provider.label,
+                    type: provider.type,
+                    ok: false,
+                    kbps: 0,
+                    bytes: 0,
+                    elapsedMs: 0,
+                    error: error?.message || "provider error",
+                    attempts: [],
+                };
+            }
         }
     }
+
+    await Promise.all(
+        Array.from(
+            {
+                length: Math.min(
+                    SPEED_PROVIDER_CONCURRENCY,
+                    INDEPENDENT_SPEED_PROVIDERS.length
+                )
+            },
+            () => worker()
+        )
+    );
 
     const orderedProviders = providers.filter(Boolean);
 
