@@ -680,36 +680,31 @@
   "outbounds": [
     {
       "tag": "proxy",
-      "protocol": "hysteria",
+      "protocol": "vless",
       "settings": {
-        "address": "172.245.234.193",
-        "port": 443,
-        "version": 2
+        "vnext": [
+          {
+            "address": "185.186.76.184",
+            "port": 443,
+            "users": [
+              {
+                "id": "e75ad2eb-6c1f-45ce-8023-f5f10875df66",
+                "encryption": "none",
+                "flow": "xtls-rprx-vision"
+              }
+            ]
+          }
+        ]
       },
       "streamSettings": {
-        "network": "hysteria",
-        "hysteriaSettings": {
-          "version": 2,
-          "auth": "e75ad2eb-6c1f-45ce-8023-f5f10875df66"
-        },
-        "security": "tls",
-        "tlsSettings": {
-          "serverName": "us10.eu-cdn294.com",
-          "enableSessionResumption": false,
-          "fingerprint": "chrome",
-          "alpn": [
-            "h3"
-          ]
-        },
-        "finalmask": {
-          "obfs": {
-            "type": "salamander",
-            "password": "yzrsHRu3dsu2G9zJeEjPxBAI"
-          },
-          "quicParams": {
-            "debug": false,
-            "congestion": "bbr"
-          }
+        "network": "tcp",
+        "tcpSettings": {},
+        "security": "reality",
+        "realitySettings": {
+          "serverName": "ch9.eu-cdn294.com",
+          "publicKey": "FdKP04mWnsJx5RR0GvofzzxMIPT_yM8QExeY1oaZJ3s",
+          "shortId": "89f81f04597647b1",
+          "fingerprint": "firefox"
         }
       }
     },
@@ -722,5 +717,5 @@
       "protocol": "blackhole"
     }
   ],
-  "remarks": "🇺🇸 США | Игровой"
+  "remarks": "🇨🇭 Швейцария"
 }
