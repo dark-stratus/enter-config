@@ -389,14 +389,6 @@ const CHECK_HOST_MAX_IN_FLIGHT = Math.max(2, Math.min(12, Number(process.env.HEA
 // bounded globally, not per candidate, so 16 health workers cannot fan out into
 // dozens of simultaneous upstream measurements and trigger provider throttling.
 const SPEED_PROVIDER_GLOBAL_CONCURRENCY = Math.max(2, Math.min(20, Number(process.env.HEALTHCHECK_SPEED_PROVIDER_GLOBAL_CONCURRENCY) || 20));
-const SPEED_PROVIDER_CONCURRENCY =
-    Math.max(
-        1,
-        Math.min(
-            INDEPENDENT_SPEED_PROVIDERS.length,
-            Number(process.env.HEALTHCHECK_SPEED_PROVIDER_CONCURRENCY) || 4
-        )
-    );
 const MLAB_LOCATE_CONCURRENCY = Math.max(1, Math.min(6, Number(process.env.HEALTHCHECK_MLAB_LOCATE_CONCURRENCY) || 3));
 const YANDEX_PROBE_CONCURRENCY = Math.max(1, Math.min(6, Number(process.env.HEALTHCHECK_YANDEX_PROBE_CONCURRENCY) || 3));
 
@@ -498,6 +490,15 @@ const INDEPENDENT_SPEED_PROVIDERS = [
         type: "yandex"
     }
 ];
+
+const SPEED_PROVIDER_CONCURRENCY =
+    Math.max(
+        1,
+        Math.min(
+            INDEPENDENT_SPEED_PROVIDERS.length,
+            Number(process.env.HEALTHCHECK_SPEED_PROVIDER_CONCURRENCY) || 4
+        )
+    );
 
 const MLAB_PROBE_SCRIPT =
     process.env.HEALTHCHECK_MLAB_PROBE_SCRIPT ||
