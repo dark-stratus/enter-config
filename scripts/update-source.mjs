@@ -8,6 +8,15 @@ import {
   isAllowedRegularCountry,
 } from "./pool-policy.mjs";
 
+import {
+  COUNTRY_BY_FLAG,
+  COUNTRY_ALIASES,
+  countryFromFlagValue,
+  countryFromText,
+  flagForCountry,
+  flagToIso,
+} from "./country-catalog.mjs";
+
 const ROOT = process.env.GITHUB_WORKSPACE
   ? path.resolve(process.env.GITHUB_WORKSPACE)
   : path.resolve(new URL("..", import.meta.url).pathname);
@@ -178,55 +187,6 @@ function isManagedId(id) {
   return MANAGED_REGULAR_RE.test(id) || MANAGED_WHITE_LIST_RE.test(id);
 }
 
-const FLAG_TO_COUNTRY = {
-  "🇦🇱": "Albania",
-  "🇦🇹": "Austria",
-  "🇦🇪": "United Arab Emirates",
-  "🇧🇾": "Belarus",
-  "🇧🇪": "Belgium",
-  "🇧🇷": "Brazil",
-  "🇧🇬": "Bulgaria",
-  "🇨🇭": "Switzerland",
-  "🇨🇳": "China",
-  "🇨🇿": "Czech Republic",
-  "🇩🇪": "Germany",
-  "🇩🇰": "Denmark",
-  "🇪🇪": "Estonia",
-  "🇪🇸": "Spain",
-  "🇫🇮": "Finland",
-  "🇫🇷": "France",
-  "🇬🇧": "United Kingdom",
-  "🇬🇷": "Greece",
-  "🇭🇺": "Hungary",
-  "🇭🇰": "Hong Kong",
-  "🇮🇩": "Indonesia",
-  "🇮🇪": "Ireland",
-  "🇮🇳": "India",
-  "🇮🇱": "Israel",
-  "🇮🇹": "Italy",
-  "🇯🇵": "Japan",
-  "🇰🇿": "Kazakhstan",
-  "🇱🇹": "Lithuania",
-  "🇱🇻": "Latvia",
-  "🇲🇽": "Mexico",
-  "🇳🇱": "Netherlands",
-  "🇳🇴": "Norway",
-  "🇳🇿": "New Zealand",
-  "🇵🇱": "Poland",
-  "🇵🇹": "Portugal",
-  "🇷🇴": "Romania",
-  "🇷🇺": "Russia",
-  "🇸🇪": "Sweden",
-  "🇸🇬": "Singapore",
-  "🇸🇮": "Slovenia",
-  "🇸🇰": "Slovakia",
-  "🇹🇭": "Thailand",
-  "🇹🇷": "Turkey",
-  "🇺🇦": "Ukraine",
-  "🇺🇸": "United States",
-  "🇻🇳": "Vietnam",
-};
-
 const WHITE_LIST_PATTERNS = [
   /\bwhite\s*list\b/i,
   /\bwhitelist\b/i,
@@ -247,7 +207,7 @@ const WHITE_LIST_PATTERNS = [
   /🏳️/u,
 ];
 
-const COUNTRY_NAME_PATTERNS = Object.entries(FLAG_TO_COUNTRY).map(
+const COUNTRY_NAME_PATTERNS = Object.entries(COUNTRY_BY_FLAG).map(
   ([flag, country]) => ({
     flag,
     country,
@@ -258,110 +218,26 @@ const COUNTRY_NAME_PATTERNS = Object.entries(FLAG_TO_COUNTRY).map(
   })
 );
 
-function flagToIso(flag) {
-  const cps = [...String(flag || "")];
-  if (cps.length !== 2) return "";
-  return cps.map(ch => String.fromCharCode(ch.codePointAt(0) - 0x1f1e6 + 65)).join("");
-}
+const COUNTRY_ALIAS_PATTERNS = Object.entries(COUNTRY_ALIASES)
+  .map(([alias, country]) => {
+    const flag = Object.entries(COUNTRY_BY_FLAG)
+      .find(([, value]) => value === country)?.[0] || "";
 
-const COUNTRY_ALIAS_PATTERNS = [
-  ["Albania", ["албания"]], ["Austria", ["австрия"]],
-  ["United Arab Emirates", ["united arab emirates", "uae", "оаэ", "объединенные арабские эмираты", "объединённые арабские эмираты", "эмираты"]],
-  ["Belarus", ["беларусь", "белоруссия"]], ["Belgium", ["бельгия"]], ["Brazil", ["бразилия"]],
-  ["Switzerland", ["швейцария"]], ["China", ["китай"]],
-  ["Czech Republic", ["чехия", "чешская республика"]],
-  ["Germany", ["германия", "немец"]], ["Denmark", ["дания"]],
-  ["Estonia", ["эстония"]], ["Spain", ["испания"]],
-  ["Finland", ["финляндия"]], ["France", ["франция"]],
-  ["United Kingdom", ["великобритания", "англия", "ук"]],
-  ["Greece", ["греция"]], ["Hungary", ["венгрия"]], ["Hong Kong", ["гонконг"]],
-  ["Indonesia", ["индонезия"]], ["Ireland", ["ирландия"]],
-  ["India", ["индия"]], ["Israel", ["израиль"]],
-  ["Italy", ["италия"]], ["Japan", ["япония"]],
-  ["Kazakhstan", ["казахстан"]], ["Lithuania", ["литва", "литва"]],
-  ["Latvia", ["латвия"]], ["Mexico", ["мексика"]],
-  ["Netherlands", ["нидерланды", "нидерланд", "голландия", "голланд"]],
-  ["Norway", ["норвегия"]], ["New Zealand", ["новая зеландия"]],
-  ["Poland", ["польша"]], ["Portugal", ["португалия"]],
-  ["Romania", ["румыния"]], ["Russia", ["россия", "рф"]],
-  ["Sweden", ["швеция"]], ["Singapore", ["сингапур"]],
-  ["Slovenia", ["словения"]], ["Slovakia", ["словакия"]],
-  ["Thailand", ["таиланд", "тайланд"]], ["Turkey", ["турция"]],
-  ["Ukraine", ["украина"]], ["United States", ["сша", "соединенные штаты"]],
-  ["Vietnam", ["вьетнам"]],
-].flatMap(([country, aliases]) => {
-  const flag = Object.entries(FLAG_TO_COUNTRY).find(([, value]) => value === country)?.[0] || "";
-  return aliases.map(alias => ({
-    country,
-    flag,
-    pattern: new RegExp(`(^|[\\s\\[\\]().,:;_\\-/])${alias.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\\\$&")}(?=$|[\\s\\[\\]().,:;_\\-/0-9])`, "i"),
-  }));
-});
+    return {
+      country,
+      flag,
+      pattern: new RegExp(
+        `(^|[\\s\\[\\]().,:;_\-/])${alias.replace(/[.*+?^${}()|[\]\\]/g, "\\\\$&")}(?=$|[\\s\\[\\]().,:;_\-/0-9])`,
+        "i"
+      ),
+    };
+  });
 
-const COUNTRY_CODE_PATTERNS = Object.entries(FLAG_TO_COUNTRY).map(([flag, country]) => ({
+const COUNTRY_CODE_PATTERNS = Object.entries(COUNTRY_BY_FLAG).map(([flag, country]) => ({
   flag,
   country,
   pattern: new RegExp(`(^|[\\s\\[\\]().,:;_\\-/])${flagToIso(flag)}(?=$|[\\s\\[\\]().,:;_\\-/0-9])`, "i"),
 }));
-
-const COUNTRY_DISPLAY_NAMES =
-  new Intl.DisplayNames(
-    ["en"],
-    {
-      type:
-        "region"
-    }
-  );
-
-function countryFromFlagValue(
-  flag
-) {
-  const value =
-    String(
-      flag ||
-      ""
-    );
-
-  const codePoints =
-    [...value];
-
-  if (
-    codePoints.length !== 2 ||
-    !codePoints.every(
-      character =>
-        character.codePointAt(0) >=
-          0x1f1e6 &&
-        character.codePointAt(0) <=
-          0x1f1ff
-    )
-  ) {
-    return "";
-  }
-
-  const isoCode =
-    codePoints
-      .map(
-        character =>
-          String.fromCharCode(
-            character.codePointAt(0) -
-              0x1f1e6 +
-              65
-          )
-      )
-      .join("");
-
-  try {
-    return (
-      COUNTRY_DISPLAY_NAMES.of(
-        isoCode
-      ) ||
-      ""
-    );
-  } catch {
-    return "";
-  }
-}
-
 
 function isWhiteListRemark(remarks = "") {
   const value = String(remarks);
@@ -458,7 +334,7 @@ function countryFromRemark(
 
   if (flag) {
     const country =
-      FLAG_TO_COUNTRY[flag] ||
+      COUNTRY_BY_FLAG[flag] ||
       countryFromFlagValue(flag);
 
     if (country) {
@@ -2158,22 +2034,18 @@ function buildRetainedEntries(
     const explicitFlag = isWhiteList ? "" : extractFlag(remarks);
     const flag = explicitFlag;
 
-    let country = "Unknown";
-    if (flag) {
+    let country =
+      countryFromText(
+        remarks,
+        { allowFlag: !isWhiteList }
+      ) ||
+      "Unknown";
+
+    if (country === "Unknown" && flag) {
       country =
-        FLAG_TO_COUNTRY[flag] ||
+        COUNTRY_BY_FLAG[flag] ||
         countryFromFlagValue(flag) ||
         "Unknown";
-    }
-
-    if (country === "Unknown") {
-      const match = remarks.match(
-        /(?:^|\s)(Albania|Austria|Belgium|Brazil|Switzerland|China|Czech Republic|Germany|Denmark|Estonia|Spain|Finland|France|United Kingdom|Greece|Hong Kong|Indonesia|Ireland|India|Israel|Italy|Japan|Kazakhstan|Lithuania|Latvia|Mexico|Netherlands|Norway|New Zealand|Poland|Portugal|Romania|Russia|Sweden|Singapore|Slovenia|Slovakia|Thailand|Turkey|Ukraine|United States|Vietnam)(?:\s+\d+)?(?:\s|$)/i
-      );
-
-      if (match?.[1]) {
-        country = match[1];
-      }
     }
 
     const source =
@@ -2187,10 +2059,14 @@ function buildRetainedEntries(
       country = "Europe";
     }
 
+    const canonicalFlag =
+      flagForCountry(country) ||
+      (isWhiteList && country === "Europe" ? "🇪🇺" : "");
+
     retained.push({
       link,
       remarks,
-      flag: flag || (isWhiteList && country === "Europe" ? "🇪🇺" : ""),
+      flag: canonicalFlag,
       country,
       whiteList: isWhiteList,
       source,

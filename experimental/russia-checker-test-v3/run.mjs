@@ -37,7 +37,6 @@ const GLOBALPING_RECOVERY_CITY_LIMIT = Math.max(2, Math.min(6, Number(process.en
 const GLOBALPING_RECOVERY_MIN_DISTINCT_CITIES = Math.max(2, Math.min(GLOBALPING_RECOVERY_CITY_LIMIT, Number(process.env.RUSSIA_TEST_GLOBALPING_MIN_DISTINCT_CITIES) || 2));
 const GLOBALPING_RECOVERY_REQUIRE_EYEBALL = !/^(0|false|no)$/i.test(String(process.env.RUSSIA_TEST_GLOBALPING_REQUIRE_EYEBALL || "1"));
 const GLOBALPING_RECOVERY_TCP_ONLY = !/^(0|false|no)$/i.test(String(process.env.RUSSIA_TEST_GLOBALPING_TCP_ONLY || "1"));
-const GLOBALPING_RECOVERY_MAX_ENDPOINTS = Math.max(1, Math.min(164, Number(process.env.RUSSIA_TEST_GLOBALPING_MAX_RECOVERY_ENDPOINTS) || 164));
 const GLOBALPING_RECOVERY_RESERVE_TESTS = Math.max(0, Number(process.env.RUSSIA_TEST_GLOBALPING_RESERVE_TESTS) || 10);
 const GLOBALPING_RECOVERY_CONCURRENCY = 1;
 const GLOBALPING_POLL_MS = Math.max(500, Number(process.env.RUSSIA_TEST_GLOBALPING_POLL_MS) || 700);
@@ -1337,8 +1336,7 @@ function chooseGlobalpingGateTargets(endpointRows, xrayById) {
         return ["PASS-XRAY", "PASS-XRAY-CLOUDFLARE"].includes(row?.verdict);
       });
     })
-    .sort((a, b) => globalpingGateRank(a, xrayById) - globalpingGateRank(b, xrayById))
-    .slice(0, GLOBALPING_RECOVERY_MAX_ENDPOINTS);
+    .sort((a, b) => globalpingGateRank(a, xrayById) - globalpingGateRank(b, xrayById));
 }
 
 async function runGlobalpingGatePass(endpointRows, items, xrayById, context) {
@@ -1830,7 +1828,7 @@ async function main() {
     globalping.gateCities?.length ? `Gate cities (non-core, eyeball only): **${globalping.gateCities.map(c => `${c.city} (eyeball=${c.eyeball})`).join(', ')}**` : "Gate cities: none",
     globalping.limits?.remaining != null ? `Globalping remaining budget before run: **${globalping.limits.remaining} tests**; reset: ${globalping.limits.resetSeconds ?? "?"} s.` : "Globalping rate-limit status was unavailable, so gate measurements are not started.",
     "",
-    `Globalping gate is capped at **${GLOBALPING_RECOVERY_MAX_ENDPOINTS} endpoints**, uses exactly **3 non-core Russian eyeball cities** per endpoint and accepts **2/3** as the normal strict gate.`,
+    `Globalping gate is bounded only by the live Globalping test budget, uses exactly **3 non-core Russian eyeball cities** per endpoint and accepts **2/3** as the normal strict gate.`,
     `Globalping result: **${reports.lte?.globalpingGate?.passed2of3 ?? 0} strict 2/3 endpoint passes / ${reports.lte?.globalpingGate?.attempted ?? 0} attempted**; **${reports.lte?.globalpingGate?.passed3of3 ?? 0}** reached all 3 cities.`,
     `Comparison files: \`locations-lte-before-globalping.txt\` = exact-link Xray PASS before Globalping; \`locations-lte-globalping-2of3.txt\` = strict TCP endpoints with at least 2/3 Globalping city passes; \`locations-lte-globalping-3of3.txt\` = strict TCP endpoints with 3/3 passes.`,
     "Globalping is a transport/network gate only. It does not run a VLESS, Trojan or Hysteria2 client, so Globalping PASS is never sufficient by itself to publish a working HAPP link.",
@@ -1842,7 +1840,7 @@ async function main() {
   md.push("## Files for your manual test", "", "- `locations-lte.txt` — Russian Check-Host baseline (transport signal; not protocol proof).", "- `locations-lte-xray-verified.txt` — exact-link Xray verified links.", "- `locations-lte-before-globalping.txt` — the same Xray-passing links immediately before the Globalping stage; use this to measure what Globalping actually removes.", "- `locations-lte-globalping-2of3.txt` — strict TCP Globalping pass from at least 2 of 3 selected non-Moscow/non-Saint-Petersburg Russian eyeball cities.", "- `locations-lte-globalping-3of3.txt` — strict TCP Globalping pass from all 3 selected cities.", "- `locations-lte-globalping-recovered.txt` — safe post-Globalping result: strict 2/3 passes plus fail-open links when Globalping was unavailable, rate-limited, or did not return a result; UDP/Hysteria Xray-passing links are retained because Globalping is TCP-only.", "- `locations-lte-xray-cloudflare-speed.txt` — links recovered specifically by the Cloudflare real-download fallback.", "- `locations-lte-xray-review.txt` — links that still failed exact-link Xray.", "- `lte-hysteria-all.txt` — all original Hysteria/Hysteria2/TUIC LTE candidates.", "- `lte-hysteria-passing.txt` — Hysteria-family links that passed exact-link Xray.", "- `globalping-city-diagnostic.json` — current Russian probe inventory and selected gate cities.", "- `check-host-russia-nodes.json` — current Check-Host Russian nodes.", "");
   await fs.writeFile(path.join(OUT_DIR, "results.md"), `${md.join("\n")}\n`, "utf8");
   await fs.writeFile(path.join(OUT_DIR, "results.json"), `${JSON.stringify({ generatedAt:new Date().toISOString(), scope:SCOPE, coreNodes:CORE_NODES, strongQuorum:STRONG_QUORUM, minPassNodes:MIN_PASS_NODES, recheckNonPass:RECHECK_NONPASS, globalpingGateEnabled:GLOBALPING_RECOVERY_ENABLED,
-      globalpingGateMaxEndpoints:GLOBALPING_RECOVERY_MAX_ENDPOINTS,
+      globalpingGateBudgetMode:"dynamic-from-live-budget",
       globalpingGateCityLimit:GLOBALPING_RECOVERY_CITY_LIMIT,
       globalpingGateMinDistinctCities:GLOBALPING_RECOVERY_MIN_DISTINCT_CITIES,
       globalpingGateRequiredCities: 3,

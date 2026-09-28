@@ -15,51 +15,11 @@ import {
     calculateFeaturedTargetCounts,
 } from "./pool-policy.mjs";
 
-const COUNTRY_BY_FLAG = {
-    "🇪🇺": "Europe",
-    "🇨🇾": "Cyprus",
-    "🇫🇮": "Finland",
-    "🇫🇷": "France",
-    "🇩🇪": "Germany",
-    "🇳🇱": "Netherlands",
-    "🇸🇪": "Sweden",
-    "🇬🇧": "United Kingdom",
-    "🇺🇸": "United States",
-    "🇨🇦": "Canada",
-    "🇦🇹": "Austria",
-    "🇦🇪": "United Arab Emirates",
-    "🇮🇹": "Italy",
-    "🇪🇸": "Spain",
-    "🇵🇱": "Poland",
-    "🇨🇿": "Czech Republic",
-    "🇳🇴": "Norway",
-    "🇩🇰": "Denmark",
-    "🇧🇪": "Belgium",
-    "🇨🇭": "Switzerland",
-    "🇪🇪": "Estonia",
-    "🇱🇹": "Lithuania",
-    "🇱🇻": "Latvia",
-    "🇷🇴": "Romania",
-    "🇧🇬": "Bulgaria",
-    "🇹🇷": "Turkey",
-    "🇬🇪": "Georgia",
-    "🇰🇿": "Kazakhstan",
-    "🇷🇺": "Russia",
-    "🇦🇪": "United Arab Emirates",
-};
-
-const COUNTRY_ALIASES = {
-    "russian federation": "Russia",
-    "russia": "Russia",
-    "россия": "Russia",
-    "российская федерация": "Russia",
-    "united arab emirates": "United Arab Emirates",
-    "uae": "United Arab Emirates",
-    "оаэ": "United Arab Emirates",
-    "объединенные арабские эмираты": "United Arab Emirates",
-    "объединённые арабские эмираты": "United Arab Emirates",
-};
-
+import {
+    countryFromText,
+    flagForCountry,
+    normalizeCountryName,
+} from "./country-catalog.mjs";
 
 const SOURCE_REGISTRY = {
     15: "igareck/vpn-configs-for-russia — BLACK_VLESS_RUS_mobile.txt (TOP mobile VLESS)",
@@ -110,37 +70,6 @@ function formatSourceOrigin(url = "") {
     }
 
     return "—";
-}
-
-function normalizeCountryName(value = "") {
-    const raw = String(value || "")
-        .trim();
-
-    if (!raw) return "";
-
-    const cleaned = raw
-        .replace(/\|.*$/u, "")
-        .replace(/\bGAMING\b.*$/iu, "")
-        .replace(/\s+/gu, " ")
-        .trim();
-
-    const aliasKey = cleaned.toLowerCase();
-
-    const aliases = {
-        ...COUNTRY_ALIASES,
-        "the netherlands": "Netherlands",
-        "netherlands": "Netherlands",
-        "россия": "Russia",
-        "российская федерация": "Russia",
-        "russian federation": "Russia",
-        "united arab emirates": "United Arab Emirates",
-        "uae": "United Arab Emirates",
-        "оаэ": "United Arab Emirates",
-        "объединенные арабские эмираты": "United Arab Emirates",
-        "объединённые арабские эмираты": "United Arab Emirates",
-    };
-
-    return aliases[aliasKey] || cleaned;
 }
 
 
@@ -362,7 +291,6 @@ const GLOBALPING_LTE_MIN_DISTINCT_CITIES = Math.max(2, Math.min(GLOBALPING_LTE_C
 const GLOBALPING_LTE_REQUIRE_EYEBALL = !/^(0|false|no)$/i.test(
     String(process.env.HEALTHCHECK_GLOBALPING_LTE_REQUIRE_EYEBALL || "1")
 );
-const GLOBALPING_LTE_MAX_ENDPOINTS = Math.max(1, Math.min(164, Number(process.env.HEALTHCHECK_GLOBALPING_MAX_ENDPOINTS) || 164));
 const GLOBALPING_LTE_RESERVE_TESTS = Math.max(0, Number(process.env.HEALTHCHECK_GLOBALPING_RESERVE_TESTS) || 10);
 const GLOBALPING_LTE_TIMEOUT_MS = Math.max(10000, Number(process.env.HEALTHCHECK_GLOBALPING_TIMEOUT_MS) || 30000);
 const GLOBALPING_LTE_POLL_MS = Math.max(500, Number(process.env.HEALTHCHECK_GLOBALPING_POLL_MS) || 700);
@@ -637,63 +565,10 @@ const HEALTH_MIN_TARGET_PASSES = Math.max(
 );
 
 function extractWhiteListCountryFromRemarks(remarks = "") {
-    const value = String(remarks || "").trim();
-
-    const flagMatch = value.match(/[\u{1F1E6}-\u{1F1FF}]{2}/u)?.[0] || "";
-    if (flagMatch && COUNTRY_BY_FLAG[flagMatch]) {
-        return COUNTRY_BY_FLAG[flagMatch];
-    }
-
-    const patterns = [
-        ["Cyprus", /\bCyprus\b/i],
-        ["Finland", /\bFinland\b/i],
-        ["France", /\bFrance\b/i],
-        ["Germany", /\bGermany\b/i],
-        ["Netherlands", /\b(?:The\s+)?Netherlands\b/i],
-        ["Sweden", /\bSweden\b/i],
-        ["United Kingdom", /\bUnited Kingdom\b/i],
-        ["United States", /\bUnited States\b/i],
-        ["Canada", /\bCanada\b/i],
-        ["Austria", /\bAustria\b/i],
-        ["Italy", /\bItaly\b/i],
-        ["Spain", /\bSpain\b/i],
-        ["Poland", /\bPoland\b/i],
-        ["Czech Republic", /\bCzech Republic\b/i],
-        ["Norway", /\bNorway\b/i],
-        ["Denmark", /\bDenmark\b/i],
-        ["Belgium", /\bBelgium\b/i],
-        ["Switzerland", /\bSwitzerland\b/i],
-        ["Estonia", /\bEstonia\b/i],
-        ["Lithuania", /\bLithuania\b/i],
-        ["Latvia", /\bLatvia\b/i],
-        ["Romania", /\bRomania\b/i],
-        ["Bulgaria", /\bBulgaria\b/i],
-        ["Turkey", /\bTurkey\b/i],
-        ["Georgia", /\bGeorgia\b/i],
-        ["Kazakhstan", /\bKazakhstan\b/i],
-        ["Russia", /\b(?:Russia|Russian\s+Federation)\b/i],
-        ["United Arab Emirates", /\b(?:United\s+Arab\s+Emirates|UAE)\b/i],
-    ];
-
-    for (const [country, pattern] of patterns) {
-        if (pattern.test(value)) return country;
-    }
-
-    return "";
-}
-
-function countryFlag(country = "") {
-    const normalized = normalizeCountryName(country);
-
-    if (!normalized) return "";
-
-    const direct = Object.entries(COUNTRY_BY_FLAG).find(
-        ([, value]) =>
-            normalizeCountryName(value).toLowerCase() ===
-            normalized.toLowerCase()
+    return countryFromText(
+        String(remarks || ""),
+        { allowFlag: false }
     );
-
-    return direct?.[0] || "";
 }
 
 function stripLinkRemark(link) {
@@ -2152,11 +2027,21 @@ function selectUpdateVpnPool(healthResults, history, limit = 10) {
         })
         .slice(0, limit);
 
-    return selected.map(({ result, score, endpointKey }) => ({
-        id: result.id,
-        remarks: `${extractFlag(result.remarks) || countryFlag(result.country) || "🇪🇺"} 🏳️ LTE ${result.country || "Europe"}`.trim(),
-        country: result.country || "Europe",
-        whiteList: true,
+    return selected.map(({ result, score, endpointKey }) => {
+        const country =
+            normalizeCountryName(result.country) ||
+            extractWhiteListCountryFromRemarks(result.remarks) ||
+            "Europe";
+        const flag =
+            flagForCountry(country) ||
+            "🇪🇺";
+
+        return {
+            id: result.id,
+            remarks: `${flag} 🏳️ LTE ${country}`.trim(),
+            country,
+            flag,
+            whiteList: true,
         link: String(result.link || "").trim(),
         ...(result.configFile ? { configFile: result.configFile, sourceKind: result.sourceKind || "json" } : {}),
         score: Number(score.toFixed(6)),
@@ -2165,9 +2050,10 @@ function selectUpdateVpnPool(healthResults, history, limit = 10) {
         successRate: Number(history[result.linkFingerprint]?.successRate) || 1,
         recentFailures: Number(history[result.linkFingerprint]?.recentFailures) || 0,
         serviceLatencyMs: Number(result?.updateConnectivity?.latencyMs) || Number(history[result.linkFingerprint]?.lastServiceLatencyMs) || 0,
-        speedKbps: Number(resultSpeed(result)) || Number(history[result.linkFingerprint]?.lastKbps) || 0,
-        currentHealth: Boolean(result.ok),
-    }));
+            speedKbps: Number(resultSpeed(result)) || Number(history[result.linkFingerprint]?.lastKbps) || 0,
+            currentHealth: Boolean(result.ok),
+        };
+    });
 }
 function getProtocol(link) {
     return String(link)
@@ -4462,6 +4348,12 @@ function applyFeaturedRegularBadges(
     }
 
     const byFingerprint = new Map(healthResults.map(result => [result.linkFingerprint, result]));
+    const fastRankByFingerprint = new Map(
+        fast.map((item, index) => [item.linkFingerprint, index + 1])
+    );
+    const gamingRankByFingerprint = new Map(
+        gaming.map((item, index) => [item.linkFingerprint, index + 1])
+    );
 
     const fastMeta = fast.map((item, index) => ({
         rank: index + 1,
@@ -4486,18 +4378,27 @@ function applyFeaturedRegularBadges(
         if (!result) continue;
 
         if (fastFingerprints.has(result.linkFingerprint)) {
-            const rank = fast.find(item => item.linkFingerprint === result.linkFingerprint)?.rank || 0;
-            const flag = extractFlag(result.remarks) || countryFlag(result.country) || '🌐';
-            const country = String(result.country || '').trim();
+            const rank = fastRankByFingerprint.get(result.linkFingerprint);
+            const country = normalizeCountryName(result.country);
+            const flag = flagForCountry(country) || '🌐';
 
             entry.featured = 'fast';
-            entry.featuredRank = rank;
+            if (Number.isInteger(rank) && rank > 0) {
+                entry.featuredRank = rank;
+            } else {
+                delete entry.featuredRank;
+            }
             entry.flag = flag;
             entry.country = country;
             entry.remarks = `${flag} 🔥 ${country}`.trim();
         } else if (gamingFingerprints.has(result.linkFingerprint)) {
             entry.featured = 'gaming';
-            entry.featuredRank = gaming.find(item => item.linkFingerprint === result.linkFingerprint)?.rank || 0;
+            const rank = gamingRankByFingerprint.get(result.linkFingerprint);
+            if (Number.isInteger(rank) && rank > 0) {
+                entry.featuredRank = rank;
+            } else {
+                delete entry.featuredRank;
+            }
         } else if (entry.featured === 'fast' || entry.featured === 'gaming') {
             delete entry.featured;
             delete entry.featuredRank;
@@ -4536,15 +4437,16 @@ async function buildGamingAssignments(
         const selectedLink = String(selectedItem?.link || '').trim();
         if (!selectedLink) return null;
 
-        const flag = extractFlag(item.remarks);
+        const country = normalizeCountryName(item.country) || "Europe";
+        const flag = flagForCountry(country) || "🇪🇺";
         return {
             id: `gaming-${index + 1}`,
-            country: item.country,
+            country,
             flag,
             featured: "gaming",
             featuredRank: Math.floor(index / GAMING_SERVERS_PER_COUNTRY) + 1,
             gamingMemberRank: (index % GAMING_SERVERS_PER_COUNTRY) + 1,
-            remarks: `${flag} 🎮 ${item.country}`.replace(/\s+/g, ' ').trim(),
+            remarks: `${flag} 🎮 ${country}`.replace(/\s+/g, ' ').trim(),
             linkFingerprint: item.linkFingerprint,
             link: selectedLink,
             quality: item.quality,
@@ -5156,9 +5058,7 @@ async function main() {
                             .replace(/\s+\d+$/, "")
                     );
 
-            if (isWhiteList) {
-                resolvedCountry = normalizeCountryName(resolvedCountry);
-            }
+            resolvedCountry = normalizeCountryName(resolvedCountry);
 
             if (isWhiteList && result.ok && !resolvedCountry) {
                 resolvedCountry = "Europe";
@@ -5663,7 +5563,6 @@ async function main() {
         cityLimit: GLOBALPING_LTE_CITY_LIMIT,
         minDistinctCities: GLOBALPING_LTE_MIN_DISTINCT_CITIES,
         requireEyeball: GLOBALPING_LTE_REQUIRE_EYEBALL,
-        maxEndpoints: GLOBALPING_LTE_MAX_ENDPOINTS,
         reserveTests: GLOBALPING_LTE_RESERVE_TESTS,
         timeoutMs: GLOBALPING_LTE_TIMEOUT_MS,
         pollMs: GLOBALPING_LTE_POLL_MS,
@@ -5806,10 +5705,17 @@ async function main() {
                     ...item,
                     ...(result?.source ? { source: result.source } : {}),
                     ...(result?.retained ? { retained: true } : {}),
-                    remarks: result?.country
-                        ? `${countryFlag(result.country) || "🇪🇺"} 🏳️ LTE ${result.country}`
-                        : item.remarks,
-                    country: result?.country || item.country || "",
+                    ...(result?.country
+                        ? (() => {
+                            const country = normalizeCountryName(result.country) || "Europe";
+                            const flag = flagForCountry(country) || "🇪🇺";
+                            return {
+                                remarks: `${flag} 🏳️ LTE ${country}`,
+                                country,
+                                flag,
+                            };
+                        })()
+                        : {}),
                     whiteList: true,
                 });
             }
@@ -5821,11 +5727,20 @@ async function main() {
                 candidate => candidate.id === id
             );
             const source = String(result?.source || item?.source || "").trim();
-            nextIndex.push(
-                source
-                    ? { ...item, source, ...(result?.retained ? { retained: true } : {}) }
-                    : item
+            const country = normalizeCountryName(
+                result?.country || item?.country || ""
             );
+            const flag = country
+                ? (flagForCountry(country) || "")
+                : "";
+
+            nextIndex.push({
+                ...item,
+                ...(source ? { source } : {}),
+                ...(country ? { country } : {}),
+                ...(flag ? { flag } : {}),
+                ...(result?.retained ? { retained: true } : {}),
+            });
         }
     }
 
@@ -6111,7 +6026,7 @@ async function main() {
             globalpingLteEnabled: GLOBALPING_LTE_ENABLED,
             globalpingLteCityLimit: GLOBALPING_LTE_CITY_LIMIT,
             globalpingLteMinDistinctCities: GLOBALPING_LTE_MIN_DISTINCT_CITIES,
-            globalpingLteMaxEndpoints: GLOBALPING_LTE_MAX_ENDPOINTS,
+            globalpingLteBudgetMode: "dynamic-from-live-budget",
             globalpingLteReserveTests: GLOBALPING_LTE_RESERVE_TESTS,
             lteXrayAttempts: LTE_XRAY_ATTEMPTS,
             lteXrayTargets: LTE_XRAY_TARGET_URLS,

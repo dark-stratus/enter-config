@@ -298,7 +298,6 @@ export async function runLteGlobalpingGate({
     cityLimit = 3,
     minDistinctCities = 2,
     requireEyeball = true,
-    maxEndpoints = 164,
     reserveTests = 10,
     timeoutMs = 30000,
     pollMs = 700,
@@ -424,7 +423,7 @@ export async function runLteGlobalpingGate({
 
     const targets = [...endpointGroups.values()]
         .sort((a, b) => a.key.localeCompare(b.key))
-        .slice(0, Math.min(maxEndpoints, availableEndpoints));
+        .slice(0, availableEndpoints);
 
     const endpoints = [];
     const excludedLinkFingerprints = new Set();
