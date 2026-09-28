@@ -207,12 +207,16 @@ const WHITE_LIST_PATTERNS = [
   /🏳️/u,
 ];
 
+const COUNTRY_TOKEN_BOUNDARY = String.raw`[\s\[\]().,:;_/-]`;
+const COUNTRY_TOKEN_BOUNDARY_WITH_DIGITS = String.raw`[\s\[\]().,:;_0-9/-]`;
+const escapeRegExp = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
 const COUNTRY_NAME_PATTERNS = Object.entries(COUNTRY_BY_FLAG).map(
   ([flag, country]) => ({
     flag,
     country,
     pattern: new RegExp(
-      `(^|[\\s\\[\\]().,:;_-])${country.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\\\$&")}(?=$|[\\s\\[\\]().,:;_-])`,
+      String.raw`(^|${COUNTRY_TOKEN_BOUNDARY})${escapeRegExp(country)}(?=$|${COUNTRY_TOKEN_BOUNDARY})`,
       "i"
     ),
   })
@@ -227,7 +231,7 @@ const COUNTRY_ALIAS_PATTERNS = Object.entries(COUNTRY_ALIASES)
       country,
       flag,
       pattern: new RegExp(
-        `(^|[\\s\\[\\]().,:;_\-/])${alias.replace(/[.*+?^${}()|[\]\\]/g, "\\\\$&")}(?=$|[\\s\\[\\]().,:;_\-/0-9])`,
+        String.raw`(^|${COUNTRY_TOKEN_BOUNDARY})${escapeRegExp(alias)}(?=$|${COUNTRY_TOKEN_BOUNDARY_WITH_DIGITS})`,
         "i"
       ),
     };
@@ -236,7 +240,10 @@ const COUNTRY_ALIAS_PATTERNS = Object.entries(COUNTRY_ALIASES)
 const COUNTRY_CODE_PATTERNS = Object.entries(COUNTRY_BY_FLAG).map(([flag, country]) => ({
   flag,
   country,
-  pattern: new RegExp(`(^|[\\s\\[\\]().,:;_\\-/])${flagToIso(flag)}(?=$|[\\s\\[\\]().,:;_\\-/0-9])`, "i"),
+  pattern: new RegExp(
+    String.raw`(^|${COUNTRY_TOKEN_BOUNDARY})${escapeRegExp(flagToIso(flag))}(?=$|${COUNTRY_TOKEN_BOUNDARY_WITH_DIGITS})`,
+    "i"
+  ),
 }));
 
 function isWhiteListRemark(remarks = "") {
