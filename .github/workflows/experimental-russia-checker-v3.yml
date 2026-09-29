@@ -86,9 +86,12 @@ jobs:
           RUSSIA_TEST_XRAY_SPEED_TIMEOUT_MS: "9000"
           RUSSIA_TEST_XRAY_SPEED_MIN_BYTES: "262144"
           RUSSIA_TEST_XRAY_SPEED_MIN_KBPS: "1024"
-          RUSSIA_TEST_LTE_RESPONSE_LATENCY_FAST_MS: "2500"
-          RUSSIA_TEST_LTE_RESPONSE_LATENCY_FALLBACK_MS: "5000"
+          RUSSIA_TEST_LTE_RESPONSE_LATENCY_FAST_MS: "3500"
+          RUSSIA_TEST_LTE_RESPONSE_LATENCY_FALLBACK_MS: "6000"
           RUSSIA_TEST_LTE_RESPONSE_LATENCY_MIN_FAST_COUNT: "15"
+          RUSSIA_TEST_LTE_COUNTRY_GEO: "1"
+          RUSSIA_TEST_LTE_COUNTRY_GEO_CONCURRENCY: "3"
+          RUSSIA_TEST_LTE_COUNTRY_GEO_MAX_DNS_ADDRESSES: "2"
         run: node experimental/russia-checker-test-v3/run.mjs
       - name: Show results
         run: cat experimental/russia-checker-test-v3/results/results.md
