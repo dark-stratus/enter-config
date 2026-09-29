@@ -1,6 +1,6 @@
 # Russia checker experiment v3
 
-Generated: 2026-09-20T23:19:27.008Z
+Generated: 2026-09-29T17:44:20.004Z
 Scope: lte
 Core Check-Host nodes: ru1.node.check-host.net, ru2.node.check-host.net, ru3.node.check-host.net
 TCP strong threshold: 2/3; TCP minimum threshold: 1/3; non-pass TCP recheck: enabled; exact-link Xray: enabled
@@ -9,12 +9,12 @@ TCP strong threshold: 2/3; TCP minimum threshold: 1/3; non-pass TCP recheck: ena
 
 ## LTE
 
-Candidates: **137**
-Protocols: **vless=125**, **hysteria2=12**
-Unique endpoints: **60**
-Verdicts: **PASS=47**, **UNKNOWN=5**, **PASS-PARTIAL=1**, **PASS-UDP-STRONG=7**
-Check-Host transport links: **120**
-Exact-link Xray: **PASS-XRAY=60**, **FAIL-XRAY=77**
+Candidates: **153**
+Protocols: **vless=138**, **hysteria2=15**
+Unique endpoints: **58**
+Verdicts: **FAIL=1**, **PASS=51**, **PASS-PARTIAL=1**, **PASS-UDP-STRONG=5**
+Check-Host transport links: **137**
+Exact-link Xray: **FAIL-XRAY=71**, **PASS-XRAY=82**
 Copy Check-Host transport list: [locations-lte.txt](./locations-lte.txt)
 Exact-link Xray verified: [locations-lte-xray-verified.txt](./locations-lte-xray-verified.txt)
 Needs manual review: [locations-lte-xray-review.txt](./locations-lte-xray-review.txt)
@@ -30,13 +30,13 @@ The previous v2 parser treated Check-Host TCP results of the documented form [{"
 
 The experiment also keeps protocol schemes unchanged: vless:// stays VLESS, trojan:// stays Trojan, hysteria2:// stays Hysteria2, etc.
 
-## Recheck strategy
+## Recheck and LTE stage order
 
-Every non-passing TCP endpoint gets one second Check-Host measurement. A server can therefore recover from a transient timeout or asymmetric first measurement. The report keeps both attempts.
+Every non-passing TCP endpoint gets one second Check-Host measurement. LTE selection order is: Russia Gate -> exact-link Xray -> Globalping -> response-latency filter. Host.tools remains diagnostic-only.
 
-After transport screening, the experiment starts an exact-link Xray test. Links that fail the normal HTTPS targets get the same Cloudflare real-download check used by production health (4 MB, HTTP 2xx/3xx, meaningful download, minimum throughput). This is a fallback verifier, not a replacement for the normal target checks.
+Response-latency policy: count post-Globalping links with known direct Xray HTTP response latency <= **2500 ms**. If that count is at least **15**, keep **2500 ms**; otherwise expand to **5000 ms**.
 
-For production later, we can choose which verdict tiers to publish after comparing them with your HAPP results.
+Cloudflare download-fallback Xray passes are latency-unknown for this filter because their elapsed time is a 4 MB download duration, not a lightweight response latency; they are listed separately for manual review.
 
 ## Hysteria / UDP
 
@@ -53,13 +53,13 @@ The exact-link Xray stage uses the real parsed protocol from `scripts/link-runti
 
 ## Globalping — additional Russian cities
 
-Online Russian probes discovered: **168**
-Inventory cities: Moscow (105; eyeball=11; dc=94), Saint Petersburg (21; eyeball=2; dc=19), Yekaterinburg (1; eyeball=0; dc=1), Kazan (1; eyeball=0; dc=1), Novosibirsk (9; eyeball=2; dc=7), Krasnodar (1; eyeball=1; dc=0), Ufa (1; eyeball=1; dc=0), Kursk (2; eyeball=2; dc=0), Tomsk (2; eyeball=2; dc=0), Orenburg (2; eyeball=1; dc=1), Irkutsk (1; eyeball=1; dc=0), Kostroma (1; eyeball=1; dc=0)
+Online Russian probes discovered: **174**
+Inventory cities: Moscow (109; eyeball=13; dc=96), Saint Petersburg (25; eyeball=2; dc=23), Yekaterinburg (1; eyeball=0; dc=1), Kazan (1; eyeball=0; dc=1), Novosibirsk (8; eyeball=2; dc=6), Krasnodar (1; eyeball=1; dc=0), Ufa (1; eyeball=1; dc=0), Kursk (2; eyeball=2; dc=0), Tomsk (2; eyeball=2; dc=0), Bol'sherech'ye (1; eyeball=1; dc=0), Kostroma (1; eyeball=1; dc=0), Nizhniy Novgorod (1; eyeball=1; dc=0)
 Gate cities (non-core, eyeball only): **Novosibirsk (eyeball=2), Krasnodar (eyeball=1), Ufa (eyeball=1)**
-Globalping remaining budget before run: **377 tests**; reset: 1042 s.
+Globalping remaining budget before run: **473 tests**; reset: 2121 s.
 
-Globalping gate is capped at **164 endpoints**, uses exactly **3 non-core Russian eyeball cities** per endpoint and accepts **2/3** as the normal strict gate.
-Globalping result: **23 strict 2/3 endpoint passes / 24 attempted**; **21** reached all 3 cities.
+Globalping gate is bounded only by the live Globalping test budget, uses exactly **3 non-core Russian eyeball cities** per endpoint and accepts **2/3** as the normal strict gate.
+Globalping result: **17 strict 2/3 endpoint passes / 18 attempted**; **16** reached all 3 cities.
 Comparison files: `locations-lte-before-globalping.txt` = exact-link Xray PASS before Globalping; `locations-lte-globalping-2of3.txt` = strict TCP endpoints with at least 2/3 Globalping city passes; `locations-lte-globalping-3of3.txt` = strict TCP endpoints with 3/3 passes.
 Globalping is a transport/network gate only. It does not run a VLESS, Trojan or Hysteria2 client, so Globalping PASS is never sufficient by itself to publish a working HAPP link.
 Hysteria/Hysteria2/TUIC links that passed exact-link Xray are kept in the safe result because the Globalping gate is intentionally TCP-only.
