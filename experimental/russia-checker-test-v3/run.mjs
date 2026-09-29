@@ -5,8 +5,10 @@ import path from "node:path";
 import crypto from "node:crypto";
 import os from "node:os";
 import net from "node:net";
+import dns from "node:dns/promises";
 import { spawn } from "node:child_process";
 import { parseLink, buildOutbound } from "../../scripts/link-runtime.mjs";
+import { countryFromText, flagForCountry, normalizeCountryName } from "../../scripts/country-catalog.mjs";
 
 const ROOT = process.cwd();
 const INPUT_FILE = path.resolve(ROOT, process.env.RUSSIA_TEST_INPUT || "config/source-health-candidates.json");
@@ -83,9 +85,18 @@ const XRAY_SPEED_FALLBACK_MIN_KBPS = Math.max(
 // after exact-link Xray validation and the Globalping gate.
 // Only a successful direct HTTPS target gives a real response-latency value.
 // Cloudflare download-fallback passes are kept separately as latency-unknown.
-const LTE_RESPONSE_LATENCY_FAST_MS = Math.max(100, Number(process.env.RUSSIA_TEST_LTE_RESPONSE_LATENCY_FAST_MS) || 2500);
-const LTE_RESPONSE_LATENCY_FALLBACK_MS = Math.max(100, Number(process.env.RUSSIA_TEST_LTE_RESPONSE_LATENCY_FALLBACK_MS) || 5000);
+const LTE_RESPONSE_LATENCY_FAST_MS = Math.max(100, Number(process.env.RUSSIA_TEST_LTE_RESPONSE_LATENCY_FAST_MS) || 3500);
+const LTE_RESPONSE_LATENCY_FALLBACK_MS = Math.max(100, Number(process.env.RUSSIA_TEST_LTE_RESPONSE_LATENCY_FALLBACK_MS) || 6000);
 const LTE_RESPONSE_LATENCY_MIN_FAST_COUNT = Math.max(1, Number(process.env.RUSSIA_TEST_LTE_RESPONSE_LATENCY_MIN_FAST_COUNT) || 15);
+
+const LTE_COUNTRY_GEO_ENABLED = !/^(0|false|no)$/i.test(String(process.env.RUSSIA_TEST_LTE_COUNTRY_GEO || "1"));
+const LTE_COUNTRY_GEO_TIMEOUT_MS = Math.max(4000, Number(process.env.RUSSIA_TEST_LTE_COUNTRY_GEO_TIMEOUT_MS) || 9000);
+const LTE_COUNTRY_GEO_CONCURRENCY = Math.max(1, Math.min(4, Number(process.env.RUSSIA_TEST_LTE_COUNTRY_GEO_CONCURRENCY) || 3));
+const LTE_COUNTRY_GEO_MAX_DNS_ADDRESSES = Math.max(1, Math.min(4, Number(process.env.RUSSIA_TEST_LTE_COUNTRY_GEO_MAX_DNS_ADDRESSES) || 2));
+const LTE_COUNTRY_RIPESTAT_BASE = String(
+  process.env.RUSSIA_TEST_LTE_COUNTRY_RIPESTAT_BASE || "https://stat.ripe.net/data"
+).replace(/\/$/, "");
+
 
 const PRIORITY_RUSSIA_CITIES = [
   "Moscow", "Saint Petersburg", "Yekaterinburg", "Kazan", "Novosibirsk",
@@ -1615,7 +1626,7 @@ function runSelfTest() {
   }));
   const strictLatencyXray = new Map(strictLatencyItems.map((item, index) => [
     item.id,
-    { verdict: "PASS-XRAY", latencyMs: index < 15 ? 2400 : 4000 },
+    { verdict: "PASS-XRAY", latencyMs: index < 15 ? 3400 : 4500 },
   ]));
   const strictLatency = filterLinksByResponseLatency(
     strictLatencyItems.map(item => item.link),
@@ -1623,7 +1634,7 @@ function runSelfTest() {
     strictLatencyXray
   );
   if (strictLatency.thresholdMs !== LTE_RESPONSE_LATENCY_FAST_MS || strictLatency.selectedLinks.length !== 15) {
-    throw new Error("LTE response-latency 2.5s self-test failed");
+    throw new Error("LTE response-latency 3.5s self-test failed");
   }
 
   const relaxedLatencyItems = Array.from({ length: 15 }, (_, index) => ({
@@ -1632,7 +1643,7 @@ function runSelfTest() {
   }));
   const relaxedLatencyXray = new Map(relaxedLatencyItems.map((item, index) => [
     item.id,
-    { verdict: "PASS-XRAY", latencyMs: index < 14 ? 2400 : 4000 },
+    { verdict: "PASS-XRAY", latencyMs: index < 14 ? 3400 : 4500 },
   ]));
   const relaxedLatency = filterLinksByResponseLatency(
     relaxedLatencyItems.map(item => item.link),
@@ -1640,7 +1651,7 @@ function runSelfTest() {
     relaxedLatencyXray
   );
   if (relaxedLatency.thresholdMs !== LTE_RESPONSE_LATENCY_FALLBACK_MS || relaxedLatency.selectedLinks.length !== 15) {
-    throw new Error("LTE response-latency 5s fallback self-test failed");
+    throw new Error("LTE response-latency 6s fallback self-test failed");
   }
 
   const fallbackItem = {
@@ -1653,6 +1664,18 @@ function runSelfTest() {
     throw new Error("LTE response-latency fallback classification self-test failed");
   }
 
+  const countryEvidence = chooseCountryFromEvidence(
+    [{ maxMindCountry: "Russia", ripeGeolocCountries: ["Russia"] }],
+    { sourceCountry: "United States", linkCountry: "United States" }
+  );
+  if (countryEvidence.country !== "Russia" || countryEvidence.reason !== "maxmind-geo") {
+    throw new Error("LTE country evidence precedence self-test failed");
+  }
+  const countryLink = "vless://11111111-1111-1111-1111-111111111111@176.108.246.73:443?security=tls#%F0%9F%87%BA%F0%9F%87%B8%20United%20States";
+  if (extractCountryFromLink(countryLink) !== "United States") throw new Error("LTE country fragment self-test failed");
+  const genericLteLink = "vless://11111111-1111-1111-1111-111111111111@example.com:443#%F0%9F%87%BA%F0%9F%87%B8%20%F0%9F%8F%B3%EF%B8%8F%20LTE%20United%20States";
+  const genericCanonical = decodeURIComponent(new URL(setCanonicalLinkCountry(genericLteLink, "Russia")).hash);
+  if (genericCanonical !== "#🇷🇺 Russia") throw new Error("LTE generic source label cleanup self-test failed");
   console.log("RUSSIA TEST V3 SELF-TEST: PASS");
 }
 
@@ -1775,6 +1798,309 @@ function filterLinksByResponseLatency(links, items, xrayById) {
   };
 }
 
+
+function countryFromIsoCode(value = "") {
+  const code = String(value || "").trim().toUpperCase();
+  if (!/^[A-Z]{2}$/.test(code)) return "";
+  try {
+    return normalizeCountryName(new Intl.DisplayNames(["en"], { type: "region" }).of(code) || "");
+  } catch {
+    return "";
+  }
+}
+
+function extractCountryFromLink(link = "") {
+  try {
+    const url = new URL(String(link || "").trim());
+    const fragment = decodeURIComponent(String(url.hash || "").replace(/^#/, "")).trim();
+    if (!fragment) return "";
+    return normalizeCountryName(countryFromText(fragment, { allowFlag: true }) || "");
+  } catch {
+    return "";
+  }
+}
+
+function stripCountryFromRemark(value = "") {
+  let text = String(value || "").trim();
+  if (!text) return "";
+
+  text = text
+    .replace(/^[\u{1F1E6}-\u{1F1FF}]{2}\s*/u, "")
+    .replace(/^🏳️\s*/u, "")
+    .replace(/^🌐\s*/u, "")
+    .replace(/^LTE\b\s*/i, "")
+    .trim();
+
+  const knownCountries = [
+    "United States", "United Kingdom", "United Arab Emirates", "Czech Republic",
+    "Saudi Arabia", "South Korea", "Russia", "Iran", "Germany", "Netherlands",
+    "France", "Switzerland", "Sweden", "Finland", "Poland", "Austria", "Italy",
+    "Hungary", "Bulgaria", "Canada", "Europe",
+  ];
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const name of knownCountries) {
+      const re = new RegExp(`^${name}(?:\\s*[·|:/-]\\s*|\\s+|$)`, "i");
+      const next = text.replace(re, "").trim();
+      if (next !== text) {
+        text = next;
+        changed = true;
+      }
+    }
+  }
+  return text.replace(/\s+/g, " ").replace(/^[·|:/-]\s*/, "").trim();
+}
+
+function setCanonicalLinkCountry(link, country) {
+  const canonicalCountry = normalizeCountryName(country);
+  const flag = flagForCountry(canonicalCountry);
+  if (!canonicalCountry || !flag) return String(link || "").trim();
+
+  try {
+    const url = new URL(String(link || "").trim());
+    const rawFragment = decodeURIComponent(String(url.hash || "").replace(/^#/, "")).trim();
+    const suffix = stripCountryFromRemark(rawFragment);
+    const parts = [`${flag} ${canonicalCountry}`];
+    if (suffix && suffix.toLowerCase() !== canonicalCountry.toLowerCase()) parts.push(suffix);
+    url.hash = parts.join(" · ");
+    return url.toString();
+  } catch {
+    return String(link || "").trim();
+  }
+}
+
+function extractRipeGeolocCountries(data) {
+  const countries = [];
+  const walk = value => {
+    if (!value || typeof value !== "object") return;
+    if (Array.isArray(value)) {
+      for (const item of value) walk(item);
+      return;
+    }
+    const raw = String(value.country_code || value.countryCode || value.country || "").trim();
+    if (/^[A-Za-z]{2}$/.test(raw)) countries.push(raw.toUpperCase());
+    for (const child of Object.values(value)) {
+      if (child && typeof child === "object") walk(child);
+    }
+  };
+  walk(data?.data?.located_resources);
+  return [...new Set(countries.map(countryFromIsoCode).filter(Boolean))];
+}
+
+function extractMaxMindCountry(data) {
+  const payload = data?.data || {};
+  const code = payload?.country?.iso_code || payload?.country?.country_code || payload?.countryCode || "";
+  return countryFromIsoCode(code);
+}
+
+async function resolveHostAddresses(host) {
+  if (net.isIP(host)) return [host];
+  try {
+    const rows = await dns.lookup(host, { all: true, family: 4, verbatim: true });
+    return [...new Set(
+      rows.map(row => String(row?.address || "").trim()).filter(value => net.isIP(value) === 4)
+    )].slice(0, LTE_COUNTRY_GEO_MAX_DNS_ADDRESSES);
+  } catch {
+    return [];
+  }
+}
+
+async function queryIpCountry(ip) {
+  const result = { ip, maxMindCountry: "", ripeGeolocCountries: [], errors: [] };
+  if (!LTE_COUNTRY_GEO_ENABLED || !net.isIP(ip)) return result;
+
+  const [maxMind, ripeGeoloc] = await Promise.all([
+    withRetry(
+      () => fetchJson(
+        `${LTE_COUNTRY_RIPESTAT_BASE}/maxmind-geo-lite/data.json?resource=${encodeURIComponent(ip)}`,
+        { headers: { "user-agent": "escapevpn-russia-checker-experiment-v3/1.0" } },
+        LTE_COUNTRY_GEO_TIMEOUT_MS
+      ),
+      Math.min(3, RETRIES)
+    ).catch(error => ({ __error: error?.message || String(error) })),
+    withRetry(
+      () => fetchJson(
+        `${LTE_COUNTRY_RIPESTAT_BASE}/geoloc/data.json?resource=${encodeURIComponent(ip)}`,
+        { headers: { "user-agent": "escapevpn-russia-checker-experiment-v3/1.0" } },
+        LTE_COUNTRY_GEO_TIMEOUT_MS
+      ),
+      Math.min(3, RETRIES)
+    ).catch(error => ({ __error: error?.message || String(error) })),
+  ]);
+
+  if (maxMind?.__error) result.errors.push(`RIPEstat MaxMind: ${maxMind.__error}`);
+  else result.maxMindCountry = extractMaxMindCountry(maxMind);
+
+  if (ripeGeoloc?.__error) result.errors.push(`RIPEstat geoloc: ${ripeGeoloc.__error}`);
+  else result.ripeGeolocCountries = extractRipeGeolocCountries(ripeGeoloc);
+
+  return result;
+}
+
+function chooseCountryFromEvidence(ipRows = [], { linkCountry = "", sourceCountry = "" } = {}) {
+  const maxMindVotes = ipRows.map(row => normalizeCountryName(row?.maxMindCountry || "")).filter(Boolean);
+  const ripeVotes = ipRows.flatMap(row => (row?.ripeGeolocCountries || [])
+    .map(normalizeCountryName)
+    .filter(Boolean));
+
+  const countVotes = values => {
+    const counts = new Map();
+    for (const country of values) counts.set(country, (counts.get(country) || 0) + 1);
+    return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  };
+
+  const maxMindRanked = countVotes(maxMindVotes);
+  const ripeRanked = countVotes(ripeVotes);
+  const maxMindCountry = maxMindRanked[0]?.[0] || "";
+  const ripeCountry = ripeRanked[0]?.[0] || "";
+
+  if (maxMindCountry) {
+    return {
+      country: maxMindCountry,
+      reason: maxMindRanked[0]?.[1] > 1 ? "maxmind-geo-consensus" : "maxmind-geo",
+      maxMindCountry,
+      ripeCountry,
+      maxMindVotes: maxMindRanked[0]?.[1] || 0,
+      ripeVotes: ripeRanked[0]?.[1] || 0,
+      conflict: Boolean(ripeCountry && ripeCountry !== maxMindCountry),
+    };
+  }
+
+  if (ripeCountry) {
+    return {
+      country: ripeCountry,
+      reason: "ripestat-geoloc-fallback",
+      maxMindCountry: "",
+      ripeCountry,
+      maxMindVotes: 0,
+      ripeVotes: ripeRanked[0]?.[1] || 0,
+      conflict: false,
+    };
+  }
+
+  if (linkCountry) {
+    return {
+      country: normalizeCountryName(linkCountry),
+      reason: "link-fragment-fallback",
+      maxMindCountry: "",
+      ripeCountry: "",
+      maxMindVotes: 0,
+      ripeVotes: 0,
+      conflict: false,
+    };
+  }
+
+  if (sourceCountry) {
+    return {
+      country: normalizeCountryName(sourceCountry),
+      reason: "source-metadata-fallback",
+      maxMindCountry: "",
+      ripeCountry: "",
+      maxMindVotes: 0,
+      ripeVotes: 0,
+      conflict: false,
+    };
+  }
+
+  return {
+    country: "Unknown",
+    reason: "unresolved",
+    maxMindCountry: "",
+    ripeCountry: "",
+    maxMindVotes: 0,
+    ripeVotes: 0,
+    conflict: false,
+  };
+}
+
+async function determineLinkCountries(links, items) {
+  const uniqueLinks = [...new Set((links || []).map(link => String(link || "").trim()).filter(Boolean))];
+  const byLink = new Map((items || []).map(item => [String(item?.link || "").trim(), item]));
+  const rows = [];
+  const ipCache = new Map();
+
+  const getIpEvidence = async ip => {
+    if (!ipCache.has(ip)) ipCache.set(ip, queryIpCountry(ip));
+    return ipCache.get(ip);
+  };
+
+  let cursor = 0;
+  const worker = async () => {
+    while (true) {
+      const index = cursor++;
+      if (index >= uniqueLinks.length) return;
+
+      const link = uniqueLinks[index];
+      const item = byLink.get(link);
+      let host = "";
+      let resolvedIps = [];
+      try {
+        host = parseUrl(link).host;
+        resolvedIps = await resolveHostAddresses(host);
+      } catch {}
+
+      const ipEvidence = [];
+      for (const ip of resolvedIps) ipEvidence.push(await getIpEvidence(ip));
+
+      const sourceCountry = normalizeCountryName(item?.country || "");
+      const linkCountry = extractCountryFromLink(link);
+      const selected = chooseCountryFromEvidence(ipEvidence, { linkCountry, sourceCountry });
+
+      rows.push({
+        link,
+        id: String(item?.id || ""),
+        host,
+        resolvedIps,
+        sourceCountry,
+        linkCountry,
+        country: selected.country,
+        flag: flagForCountry(selected.country),
+        countryReason: selected.reason,
+        maxMindCountry: selected.maxMindCountry,
+        ripeGeolocCountry: selected.ripeCountry,
+        maxMindVotes: selected.maxMindVotes,
+        ripeVotes: selected.ripeVotes,
+        sourceConflict: Boolean(sourceCountry && selected.country !== "Unknown" && sourceCountry !== selected.country),
+        geoConflict: Boolean(selected.conflict),
+        ipEvidence,
+      });
+
+      console.log(
+        `RUSSIA TEST V3 LTE COUNTRY ${index + 1}/${uniqueLinks.length}: ` +
+        `${host} => ${selected.country} (${selected.reason})`
+      );
+    }
+  };
+
+  await Promise.all(
+    Array.from({ length: Math.min(LTE_COUNTRY_GEO_CONCURRENCY, Math.max(1, uniqueLinks.length)) }, worker)
+  );
+
+  return {
+    enabled: LTE_COUNTRY_GEO_ENABLED,
+    links: uniqueLinks.length,
+    unresolved: rows.filter(row => row.country === "Unknown").length,
+    sourceConflicts: rows.filter(row => row.sourceConflict).length,
+    geoConflicts: rows.filter(row => row.geoConflict).length,
+    countries: rows.reduce((acc, row) => {
+      acc[row.country] = (acc[row.country] || 0) + 1;
+      return acc;
+    }, {}),
+    rows: rows.sort((a, b) => a.link.localeCompare(b.link)),
+  };
+}
+
+function applyCountriesToLinks(links, countryReport) {
+  const byLink = new Map((countryReport?.rows || []).map(row => [row.link, row]));
+  return [...new Set((links || []).map(link => {
+    const row = byLink.get(String(link || "").trim());
+    return row?.country && row.country !== "Unknown"
+      ? setCanonicalLinkCountry(link, row.country)
+      : String(link || "").trim();
+  }).filter(Boolean))];
+}
+
 function globalpingFilesSummary(beforeLinks, twoOfThreeLinks, threeOfThreeLinks, safeLinks, gate) {
   return {
     beforeGlobalping: beforeLinks.length,
@@ -1793,6 +2119,12 @@ function globalpingFilesSummary(beforeLinks, twoOfThreeLinks, threeOfThreeLinks,
 async function main() {
   if (SELF_TEST) { runSelfTest(); return; }
   await fs.mkdir(OUT_DIR, { recursive: true });
+  for (const staleFile of [
+    "locations-lte-response-latency-2_5s.txt",
+    "locations-lte-response-latency-5s.txt",
+  ]) {
+    await fs.rm(path.join(OUT_DIR, staleFile), { force: true });
+  }
   const input = JSON.parse(await fs.readFile(INPUT_FILE, "utf8"));
   if (!Array.isArray(input) || !input.length) throw new Error(`${INPUT_FILE} must contain a non-empty candidate array`);
   if (!['all','lte','regular'].includes(SCOPE)) throw new Error(`RUSSIA_TEST_SCOPE must be all, lte or regular`);
@@ -1849,6 +2181,19 @@ async function main() {
       `threshold=${responseLatencyFilter?.thresholdLabel || `${LTE_RESPONSE_LATENCY_FAST_MS / 1000}s`}; ` +
       `final=${responseLatencyFilter?.selectedLinks?.length || 0}; ` +
       `unknown=${responseLatencyFilter?.unknownLatency || 0}`
+    );
+
+    const countryReport = label === "lte"
+      ? await determineLinkCountries(responseLatencyFilter?.selectedLinks || [], items)
+      : null;
+    const finalResponseLinks = label === "lte"
+      ? applyCountriesToLinks(responseLatencyFilter?.selectedLinks || [], countryReport)
+      : [];
+    console.log(
+      `RUSSIA TEST V3 LTE COUNTRY: final=${finalResponseLinks.length}; ` +
+      `unresolved=${countryReport?.unresolved || 0}; ` +
+      `sourceConflicts=${countryReport?.sourceConflicts || 0}; ` +
+      `geoConflicts=${countryReport?.geoConflicts || 0}`
     );
 
     const hostToolsRecovery = label === "lte"
@@ -1939,18 +2284,23 @@ async function main() {
         "utf8"
       );
       await fs.writeFile(
-        path.join(OUT_DIR, "locations-lte-response-latency-2_5s.txt"),
+        path.join(OUT_DIR, "locations-lte-response-latency-3_5s.txt"),
         responseLatencyFilter.underFastLinks.length ? `${responseLatencyFilter.underFastLinks.join("\n")}\n` : "",
         "utf8"
       );
       await fs.writeFile(
-        path.join(OUT_DIR, "locations-lte-response-latency-5s.txt"),
+        path.join(OUT_DIR, "locations-lte-response-latency-6s.txt"),
         responseLatencyFilter.underFallbackLinks.length ? `${responseLatencyFilter.underFallbackLinks.join("\n")}\n` : "",
         "utf8"
       );
       await fs.writeFile(
         path.join(OUT_DIR, "locations-lte-response-latency-final.txt"),
-        responseLatencyFilter.selectedLinks.length ? `${responseLatencyFilter.selectedLinks.join("\n")}\n` : "",
+        finalResponseLinks.length ? `${finalResponseLinks.join("\n")}\n` : "",
+        "utf8"
+      );
+      await fs.writeFile(
+        path.join(OUT_DIR, "locations-lte-country-audit.json"),
+        `${JSON.stringify(countryReport, null, 2)}\n`,
         "utf8"
       );
       await fs.writeFile(
@@ -1960,7 +2310,7 @@ async function main() {
       );
       await fs.writeFile(
         path.join(OUT_DIR, "locations-lte-response-latency.json"),
-        `${JSON.stringify(responseLatencyFilter, null, 2)}\n`,
+        `${JSON.stringify({ ...responseLatencyFilter, finalLinks: finalResponseLinks }, null, 2)}\n`,
         "utf8"
       );
       reports[label].globalping2of3Links = globalping2of3Links;
@@ -1969,7 +2319,9 @@ async function main() {
       reports[label].globalpingSafeLinks = safeGlobalpingLinks;
       reports[label].globalpingFiles = globalpingFilesSummary(beforeGlobalpingLinks, globalping2of3Links, globalping3of3Links, safeGlobalpingLinks, globalpingGate);
       reports[label].responseLatencyFilter = responseLatencyFilter;
-      reports[label].finalResponseLatencyLinks = responseLatencyFilter.selectedLinks;
+      reports[label].finalResponseLatencyLinks = finalResponseLinks;
+      reports[label].rawResponseLatencyLinks = responseLatencyFilter.selectedLinks;
+      reports[label].countryReport = countryReport;
       const hysteria = items.filter(item => ["hysteria","hysteria2","tuic"].includes(protocolOf(item.link)));
       const hysteriaXrayPassing = [...new Set(hysteria.filter(item => exactXrayPassing(item, xrayById)).map(item => String(item.link).trim()).filter(Boolean))];
       await fs.writeFile(path.join(OUT_DIR, "lte-hysteria-all.txt"), hysteria.map(x => x.link).join("\n") + (hysteria.length ? "\n" : ""), "utf8");
@@ -2028,6 +2380,8 @@ async function main() {
       lteResponseLatencyFastMs: LTE_RESPONSE_LATENCY_FAST_MS,
       lteResponseLatencyFallbackMs: LTE_RESPONSE_LATENCY_FALLBACK_MS,
       lteResponseLatencyMinFastCount: LTE_RESPONSE_LATENCY_MIN_FAST_COUNT,
+      lteCountryGeoEnabled: LTE_COUNTRY_GEO_ENABLED,
+      lteCountryGeoSource: "RIPEstat MaxMind GeoLite + RIPEstat geoloc fallback; source metadata last",
       xrayEnabled:XRAY_ENABLED, xrayTargets:XRAY_TARGETS, reports, globalping, checkHostDiscovery, inputSha256:hash(await fs.readFile(INPUT_FILE)) }, null, 2)}\n`, "utf8");
   console.log("RUSSIA CHECKER V3 COMPLETE");
 }
