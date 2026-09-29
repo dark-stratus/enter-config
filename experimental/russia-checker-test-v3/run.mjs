@@ -96,6 +96,12 @@ const LTE_COUNTRY_GEO_MAX_DNS_ADDRESSES = Math.max(1, Math.min(4, Number(process
 const LTE_COUNTRY_RIPESTAT_BASE = String(
   process.env.RUSSIA_TEST_LTE_COUNTRY_RIPESTAT_BASE || "https://stat.ripe.net/data"
 ).replace(/\/$/, "");
+const LTE_COUNTRY_IPWHOIS_BASE = String(
+  process.env.RUSSIA_TEST_LTE_COUNTRY_IPWHOIS_BASE || "https://ipwho.is"
+).replace(/\/$/, "");
+const LTE_COUNTRY_IPAPI_BASE = String(
+  process.env.RUSSIA_TEST_LTE_COUNTRY_IPAPI_BASE || "https://ipapi.co"
+).replace(/\/$/, "");
 
 
 const PRIORITY_RUSSIA_CITIES = [
@@ -1665,11 +1671,19 @@ function runSelfTest() {
   }
 
   const countryEvidence = chooseCountryFromEvidence(
-    [{ maxMindCountry: "Russia", ripeGeolocCountries: ["Russia"] }],
+    [{ providers: { maxmind: "Russia", ipwhois: "Russia", ipapi: "United States" } }],
     { sourceCountry: "United States", linkCountry: "United States" }
   );
-  if (countryEvidence.country !== "Russia" || countryEvidence.reason !== "maxmind-geo") {
-    throw new Error("LTE country evidence precedence self-test failed");
+  if (countryEvidence.country !== "Russia" || countryEvidence.reason !== "ip-geo-consensus-2") {
+    throw new Error("LTE country geo-consensus self-test failed");
+  }
+
+  const sourceOnlyCountry = chooseCountryFromEvidence(
+    [{ providers: {} }],
+    { sourceCountry: "France", linkCountry: "France" }
+  );
+  if (sourceOnlyCountry.country !== "France" || sourceOnlyCountry.reason !== "link-fragment-fallback") {
+    throw new Error("LTE source country fallback self-test failed");
   }
   const countryLink = "vless://11111111-1111-1111-1111-111111111111@176.108.246.73:443?security=tls#%F0%9F%87%BA%F0%9F%87%B8%20United%20States";
   if (extractCountryFromLink(countryLink) !== "United States") throw new Error("LTE country fragment self-test failed");
@@ -1870,28 +1884,78 @@ function setCanonicalLinkCountry(link, country) {
   }
 }
 
-function extractRipeGeolocCountries(data) {
-  const countries = [];
-  const walk = value => {
-    if (!value || typeof value !== "object") return;
+function extractMaxMindCountry(data) {
+  const root = data?.data || data || {};
+  const candidates = [];
+
+  const walk = (value, depth = 0) => {
+    if (!value || typeof value !== "object" || depth > 5) return;
     if (Array.isArray(value)) {
-      for (const item of value) walk(item);
+      for (const item of value) walk(item, depth + 1);
       return;
     }
-    const raw = String(value.country_code || value.countryCode || value.country || "").trim();
-    if (/^[A-Za-z]{2}$/.test(raw)) countries.push(raw.toUpperCase());
-    for (const child of Object.values(value)) {
-      if (child && typeof child === "object") walk(child);
+
+    const code = String(
+      value?.iso_code ||
+      value?.isoCode ||
+      value?.country_code ||
+      value?.countryCode ||
+      value?.country?.iso_code ||
+      value?.country?.isoCode ||
+      value?.country?.country_code ||
+      value?.country?.countryCode ||
+      ""
+    ).trim();
+    if (/^[A-Za-z]{2}$/.test(code)) candidates.push(code.toUpperCase());
+
+    const name = String(
+      value?.country_name ||
+      value?.countryName ||
+      value?.country?.name ||
+      value?.country?.country_name ||
+      ""
+    ).trim();
+    if (name) {
+      const normalized = normalizeCountryName(name);
+      if (normalized) candidates.push(normalized);
     }
+
+    for (const child of Object.values(value)) walk(child, depth + 1);
   };
-  walk(data?.data?.located_resources);
-  return [...new Set(countries.map(countryFromIsoCode).filter(Boolean))];
+
+  walk(root);
+  for (const candidate of candidates) {
+    const normalized = /^[A-Z]{2}$/.test(candidate)
+      ? countryFromIsoCode(candidate)
+      : normalizeCountryName(candidate);
+    if (normalized && normalized !== "Europe") return normalized;
+  }
+  return "";
 }
 
-function extractMaxMindCountry(data) {
-  const payload = data?.data || {};
-  const code = payload?.country?.iso_code || payload?.country?.country_code || payload?.countryCode || "";
-  return countryFromIsoCode(code);
+function extractCountryFromIpapi(data) {
+  const code = String(data?.country_code || data?.country || "").trim();
+  if (/^[A-Za-z]{2}$/.test(code)) return countryFromIsoCode(code);
+  return normalizeCountryName(data?.country_name || data?.country || "");
+}
+
+function extractCountryFromIpwhois(data) {
+  if (data && data.success === false) return "";
+  const code = String(data?.country_code || "").trim();
+  if (/^[A-Za-z]{2}$/.test(code)) return countryFromIsoCode(code);
+  return normalizeCountryName(data?.country || "");
+}
+
+async function resolveCountryProvider(url, extractor, ip) {
+  return withRetry(
+    async () => {
+      const data = await fetchJson(url, { headers: { "user-agent": "escapevpn-russia-checker-experiment-v3/1.0" } }, LTE_COUNTRY_GEO_TIMEOUT_MS);
+      const country = extractor(data);
+      if (!country) throw new Error("country missing in provider response");
+      return country;
+    },
+    Math.min(2, RETRIES)
+  ).catch(error => ({ __error: error?.message || String(error), ip }));
 }
 
 async function resolveHostAddresses(host) {
@@ -1907,86 +1971,138 @@ async function resolveHostAddresses(host) {
 }
 
 async function queryIpCountry(ip) {
-  const result = { ip, maxMindCountry: "", ripeGeolocCountries: [], errors: [] };
+  const result = {
+    ip,
+    providers: { maxmind: "", ipwhois: "", ipapi: "" },
+    errors: [],
+  };
   if (!LTE_COUNTRY_GEO_ENABLED || !net.isIP(ip)) return result;
 
-  const [maxMind, ripeGeoloc] = await Promise.all([
-    withRetry(
-      () => fetchJson(
-        `${LTE_COUNTRY_RIPESTAT_BASE}/maxmind-geo-lite/data.json?resource=${encodeURIComponent(ip)}`,
-        { headers: { "user-agent": "escapevpn-russia-checker-experiment-v3/1.0" } },
-        LTE_COUNTRY_GEO_TIMEOUT_MS
-      ),
-      Math.min(3, RETRIES)
-    ).catch(error => ({ __error: error?.message || String(error) })),
-    withRetry(
-      () => fetchJson(
-        `${LTE_COUNTRY_RIPESTAT_BASE}/geoloc/data.json?resource=${encodeURIComponent(ip)}`,
-        { headers: { "user-agent": "escapevpn-russia-checker-experiment-v3/1.0" } },
-        LTE_COUNTRY_GEO_TIMEOUT_MS
-      ),
-      Math.min(3, RETRIES)
-    ).catch(error => ({ __error: error?.message || String(error) })),
+  const encodedIp = encodeURIComponent(ip);
+  const [maxMind, ipwhois, ipapi] = await Promise.all([
+    resolveCountryProvider(
+      `${LTE_COUNTRY_RIPESTAT_BASE}/maxmind-geo-lite/data.json?resource=${encodedIp}`,
+      extractMaxMindCountry,
+      ip
+    ),
+    resolveCountryProvider(
+      `${LTE_COUNTRY_IPWHOIS_BASE}/${encodedIp}?fields=success,country,country_code`,
+      extractCountryFromIpwhois,
+      ip
+    ),
+    resolveCountryProvider(
+      `${LTE_COUNTRY_IPAPI_BASE}/${encodedIp}/json/`,
+      extractCountryFromIpapi,
+      ip
+    ),
   ]);
 
-  if (maxMind?.__error) result.errors.push(`RIPEstat MaxMind: ${maxMind.__error}`);
-  else result.maxMindCountry = extractMaxMindCountry(maxMind);
-
-  if (ripeGeoloc?.__error) result.errors.push(`RIPEstat geoloc: ${ripeGeoloc.__error}`);
-  else result.ripeGeolocCountries = extractRipeGeolocCountries(ripeGeoloc);
+  const assignments = [
+    ["maxmind", maxMind],
+    ["ipwhois", ipwhois],
+    ["ipapi", ipapi],
+  ];
+  for (const [name, value] of assignments) {
+    if (value?.__error) result.errors.push(`${name}: ${value.__error}`);
+    else result.providers[name] = normalizeCountryName(value);
+  }
 
   return result;
 }
 
 function chooseCountryFromEvidence(ipRows = [], { linkCountry = "", sourceCountry = "" } = {}) {
-  const maxMindVotes = ipRows.map(row => normalizeCountryName(row?.maxMindCountry || "")).filter(Boolean);
-  const ripeVotes = ipRows.flatMap(row => (row?.ripeGeolocCountries || [])
-    .map(normalizeCountryName)
-    .filter(Boolean));
+  const providerValues = {
+    maxmind: [],
+    ipwhois: [],
+    ipapi: [],
+  };
+  for (const row of ipRows) {
+    for (const provider of Object.keys(providerValues)) {
+      const country = normalizeCountryName(row?.providers?.[provider] || "");
+      if (country && country !== "Europe") providerValues[provider].push(country);
+    }
+  }
 
-  const countVotes = values => {
+  const rank = values => {
     const counts = new Map();
     for (const country of values) counts.set(country, (counts.get(country) || 0) + 1);
     return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
   };
 
-  const maxMindRanked = countVotes(maxMindVotes);
-  const ripeRanked = countVotes(ripeVotes);
-  const maxMindCountry = maxMindRanked[0]?.[0] || "";
-  const ripeCountry = ripeRanked[0]?.[0] || "";
+  const ranked = Object.fromEntries(
+    Object.entries(providerValues).map(([provider, values]) => [provider, rank(values)])
+  );
+  const providerCountries = {
+    maxmind: ranked.maxmind[0]?.[0] || "",
+    ipwhois: ranked.ipwhois[0]?.[0] || "",
+    ipapi: ranked.ipapi[0]?.[0] || "",
+  };
+
+  const allGeoVotes = Object.entries(providerCountries)
+    .filter(([, country]) => country)
+    .flatMap(([provider, country]) => [country].map(value => ({ provider, country: value })));
+  const geoCounts = new Map();
+  for (const vote of allGeoVotes) geoCounts.set(vote.country, (geoCounts.get(vote.country) || 0) + 1);
+  const consensus = [...geoCounts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0];
+  const maxMindCountry = providerCountries.maxmind;
+  const fallbackGeoCountry = providerCountries.ipwhois || providerCountries.ipapi || "";
+  const allProviderCountries = [...new Set(Object.values(providerCountries).filter(Boolean))];
+  const conflict = allProviderCountries.length > 1;
+
+  if (consensus?.[1] >= 2) {
+    return {
+      country: consensus[0],
+      reason: `ip-geo-consensus-${consensus[1]}`,
+      maxMindCountry,
+      ipwhoisCountry: providerCountries.ipwhois,
+      ipapiCountry: providerCountries.ipapi,
+      maxMindVotes: ranked.maxmind[0]?.[1] || 0,
+      ipwhoisVotes: ranked.ipwhois[0]?.[1] || 0,
+      ipapiVotes: ranked.ipapi[0]?.[1] || 0,
+      conflict,
+    };
+  }
 
   if (maxMindCountry) {
     return {
       country: maxMindCountry,
-      reason: maxMindRanked[0]?.[1] > 1 ? "maxmind-geo-consensus" : "maxmind-geo",
+      reason: "maxmind-geo",
       maxMindCountry,
-      ripeCountry,
-      maxMindVotes: maxMindRanked[0]?.[1] || 0,
-      ripeVotes: ripeRanked[0]?.[1] || 0,
-      conflict: Boolean(ripeCountry && ripeCountry !== maxMindCountry),
+      ipwhoisCountry: providerCountries.ipwhois,
+      ipapiCountry: providerCountries.ipapi,
+      maxMindVotes: ranked.maxmind[0]?.[1] || 0,
+      ipwhoisVotes: ranked.ipwhois[0]?.[1] || 0,
+      ipapiVotes: ranked.ipapi[0]?.[1] || 0,
+      conflict,
     };
   }
 
-  if (ripeCountry) {
+  if (fallbackGeoCountry) {
+    const provider = providerCountries.ipwhois ? "ipwhois" : "ipapi";
     return {
-      country: ripeCountry,
-      reason: "ripestat-geoloc-fallback",
+      country: fallbackGeoCountry,
+      reason: `${provider}-geo`,
       maxMindCountry: "",
-      ripeCountry,
+      ipwhoisCountry: providerCountries.ipwhois,
+      ipapiCountry: providerCountries.ipapi,
       maxMindVotes: 0,
-      ripeVotes: ripeRanked[0]?.[1] || 0,
-      conflict: false,
+      ipwhoisVotes: ranked.ipwhois[0]?.[1] || 0,
+      ipapiVotes: ranked.ipapi[0]?.[1] || 0,
+      conflict,
     };
   }
 
-  if (linkCountry) {
+  const normalizedLinkCountry = normalizeCountryName(linkCountry);
+  if (normalizedLinkCountry && normalizedLinkCountry !== "Europe") {
     return {
-      country: normalizeCountryName(linkCountry),
+      country: normalizedLinkCountry,
       reason: "link-fragment-fallback",
       maxMindCountry: "",
-      ripeCountry: "",
+      ipwhoisCountry: "",
+      ipapiCountry: "",
       maxMindVotes: 0,
-      ripeVotes: 0,
+      ipwhoisVotes: 0,
+      ipapiVotes: 0,
       conflict: false,
     };
   }
@@ -1996,9 +2112,25 @@ function chooseCountryFromEvidence(ipRows = [], { linkCountry = "", sourceCountr
       country: normalizeCountryName(sourceCountry),
       reason: "source-metadata-fallback",
       maxMindCountry: "",
-      ripeCountry: "",
+      ipwhoisCountry: "",
+      ipapiCountry: "",
       maxMindVotes: 0,
-      ripeVotes: 0,
+      ipwhoisVotes: 0,
+      ipapiVotes: 0,
+      conflict: false,
+    };
+  }
+
+  if (normalizedLinkCountry) {
+    return {
+      country: normalizedLinkCountry,
+      reason: "link-fragment-fallback-europe",
+      maxMindCountry: "",
+      ipwhoisCountry: "",
+      ipapiCountry: "",
+      maxMindVotes: 0,
+      ipwhoisVotes: 0,
+      ipapiVotes: 0,
       conflict: false,
     };
   }
@@ -2007,9 +2139,11 @@ function chooseCountryFromEvidence(ipRows = [], { linkCountry = "", sourceCountr
     country: "Unknown",
     reason: "unresolved",
     maxMindCountry: "",
-    ripeCountry: "",
+    ipwhoisCountry: "",
+    ipapiCountry: "",
     maxMindVotes: 0,
-    ripeVotes: 0,
+    ipwhoisVotes: 0,
+    ipapiVotes: 0,
     conflict: false,
   };
 }
@@ -2058,9 +2192,11 @@ async function determineLinkCountries(links, items) {
         flag: flagForCountry(selected.country),
         countryReason: selected.reason,
         maxMindCountry: selected.maxMindCountry,
-        ripeGeolocCountry: selected.ripeCountry,
+        ipwhoisCountry: selected.ipwhoisCountry,
+        ipapiCountry: selected.ipapiCountry,
         maxMindVotes: selected.maxMindVotes,
-        ripeVotes: selected.ripeVotes,
+        ipwhoisVotes: selected.ipwhoisVotes,
+        ipapiVotes: selected.ipapiVotes,
         sourceConflict: Boolean(sourceCountry && selected.country !== "Unknown" && sourceCountry !== selected.country),
         geoConflict: Boolean(selected.conflict),
         ipEvidence,

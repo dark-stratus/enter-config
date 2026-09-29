@@ -57,3 +57,13 @@ Neither Globalping nor host.tools can directly certify a VPN protocol. They are 
 ## Production boundary
 
 No production routing, publication, Fast/Gaming logic or production health files are changed.
+
+## LTE response-latency gate
+
+For LTE the selection order is deliberately: exact-link Xray -> Globalping transport gate -> response latency -> country/flag labelling. The latency gate first counts links with a direct Xray HTTP response in <= 3.5 seconds. If fewer than 15 links meet that threshold, the final threshold is widened to <= 6 seconds. Xray Cloudflare download-fallback results do not receive a synthetic latency value and are excluded from this gate.
+
+## LTE country and flag detection
+
+The final `locations-lte-response-latency-final.txt` is never recolored manually. For every selected link, v3 resolves the endpoint host to IPv4 addresses, queries independent IP-geolocation providers (RIPEstat MaxMind GeoLite, ipwho.is and ipapi.co), and uses a country supported by at least two providers when available. A single successful provider is used only when no consensus is possible. The source/link country is a fallback only when IP geolocation is unavailable. RIPEstat `geoloc` is intentionally not used as a country vote because it can describe resource geolocation rather than the actual endpoint location.
+
+Every decision is written to `locations-lte-country-audit.json`, including source country, each provider result, conflicts and the reason for the selected country.
