@@ -79,6 +79,14 @@ const XRAY_SPEED_FALLBACK_MIN_KBPS = Math.max(
   Number(process.env.RUSSIA_TEST_XRAY_SPEED_MIN_KBPS) || 1024
 );
 
+// Experimental LTE response-latency gate. It is intentionally applied only
+// after exact-link Xray validation and the Globalping gate.
+// Only a successful direct HTTPS target gives a real response-latency value.
+// Cloudflare download-fallback passes are kept separately as latency-unknown.
+const LTE_RESPONSE_LATENCY_FAST_MS = Math.max(100, Number(process.env.RUSSIA_TEST_LTE_RESPONSE_LATENCY_FAST_MS) || 2500);
+const LTE_RESPONSE_LATENCY_FALLBACK_MS = Math.max(100, Number(process.env.RUSSIA_TEST_LTE_RESPONSE_LATENCY_FALLBACK_MS) || 5000);
+const LTE_RESPONSE_LATENCY_MIN_FAST_COUNT = Math.max(1, Number(process.env.RUSSIA_TEST_LTE_RESPONSE_LATENCY_MIN_FAST_COUNT) || 15);
+
 const PRIORITY_RUSSIA_CITIES = [
   "Moscow", "Saint Petersburg", "Yekaterinburg", "Kazan", "Novosibirsk",
   "Nizhny Novgorod", "Samara", "Krasnodar", "Rostov-on-Don", "Ufa", "Perm", "Voronezh",
@@ -1600,6 +1608,51 @@ function runSelfTest() {
   gpEndpoints.get("tcp|y|443").globalpingGate = { verdict: "FAIL-GLOBALPING", validReachedCities: 0 };
   const safeAfterRealFail = buildGlobalpingSafeLinks(gpItems, gpXray, gpEndpoints, { attempted: 2, serviceAvailable: true, failOpen: false });
   if (safeAfterRealFail.length !== 1 || !safeAfterRealFail.includes(gpItems[1].link)) throw new Error("Globalping real-fail filtering self-test failed");
+
+  const strictLatencyItems = Array.from({ length: 16 }, (_, index) => ({
+    id: `latency-${index + 1}`,
+    link: `vless://${String(index + 1).padStart(8, "0")}@latency.example:443?security=tls&type=tcp`,
+  }));
+  const strictLatencyXray = new Map(strictLatencyItems.map((item, index) => [
+    item.id,
+    { verdict: "PASS-XRAY", latencyMs: index < 15 ? 2400 : 4000 },
+  ]));
+  const strictLatency = filterLinksByResponseLatency(
+    strictLatencyItems.map(item => item.link),
+    strictLatencyItems,
+    strictLatencyXray
+  );
+  if (strictLatency.thresholdMs !== LTE_RESPONSE_LATENCY_FAST_MS || strictLatency.selectedLinks.length !== 15) {
+    throw new Error("LTE response-latency 2.5s self-test failed");
+  }
+
+  const relaxedLatencyItems = Array.from({ length: 15 }, (_, index) => ({
+    id: `relaxed-${index + 1}`,
+    link: `vless://relaxed${String(index + 1).padStart(4, "0")}@latency2.example:443?security=tls&type=tcp`,
+  }));
+  const relaxedLatencyXray = new Map(relaxedLatencyItems.map((item, index) => [
+    item.id,
+    { verdict: "PASS-XRAY", latencyMs: index < 14 ? 2400 : 4000 },
+  ]));
+  const relaxedLatency = filterLinksByResponseLatency(
+    relaxedLatencyItems.map(item => item.link),
+    relaxedLatencyItems,
+    relaxedLatencyXray
+  );
+  if (relaxedLatency.thresholdMs !== LTE_RESPONSE_LATENCY_FALLBACK_MS || relaxedLatency.selectedLinks.length !== 15) {
+    throw new Error("LTE response-latency 5s fallback self-test failed");
+  }
+
+  const fallbackItem = {
+    id: "fallback-only",
+    link: "vless://fallback-only@latency3.example:443?security=tls&type=tcp",
+  };
+  const fallbackXray = new Map([[fallbackItem.id, { verdict: "PASS-XRAY-CLOUDFLARE", latencyMs: 800 }]]);
+  const fallbackLatency = filterLinksByResponseLatency([fallbackItem.link], [fallbackItem], fallbackXray);
+  if (fallbackLatency.knownLatency !== 0 || fallbackLatency.unknownLatency !== 1 || fallbackLatency.selectedLinks.length !== 0) {
+    throw new Error("LTE response-latency fallback classification self-test failed");
+  }
+
   console.log("RUSSIA TEST V3 SELF-TEST: PASS");
 }
 
@@ -1644,6 +1697,82 @@ function buildGlobalpingSafeLinks(items, xrayById, endpointByKey, globalpingGate
     if (result.verdict === "UNKNOWN-GLOBALPING") return true; // Service/measurement failure: fail-open.
     return Number(result.validReachedCities) >= 2;
   });
+}
+
+function getDirectXrayLatencyForLink(link, items, xrayById) {
+  const normalizedLink = String(link || "").trim();
+  if (!normalizedLink) return { known: false, latencyMs: 0, source: "missing-link" };
+
+  const matchingRows = items
+    .filter(item => String(item?.link || "").trim() === normalizedLink)
+    .map(item => xrayById.get(String(item?.id)))
+    .filter(Boolean);
+
+  const directLatencies = matchingRows
+    .filter(row => row?.verdict === "PASS-XRAY")
+    .map(row => Number(row?.latencyMs))
+    .filter(value => Number.isFinite(value) && value > 0);
+
+  if (directLatencies.length) {
+    return {
+      known: true,
+      latencyMs: Math.min(...directLatencies),
+      source: "xray-direct-http",
+    };
+  }
+
+  if (matchingRows.some(row => row?.verdict === "PASS-XRAY-CLOUDFLARE")) {
+    return {
+      known: false,
+      latencyMs: 0,
+      source: "xray-cloudflare-speed-fallback",
+    };
+  }
+
+  return {
+    known: false,
+    latencyMs: 0,
+    source: "no-direct-xray-latency",
+  };
+}
+
+function filterLinksByResponseLatency(links, items, xrayById) {
+  const uniqueLinks = [...new Set((Array.isArray(links) ? links : [])
+    .map(link => String(link || "").trim())
+    .filter(Boolean))];
+
+  const rows = uniqueLinks.map(link => {
+    const latency = getDirectXrayLatencyForLink(link, items, xrayById);
+    return { link, ...latency };
+  });
+
+  const knownRows = rows.filter(row => row.known);
+  const underFastRows = knownRows.filter(row => row.latencyMs <= LTE_RESPONSE_LATENCY_FAST_MS);
+  const thresholdMs = underFastRows.length >= LTE_RESPONSE_LATENCY_MIN_FAST_COUNT
+    ? LTE_RESPONSE_LATENCY_FAST_MS
+    : LTE_RESPONSE_LATENCY_FALLBACK_MS;
+  const selectedRows = knownRows.filter(row => row.latencyMs <= thresholdMs);
+  const underFallbackRows = knownRows.filter(row => row.latencyMs <= LTE_RESPONSE_LATENCY_FALLBACK_MS);
+
+  return {
+    inputLinks: uniqueLinks.length,
+    knownLatency: knownRows.length,
+    unknownLatency: rows.length - knownRows.length,
+    underFast: underFastRows.length,
+    underFallback: underFallbackRows.length,
+    thresholdMs,
+    thresholdLabel: `${thresholdMs / 1000}s`,
+    minFastCount: LTE_RESPONSE_LATENCY_MIN_FAST_COUNT,
+    selectedLinks: selectedRows.map(row => row.link),
+    underFastLinks: underFastRows.map(row => row.link),
+    underFallbackLinks: underFallbackRows.map(row => row.link),
+    unknownLatencyLinks: rows.filter(row => !row.known).map(row => row.link),
+    rows: rows.sort((a, b) => {
+      if (a.known !== b.known) return a.known ? -1 : 1;
+      if (a.known && b.known && a.latencyMs !== b.latencyMs) return a.latencyMs - b.latencyMs;
+      return a.link.localeCompare(b.link);
+    }),
+  };
 }
 
 function globalpingFilesSummary(beforeLinks, twoOfThreeLinks, threeOfThreeLinks, safeLinks, gate) {
@@ -1701,6 +1830,26 @@ async function main() {
     const globalpingGate = label === "lte"
       ? await runGlobalpingGatePass(endpoints, items, xrayById, globalping)
       : { attempted: 0, passed: 0, skipped: "not-run", endpoints: [] };
+
+    const endpointByKey = new Map(endpoints.map(endpoint => [endpoint.key, endpoint]));
+    const beforeGlobalpingLinks = getXrayVerifiedLinks(items, xrayById);
+    const safeGlobalpingLinks = label === "lte"
+      ? buildGlobalpingSafeLinks(items, xrayById, endpointByKey, globalpingGate)
+      : [];
+
+    // This is deliberately the last selection gate: Xray first, Globalping
+    // second, response-latency filter third. Host.tools remains diagnostics.
+    const responseLatencyFilter = label === "lte"
+      ? filterLinksByResponseLatency(safeGlobalpingLinks, items, xrayById)
+      : null;
+
+    console.log(
+      `RUSSIA TEST V3 LTE LATENCY FILTER: afterGlobalping=${safeGlobalpingLinks.length}; ` +
+      `<=${LTE_RESPONSE_LATENCY_FAST_MS}ms=${responseLatencyFilter?.underFast || 0}; ` +
+      `threshold=${responseLatencyFilter?.thresholdLabel || `${LTE_RESPONSE_LATENCY_FAST_MS / 1000}s`}; ` +
+      `final=${responseLatencyFilter?.selectedLinks?.length || 0}; ` +
+      `unknown=${responseLatencyFilter?.unknownLatency || 0}`
+    );
 
     const hostToolsRecovery = label === "lte"
       ? await runHostToolsRecoveryPass(endpoints, items, xrayById)
@@ -1761,11 +1910,8 @@ async function main() {
         )
       ];
       await fs.writeFile(path.join(OUT_DIR, "locations-lte-hosttools-recovered.txt"), hostToolsRecoveredLinks.length ? `${hostToolsRecoveredLinks.join("\n")}\n` : "", "utf8");
-      const endpointByKey = new Map(endpoints.map(endpoint => [endpoint.key, endpoint]));
-      const beforeGlobalpingLinks = verifiedLinksBeforeGlobalping;
       const globalping2of3Links = globalpingStrictLinks(items, xrayById, endpointByKey, 2);
       const globalping3of3Links = globalpingStrictLinks(items, xrayById, endpointByKey, 3);
-      const safeGlobalpingLinks = buildGlobalpingSafeLinks(items, xrayById, endpointByKey, globalpingGate);
 
       await fs.writeFile(
         path.join(OUT_DIR, "locations-lte-before-globalping.txt"),
@@ -1792,11 +1938,38 @@ async function main() {
         safeGlobalpingLinks.length ? `${safeGlobalpingLinks.join("\n")}\n` : "",
         "utf8"
       );
+      await fs.writeFile(
+        path.join(OUT_DIR, "locations-lte-response-latency-2_5s.txt"),
+        responseLatencyFilter.underFastLinks.length ? `${responseLatencyFilter.underFastLinks.join("\n")}\n` : "",
+        "utf8"
+      );
+      await fs.writeFile(
+        path.join(OUT_DIR, "locations-lte-response-latency-5s.txt"),
+        responseLatencyFilter.underFallbackLinks.length ? `${responseLatencyFilter.underFallbackLinks.join("\n")}\n` : "",
+        "utf8"
+      );
+      await fs.writeFile(
+        path.join(OUT_DIR, "locations-lte-response-latency-final.txt"),
+        responseLatencyFilter.selectedLinks.length ? `${responseLatencyFilter.selectedLinks.join("\n")}\n` : "",
+        "utf8"
+      );
+      await fs.writeFile(
+        path.join(OUT_DIR, "locations-lte-response-latency-review.txt"),
+        responseLatencyFilter.unknownLatencyLinks.length ? `${responseLatencyFilter.unknownLatencyLinks.join("\n")}\n` : "",
+        "utf8"
+      );
+      await fs.writeFile(
+        path.join(OUT_DIR, "locations-lte-response-latency.json"),
+        `${JSON.stringify(responseLatencyFilter, null, 2)}\n`,
+        "utf8"
+      );
       reports[label].globalping2of3Links = globalping2of3Links;
       reports[label].globalping3of3Links = globalping3of3Links;
       reports[label].beforeGlobalpingLinks = beforeGlobalpingLinks;
       reports[label].globalpingSafeLinks = safeGlobalpingLinks;
       reports[label].globalpingFiles = globalpingFilesSummary(beforeGlobalpingLinks, globalping2of3Links, globalping3of3Links, safeGlobalpingLinks, globalpingGate);
+      reports[label].responseLatencyFilter = responseLatencyFilter;
+      reports[label].finalResponseLatencyLinks = responseLatencyFilter.selectedLinks;
       const hysteria = items.filter(item => ["hysteria","hysteria2","tuic"].includes(protocolOf(item.link)));
       const hysteriaXrayPassing = [...new Set(hysteria.filter(item => exactXrayPassing(item, xrayById)).map(item => String(item.link).trim()).filter(Boolean))];
       await fs.writeFile(path.join(OUT_DIR, "lte-hysteria-all.txt"), hysteria.map(x => x.link).join("\n") + (hysteria.length ? "\n" : ""), "utf8");
@@ -1818,7 +1991,7 @@ async function main() {
     md.push(`## ${label.toUpperCase()}`, "", `Candidates: **${report.candidates}**`, `Protocols: ${Object.entries(report.protocols).map(([k,v]) => `**${k}=${v}**`).join(', ') || 'none'}`, `Unique endpoints: **${report.uniqueEndpoints}**`, `Verdicts: ${Object.entries(report.endpointVerdicts).map(([k,v]) => `**${k}=${v}**`).join(', ') || 'none'}`, `Check-Host transport links: **${lists[label].length}**`, `Exact-link Xray: ${Object.entries(report.xraySummary || {}).map(([k,v]) => `**${k}=${v}**`).join(', ') || 'not run'}`, label === "lte" ? `Copy Check-Host transport list: [locations-${label}.txt](./locations-${label}.txt)\nExact-link Xray verified: [locations-lte-xray-verified.txt](./locations-lte-xray-verified.txt)\nNeeds manual review: [locations-lte-xray-review.txt](./locations-lte-xray-review.txt)\nTransport-only remainder: [locations-lte-transport-only.txt](./locations-lte-transport-only.txt)\nGlobalping transport diagnostic: [locations-lte-globalping-transport.txt](./locations-lte-globalping-transport.txt)\nGlobalping gate + Xray (GitHub runner) intersection: [locations-lte-globalping-recovered.txt](./locations-lte-globalping-recovered.txt)\nStrong only: [locations-${label}-strong.txt](./locations-${label}-strong.txt)\nPartial only: [locations-${label}-partial.txt](./locations-${label}-partial.txt)` : `Copy all: [locations-${label}.txt](./locations-${label}.txt)`, "");
   }
   md.push("## Why v3 should recover VLESS/Trojan", "", "The previous v2 parser treated Check-Host TCP results of the documented form [{\"time\":0.03,\"address\":\"...\"}] as non-reachable because it expected an object with .time directly. v3 parses the first result object correctly.", "", "The experiment also keeps protocol schemes unchanged: vless:// stays VLESS, trojan:// stays Trojan, hysteria2:// stays Hysteria2, etc.", "");
-  md.push("## Recheck strategy", "", "Every non-passing TCP endpoint gets one second Check-Host measurement. A server can therefore recover from a transient timeout or asymmetric first measurement. The report keeps both attempts.", "", "After transport screening, the experiment starts an exact-link Xray test. Links that fail the normal HTTPS targets get the same Cloudflare real-download check used by production health (4 MB, HTTP 2xx/3xx, meaningful download, minimum throughput). This is a fallback verifier, not a replacement for the normal target checks.", "", "For production later, we can choose which verdict tiers to publish after comparing them with your HAPP results.", "");
+  md.push("## Recheck and LTE stage order", "", "Every non-passing TCP endpoint gets one second Check-Host measurement. LTE selection order is: Russia Gate -> exact-link Xray -> Globalping -> response-latency filter. Host.tools remains diagnostic-only.", "", `Response-latency policy: count post-Globalping links with known direct Xray HTTP response latency <= **${LTE_RESPONSE_LATENCY_FAST_MS} ms**. If that count is at least **${LTE_RESPONSE_LATENCY_MIN_FAST_COUNT}**, keep **${LTE_RESPONSE_LATENCY_FAST_MS} ms**; otherwise expand to **${LTE_RESPONSE_LATENCY_FALLBACK_MS} ms**.`, "", "Cloudflare download-fallback Xray passes are latency-unknown for this filter because their elapsed time is a 4 MB download duration, not a lightweight response latency; they are listed separately for manual review.", "");
   md.push("## Hysteria / UDP", "", "Hysteria/Hysteria2/TUIC are detected from the URI scheme. UDP transport screening is kept as diagnostics only; a non-refused UDP port does not prove a Hysteria/QUIC handshake.", "", "`lte-hysteria-passing.txt` now contains only links that passed the exact-link Xray stage. Globalping is not used to certify UDP/Hysteria because it can measure UDP reachability but cannot perform the original protocol handshake.", "", "The exact-link Xray stage uses the real parsed protocol from `scripts/link-runtime.mjs`, so Hysteria2 remains Hysteria2 instead of being converted to VLESS.");
   md.push("## Check-Host Russia nodes", "", checkHostDiscovery.nodes?.length ? checkHostDiscovery.nodes.map(n => `- ${n.id}: ${n.city}`).join("\n") : (checkHostDiscovery.error || "No nodes discovered."), "");
   md.push("## Globalping — additional Russian cities",
@@ -1852,6 +2025,9 @@ async function main() {
       xraySpeedFallbackEnabled:XRAY_SPEED_FALLBACK_ENABLED,
       xraySpeedFallbackUrl:XRAY_SPEED_FALLBACK_URL,
       xraySpeedFallbackMinKbps:XRAY_SPEED_FALLBACK_MIN_KBPS,
+      lteResponseLatencyFastMs: LTE_RESPONSE_LATENCY_FAST_MS,
+      lteResponseLatencyFallbackMs: LTE_RESPONSE_LATENCY_FALLBACK_MS,
+      lteResponseLatencyMinFastCount: LTE_RESPONSE_LATENCY_MIN_FAST_COUNT,
       xrayEnabled:XRAY_ENABLED, xrayTargets:XRAY_TARGETS, reports, globalping, checkHostDiscovery, inputSha256:hash(await fs.readFile(INPUT_FILE)) }, null, 2)}\n`, "utf8");
   console.log("RUSSIA CHECKER V3 COMPLETE");
 }
