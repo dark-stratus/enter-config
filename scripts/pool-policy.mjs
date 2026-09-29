@@ -35,10 +35,15 @@ export const REGULAR_COUNTRY_RANK = new Map(
 );
 
 /**
- * Featured Fast/Gaming candidates are selected from the same ordinary-country
- * pool. Europe is a separate permanent/manual location.
+ * Featured Fast/Gaming candidates use the ordinary-country pool except Russia.
+ * Russia remains a normal visible location, but it is never eligible for a
+ * Featured Fast/Gaming role. Europe is a separate permanent/manual location.
  */
-export const FEATURED_COUNTRY_ORDER = REGULAR_COUNTRY_ORDER;
+export const FEATURED_COUNTRY_ORDER = Object.freeze(
+    REGULAR_COUNTRY_ORDER.filter(country =>
+        String(country).trim().toLowerCase() !== "russia"
+    )
+);
 export const FEATURED_COUNTRIES = new Set(
     FEATURED_COUNTRY_ORDER.map(country => country.toLowerCase())
 );

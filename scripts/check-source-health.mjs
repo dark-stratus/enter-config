@@ -567,8 +567,13 @@ const HEALTH_MIN_TARGET_PASSES = Math.max(
 function extractWhiteListCountryFromRemarks(remarks = "") {
     return countryFromText(
         String(remarks || ""),
-        { allowFlag: false }
+        { allowFlag: true }
     );
+}
+
+function resolveKnownCountry(value = "") {
+    const country = normalizeCountryName(value);
+    return flagForCountry(country) ? country : "";
 }
 
 function stripLinkRemark(link) {
@@ -5036,9 +5041,15 @@ async function main() {
                 MANAGED_WHITE_LIST_RE.test(String(item.id || ""))
             );
 
+            const sourceCountry =
+                isWhiteList
+                    ? resolveKnownCountry(
+                        meta.sourceMeta?.country || item?.country || ""
+                    )
+                    : "";
             const remarkCountry =
                 isWhiteList
-                    ? normalizeCountryName(
+                    ? resolveKnownCountry(
                         extractWhiteListCountryFromRemarks(
                             String(item.remarks || "")
                         )
@@ -5048,6 +5059,7 @@ async function main() {
             let resolvedCountry =
                 isWhiteList && result.ok
                     ? (
+                        sourceCountry ||
                         remarkCountry ||
                         "Europe"
                     )
@@ -5529,11 +5541,21 @@ async function main() {
         }
 
         const sourceMeta = getCandidateMeta(fp) || null;
-        const resolvedCountry = sourceMeta?.country || String(item.remarks || "").replace(/^\S+\s*/, "").replace(/\s+\d+$/, "");
+        const resolvedCountry =
+            resolveKnownCountry(sourceMeta?.country || item?.country || "") ||
+            resolveKnownCountry(
+                extractWhiteListCountryFromRemarks(String(item.remarks || ""))
+            ) ||
+            String(item.remarks || "").replace(/^\S+\s*/, "").replace(/\s+\d+$/, "");
+        const isWhiteList = Boolean(
+            sourceMeta?.whiteList ||
+            item?.whiteList === true ||
+            MANAGED_WHITE_LIST_RE.test(String(item.id || ""))
+        );
         healthResults.push({
             id: item.id, remarks: item.remarks || "", link: String(item.link || "").trim(),
             configFile: item.configFile || null, sourceKind: item.sourceKind || null, country: resolvedCountry,
-            whiteList: false, source: sourceMeta?.source || item.source || "retained/manual", linkFingerprint: fp,
+            whiteList: isWhiteList, source: sourceMeta?.source || item.source || "retained/manual", linkFingerprint: fp,
             ok: false, protocol: getProtocol(item.link || ""), stages: "",
             reason: `Russia reachability failed: Check-Host ${probe.checkHost?.nodesReachable || 0}/${probe.checkHost?.nodesTested || 0}`,
             quality: null, connection: null, gaming: null, remote: [], updateConnectivity: null,

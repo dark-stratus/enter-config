@@ -2048,6 +2048,24 @@ function buildRetainedEntries(
       ) ||
       "Unknown";
 
+    // Health publication normalizes whitelist remarks (for example to
+    // `🇪🇺 🏳️ LTE Europe`). When such an entry later becomes retained, the
+    // original country can still be recovered from the source link's fragment
+    // instead of permanently carrying the generic Europe bucket forward.
+    if (isWhiteList && (country === "Unknown" || country === "Europe")) {
+      try {
+        const linkRemark =
+          decodeURIComponent(new URL(link).hash.replace(/^#/, "")).trim();
+        const linkCountry = countryFromText(
+          linkRemark,
+          { allowFlag: true }
+        );
+        if (linkCountry && linkCountry !== "Unknown") {
+          country = linkCountry;
+        }
+      } catch {}
+    }
+
     if (country === "Unknown" && flag) {
       country =
         COUNTRY_BY_FLAG[flag] ||
