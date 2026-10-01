@@ -1,30 +1,30 @@
 # VPN source report
 
-Последнее обновление: 2026-10-01T03:13:55.813Z
+Последнее обновление: 2026-10-01T09:58:15.397Z
 
 Статистика **по каждому источнику отдельно**: **взяли → живы → в итоговом пуле**.
 
-🧠 Из памяти предыдущего пула сохранено: **183** серверов.
+🧠 Из памяти предыдущего пула сохранено: **194** серверов.
 
 ## Источники
 
 | Секрет | Источник | Слот | Взяли | Живы | В итоговом пуле | Состояние |
 |---|---|---:|---:|---:|---:|---|
-| **SOURCE_URL_1** | rtwo2/FastNodes — verified.txt | 1 | 441 | 157 | 18 | ✅ |
-| **SOURCE_URL15_2** | keylineservices.top/9v5QqXjc18TPKTyQn8KCONuJYGAS8bfU | 2 | 44 | 20 | 15 | ✅ |
+| **SOURCE_URL_1** | rtwo2/FastNodes — verified.txt | 1 | 420 | 126 | 18 | ✅ |
+| **SOURCE_URL15_2** | keylineservices.top/9v5QqXjc18TPKTyQn8KCONuJYGAS8bfU | 2 | 44 | 24 | 22 | ✅ |
 | **SOURCE_URL4_4** | keylineservices.top/kNIF5Xx9nGBKSCnSqBAJL6rqvkQrZKu7 | 4 | 2 | 0 | 0 | ⚠️ |
-| **SOURCE_URL_5** | VovaplusEXP/p-configs — vless.txt | 5 | 49 | 5 | 1 | ✅ |
-| **SOURCE_URL5_6** | keylineservices.top/3hvMuQN5gPyCaXiHNsVGVPdmQB9wDJN_ | 6 | 28 | 12 | 7 | ✅ |
-| **SOURCE_URL_7** | wlunlocker/vpn-configs — blacklist_vpn1.txt | 7 | 135 | 29 | 0 | ✅ |
-| **SOURCE_URL_8** | igareck/vpn-configs-for-russia — BLACK_VLESS_RUS_mobile.txt | 8 | 109 | 29 | 4 | ✅ |
-| **SOURCE_URL_9** | zieng2/wl — vless_universal.txt | 9 | 203 | 73 | 73 | ✅ |
-| **SOURCE_URL_10** | igareck/vpn-configs-for-russia — WHITE-CIDR-RU-all.txt | 10 | 132 | 73 | 73 | ✅ |
-| **SOURCE_URL_11** | igareck/vpn-configs-for-russia — WHITE-SNI-RU-all.txt | 11 | 5 | 3 | 3 | ✅ |
+| **SOURCE_URL_5** | VovaplusEXP/p-configs — vless.txt | 5 | 123 | 11 | 3 | ✅ |
+| **SOURCE_URL5_6** | keylineservices.top/3hvMuQN5gPyCaXiHNsVGVPdmQB9wDJN_ | 6 | 28 | 15 | 5 | ✅ |
+| **SOURCE_URL_7** | wlunlocker/vpn-configs — blacklist_vpn1.txt | 7 | 143 | 13 | 0 | ✅ |
+| **SOURCE_URL_8** | igareck/vpn-configs-for-russia — BLACK_VLESS_RUS_mobile.txt | 8 | 134 | 7 | 0 | ✅ |
+| **SOURCE_URL_9** | zieng2/wl — vless_universal.txt | 9 | 140 | 70 | 70 | ✅ |
+| **SOURCE_URL_10** | igareck/vpn-configs-for-russia — WHITE-CIDR-RU-all.txt | 10 | 103 | 51 | 51 | ✅ |
+| **SOURCE_URL_11** | igareck/vpn-configs-for-russia — WHITE-SNI-RU-all.txt | 11 | 0 | 0 | 0 | ⚠️ |
 
 ## 🇷🇺 Russia Gate
 
 **Режим:** 2 независимые точки.
-Проверено кандидатов: **901**; прошли: **681**; отброшены: **208**; pending: **12**.
+Проверено кандидатов: **913**; прошли: **667**; отброшены: **237**; pending: **9**.
 
 | Russian checker | Проверок | Reachable | Inconclusive | Timeout | 429 | Другие ошибки |
 |---|---:|---:|---:|---:|---:|---:|
