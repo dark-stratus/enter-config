@@ -1,6 +1,6 @@
 {
-  "remarks": "🇫🇮 FIN #1",
-  "location_id": "99566a25-6587-457f-82c0-e16ee84f5ef5",
+  "remarks": "🇵🇱 Poland #2",
+  "location_id": "8d6e99a4-5d76-4e3e-a246-b321eccdac40",
   "log": {
     "loglevel": "warning"
   },
@@ -12,19 +12,6 @@
       "1.1.1.1",
       "1.0.0.1"
     ]
-  },
-  "burstObservatory": {
-    "subjectSelector": [
-      "proxy-"
-    ],
-    "pingConfig": {
-      "destination": "https://www.gstatic.com/generate_204",
-      "connectivity": "https://yandex.ru/",
-      "httpMethod": "HEAD",
-      "interval": "3m",
-      "sampling": 3,
-      "timeout": "5s"
-    }
   },
   "inbounds": [
     {
@@ -66,32 +53,6 @@
   ],
   "outbounds": [
     {
-      "protocol": "hysteria",
-      "settings": {
-        "port": 2443,
-        "address": "vth-fi-n3.mizulina.top",
-        "version": 2
-      },
-      "streamSettings": {
-        "method": "hysteria",
-        "network": "hysteria",
-        "security": "tls",
-        "tlsSettings": {
-          "alpn": [
-            "h3"
-          ],
-          "serverName": "vth-fi-n3.mizulina.top",
-          "fingerprint": "edge",
-          "allowInsecure": false
-        },
-        "hysteriaSettings": {
-          "auth": "dcda0d72-a3ce-44a1-b621-3d67d5a9e1a2",
-          "version": 2
-        }
-      },
-      "tag": "proxy-0"
-    },
-    {
       "protocol": "vless",
       "settings": {
         "vnext": [
@@ -101,10 +62,11 @@
               {
                 "id": "dcda0d72-a3ce-44a1-b621-3d67d5a9e1a2",
                 "flow": "xtls-rprx-vision",
+                "level": 0,
                 "encryption": "none"
               }
             ],
-            "address": "vth-fi-n1.mizulina.top"
+            "address": "31.56.188.113"
           }
         ]
       },
@@ -112,76 +74,11 @@
         "network": "tcp",
         "security": "tls",
         "tlsSettings": {
-          "serverName": "vth-fi-n1.mizulina.top",
+          "serverName": "vc22.mizulina.top",
           "fingerprint": "edge"
         }
       },
-      "tag": "proxy-1"
-    },
-    {
-      "protocol": "hysteria",
-      "settings": {
-        "port": 3443,
-        "address": "72.56.229.76",
-        "version": 2
-      },
-      "streamSettings": {
-        "method": "hysteria",
-        "network": "hysteria",
-        "security": "tls",
-        "finalmask": {
-          "udp": [
-            {
-              "type": "salamander",
-              "settings": {
-                "password": "8ecc73443c14ab67d04328b2758bafc889d7290aadc360657b67aa84af34d590"
-              }
-            }
-          ]
-        },
-        "tlsSettings": {
-          "alpn": [
-            "h3"
-          ],
-          "serverName": "vth-fi-n3.mizulina.top",
-          "fingerprint": "edge",
-          "allowInsecure": false
-        },
-        "hysteriaSettings": {
-          "auth": "dcda0d72-a3ce-44a1-b621-3d67d5a9e1a2",
-          "version": 2
-        }
-      },
-      "tag": "proxy-2"
-    },
-    {
-      "protocol": "vless",
-      "settings": {
-        "vnext": [
-          {
-            "port": 443,
-            "users": [
-              {
-                "id": "dcda0d72-a3ce-44a1-b621-3d67d5a9e1a2",
-                "flow": "xtls-rprx-vision",
-                "encryption": "none"
-              }
-            ],
-            "address": "vth-fi-n2.mizulina.top"
-          }
-        ]
-      },
-      "streamSettings": {
-        "network": "tcp",
-        "security": "reality",
-        "realitySettings": {
-          "shortId": "",
-          "password": "-9XjfitJVmXhVwo1XkDLeZkrq3ivYgdtO_ZUIhDLBBg",
-          "serverName": "m.beboo.ru",
-          "fingerprint": "edge"
-        }
-      },
-      "tag": "proxy-3"
+      "tag": "proxy"
     },
     {
       "tag": "direct",
@@ -198,24 +95,6 @@
   ],
   "routing": {
     "domainStrategy": "IPIfNonMatch",
-    "balancers": [
-      {
-        "tag": "proxy",
-        "selector": [
-          "proxy-0",
-          "proxy-1",
-          "proxy-2",
-          "proxy-3"
-        ],
-        "strategy": {
-          "type": "leastLoad",
-          "settings": {
-            "expected": 1,
-            "maxRTT": "2s"
-          }
-        }
-      }
-    ],
     "rules": [
       {
         "ip": [
@@ -8953,7 +8832,7 @@
           "socks-in",
           "http-in"
         ],
-        "balancerTag": "proxy",
+        "outboundTag": "proxy",
         "type": "field"
       }
     ]
