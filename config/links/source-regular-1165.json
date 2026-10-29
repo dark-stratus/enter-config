@@ -1,0 +1,348 @@
+{
+  "dns": {
+    "servers": [
+      "1.1.1.1",
+      "1.0.0.1"
+    ],
+    "queryStrategy": "UseIP"
+  },
+  "policy": {
+    "levels": {
+      "0": {
+        "connIdle": 1800
+      }
+    }
+  },
+  "routing": {
+    "rules": [
+      {
+        "type": "field",
+        "domain": [
+          "domain:youtube.com",
+          "domain:youtu.be",
+          "domain:googlevideo.com",
+          "domain:ytimg.com",
+          "domain:youtubei.googleapis.com",
+          "domain:yt3.ggpht.com"
+        ],
+        "balancerTag": "RU_RELIEF"
+      },
+      {
+        "type": "field",
+        "protocol": [
+          "bittorrent"
+        ],
+        "outboundTag": "direct"
+      }
+    ],
+    "balancers": [
+      {
+        "tag": "RU_RELIEF",
+        "selector": [
+          "relief"
+        ],
+        "strategy": {
+          "type": "leastLoad",
+          "settings": {
+            "maxRTT": "1800ms",
+            "expected": 3,
+            "baselines": [
+              "90ms",
+              "180ms",
+              "350ms"
+            ]
+          }
+        },
+        "fallbackTag": "relief"
+      }
+    ],
+    "domainMatcher": "hybrid",
+    "domainStrategy": "IPIfNonMatch"
+  },
+  "inbounds": [
+    {
+      "tag": "socks",
+      "port": 10808,
+      "listen": "127.0.0.1",
+      "protocol": "socks",
+      "settings": {
+        "udp": true,
+        "auth": "noauth"
+      },
+      "sniffing": {
+        "enabled": true,
+        "routeOnly": false,
+        "destOverride": [
+          "http",
+          "tls",
+          "quic"
+        ]
+      }
+    },
+    {
+      "tag": "http",
+      "port": 10809,
+      "listen": "127.0.0.1",
+      "protocol": "http",
+      "settings": {
+        "allowTransparent": false
+      },
+      "sniffing": {
+        "enabled": true,
+        "routeOnly": false,
+        "destOverride": [
+          "http",
+          "tls",
+          "quic"
+        ]
+      }
+    }
+  ],
+  "outbounds": [
+    {
+      "tag": "proxy",
+      "protocol": "vless",
+      "settings": {
+        "vnext": [
+          {
+            "address": "edge-d834b345fedb.eu-cdn391.com",
+            "port": 2087,
+            "users": [
+              {
+                "id": "e75ad2eb-6c1f-45ce-8023-f5f10875df66",
+                "encryption": "none",
+                "flow": ""
+              }
+            ]
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "xhttp",
+        "xhttpSettings": {
+          "mode": "stream-one",
+          "host": "edge-d834b345fedb.eu-cdn391.com",
+          "path": "/workspace/4900c81f8ca8e4fb",
+          "extra": {
+            "xmux": {
+              "cMaxReuseTimes": 0,
+              "maxConcurrency": 0,
+              "maxConnections": 2,
+              "hKeepAlivePeriod": 0,
+              "hMaxRequestTimes": "600-900",
+              "hMaxReusableSecs": "1800-3000"
+            }
+          }
+        },
+        "security": "reality",
+        "realitySettings": {
+          "serverName": "edge-d834b345fedb.eu-cdn391.com",
+          "publicKey": "kyxPU-YRCKeAHFnpG16BRQFhGRK6yvrThxKSAIBiWTs",
+          "shortId": "068bea75e834c3ff",
+          "fingerprint": "firefox"
+        },
+        "sockopt": {
+          "tcpKeepAliveIdle": 60,
+          "tcpKeepAliveInterval": 30
+        }
+      },
+      "mux": {
+        "enabled": false
+      }
+    },
+    {
+      "tag": "relief",
+      "protocol": "vless",
+      "settings": {
+        "vnext": [
+          {
+            "address": "edge-ddbc0a08f019.eu-cdn391.com",
+            "port": 2087,
+            "users": [
+              {
+                "id": "e75ad2eb-6c1f-45ce-8023-f5f10875df66",
+                "encryption": "none",
+                "flow": ""
+              }
+            ]
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "grpc",
+        "grpcSettings": {
+          "serviceName": "workspacea920261ad6",
+          "authority": "edge-ddbc0a08f019.eu-cdn391.com",
+          "mode": false
+        },
+        "security": "reality",
+        "realitySettings": {
+          "serverName": "edge-ddbc0a08f019.eu-cdn391.com",
+          "publicKey": "QTsqnuEggIwzh1fo9soKb3G6ffdj2S6YE3R_G7WRIiA",
+          "shortId": "51cf801812c01d80",
+          "fingerprint": "firefox"
+        },
+        "sockopt": {
+          "tcpKeepAliveIdle": 60,
+          "tcpKeepAliveInterval": 30
+        }
+      },
+      "mux": {
+        "enabled": false
+      }
+    },
+    {
+      "tag": "relief-2",
+      "protocol": "vless",
+      "settings": {
+        "vnext": [
+          {
+            "address": "edge-9d9088d6641c.eu-cdn391.com",
+            "port": 443,
+            "users": [
+              {
+                "id": "e75ad2eb-6c1f-45ce-8023-f5f10875df66",
+                "encryption": "none",
+                "flow": ""
+              }
+            ]
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "grpc",
+        "grpcSettings": {
+          "serviceName": "workspace17a96ab7ab92",
+          "authority": "edge-9d9088d6641c.eu-cdn391.com",
+          "mode": false
+        },
+        "security": "reality",
+        "realitySettings": {
+          "serverName": "edge-9d9088d6641c.eu-cdn391.com",
+          "publicKey": "P0ZWaR3XPpUH9_g7UnwHAFUSW5OLJ6B8bsMEX2V33EU",
+          "shortId": "b44631960f4c206f",
+          "fingerprint": "firefox"
+        },
+        "sockopt": {
+          "tcpKeepAliveIdle": 60,
+          "tcpKeepAliveInterval": 30
+        }
+      },
+      "mux": {
+        "enabled": false
+      }
+    },
+    {
+      "tag": "relief-3",
+      "protocol": "vless",
+      "settings": {
+        "vnext": [
+          {
+            "address": "usxc7eea244fe.eu-cdn539.com",
+            "port": 443,
+            "users": [
+              {
+                "id": "e75ad2eb-6c1f-45ce-8023-f5f10875df66",
+                "encryption": "none",
+                "flow": ""
+              }
+            ]
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "xhttp",
+        "xhttpSettings": {
+          "mode": "stream-one",
+          "host": "usxc7eea244fe.eu-cdn539.com",
+          "path": "/workspace/4df9ba748a31ca43",
+          "extra": {
+            "xmux": {
+              "cMaxReuseTimes": 0,
+              "maxConcurrency": 0,
+              "maxConnections": 2,
+              "hKeepAlivePeriod": 0,
+              "hMaxRequestTimes": "600-900",
+              "hMaxReusableSecs": "1800-3000"
+            }
+          }
+        },
+        "security": "reality",
+        "realitySettings": {
+          "serverName": "usxc7eea244fe.eu-cdn539.com",
+          "publicKey": "SW4U4nMF6CMeN4BjAGH7wqR5Zh89E0ABrPV7aq7ozGU",
+          "shortId": "926ccd4c7a8c7b8d",
+          "fingerprint": "firefox"
+        },
+        "sockopt": {
+          "tcpKeepAliveIdle": 60,
+          "tcpKeepAliveInterval": 30
+        }
+      },
+      "mux": {
+        "enabled": false
+      }
+    },
+    {
+      "tag": "relief-4",
+      "protocol": "vless",
+      "settings": {
+        "vnext": [
+          {
+            "address": "edge-b903746c41fa.eu-cdn539.com",
+            "port": 443,
+            "users": [
+              {
+                "id": "e75ad2eb-6c1f-45ce-8023-f5f10875df66",
+                "encryption": "none",
+                "flow": ""
+              }
+            ]
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "grpc",
+        "grpcSettings": {
+          "serviceName": "workspace6fea8fda9316",
+          "authority": "edge-b903746c41fa.eu-cdn539.com",
+          "mode": false
+        },
+        "security": "reality",
+        "realitySettings": {
+          "serverName": "edge-b903746c41fa.eu-cdn539.com",
+          "publicKey": "_k4QvACYaNBMq5iOiqhXh3xDKro6b05XoCOcN7Xq2FM",
+          "shortId": "921e1167b927e57c",
+          "fingerprint": "firefox"
+        },
+        "sockopt": {
+          "tcpKeepAliveIdle": 60,
+          "tcpKeepAliveInterval": 30
+        }
+      },
+      "mux": {
+        "enabled": false
+      }
+    },
+    {
+      "tag": "direct",
+      "protocol": "freedom"
+    },
+    {
+      "tag": "block",
+      "protocol": "blackhole"
+    }
+  ],
+  "burstObservatory": {
+    "pingConfig": {
+      "timeout": "8s",
+      "interval": "180s",
+      "sampling": 1,
+      "destination": "https://speed.cloudflare.com/__down?bytes=4096"
+    },
+    "subjectSelector": [
+      "relief"
+    ]
+  },
+  "remarks": "🇷🇺 Россия [Youtube без рекламы]"
+}
