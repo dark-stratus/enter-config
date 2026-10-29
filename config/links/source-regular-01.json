@@ -1,6 +1,6 @@
 {
-  "remarks": "🇫🇮 FIN #1",
-  "location_id": "99566a25-6587-457f-82c0-e16ee84f5ef5",
+  "remarks": "🇩🇪 Frankfurt #1‌​‍​⁠⁠‍⁠‌​‍‌⁠‍‌⁠⁠​‍​⁠⁠‌‍",
+  "location_id": "53cde064-ca96-4409-860c-1e00e27011fc",
   "log": {
     "loglevel": "warning"
   },
@@ -68,29 +68,19 @@
     {
       "protocol": "hysteria",
       "settings": {
-        "port": 3443,
-        "address": "72.56.229.76",
+        "port": 2443,
+        "address": "95.140.155.154",
         "version": 2
       },
       "streamSettings": {
         "method": "hysteria",
         "network": "hysteria",
         "security": "tls",
-        "finalmask": {
-          "udp": [
-            {
-              "type": "salamander",
-              "settings": {
-                "password": "8ecc73443c14ab67d04328b2758bafc889d7290aadc360657b67aa84af34d590"
-              }
-            }
-          ]
-        },
         "tlsSettings": {
           "alpn": [
             "h3"
           ],
-          "serverName": "vth-fi-n3.mizulina.top",
+          "serverName": "vc9.mizulina.top",
           "fingerprint": "edge",
           "allowInsecure": false
         },
@@ -102,32 +92,6 @@
       "tag": "proxy-0"
     },
     {
-      "protocol": "hysteria",
-      "settings": {
-        "port": 2443,
-        "address": "vth-fi-n3.mizulina.top",
-        "version": 2
-      },
-      "streamSettings": {
-        "method": "hysteria",
-        "network": "hysteria",
-        "security": "tls",
-        "tlsSettings": {
-          "alpn": [
-            "h3"
-          ],
-          "serverName": "vth-fi-n3.mizulina.top",
-          "fingerprint": "edge",
-          "allowInsecure": false
-        },
-        "hysteriaSettings": {
-          "auth": "dcda0d72-a3ce-44a1-b621-3d67d5a9e1a2",
-          "version": 2
-        }
-      },
-      "tag": "proxy-1"
-    },
-    {
       "protocol": "vless",
       "settings": {
         "vnext": [
@@ -137,10 +101,11 @@
               {
                 "id": "dcda0d72-a3ce-44a1-b621-3d67d5a9e1a2",
                 "flow": "xtls-rprx-vision",
+                "level": 0,
                 "encryption": "none"
               }
             ],
-            "address": "vth-fi-n2.mizulina.top"
+            "address": "95.140.155.154"
           }
         ]
       },
@@ -148,11 +113,11 @@
         "network": "tcp",
         "security": "tls",
         "tlsSettings": {
-          "serverName": "vth-fi-n1.mizulina.top",
+          "serverName": "vc9.mizulina.top",
           "fingerprint": "edge"
         }
       },
-      "tag": "proxy-2"
+      "tag": "proxy-1"
     },
     {
       "tag": "direct",
@@ -174,8 +139,7 @@
         "tag": "proxy",
         "selector": [
           "proxy-0",
-          "proxy-1",
-          "proxy-2"
+          "proxy-1"
         ],
         "strategy": {
           "type": "leastLoad",
@@ -5553,7 +5517,6 @@
           "185.35.192.0/22",
           "185.36.23.0/24",
           "185.36.60.0/22",
-          "185.36.100.0/24",
           "185.36.104.0/22",
           "185.36.156.0/22",
           "185.36.172.0/22",

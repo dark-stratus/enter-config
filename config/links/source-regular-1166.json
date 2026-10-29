@@ -689,8 +689,8 @@
       "tag": "proxy",
       "protocol": "hysteria",
       "settings": {
-        "address": "46.182.24.24",
-        "port": 14445,
+        "address": "edge-628b71df4fcb.eu-cdn391.com",
+        "port": 443,
         "version": 2
       },
       "streamSettings": {
@@ -701,12 +701,22 @@
         },
         "security": "tls",
         "tlsSettings": {
-          "serverName": "zndx.apruxdomain.website",
+          "serverName": "edge-628b71df4fcb.eu-cdn391.com",
           "enableSessionResumption": false,
           "fingerprint": "chrome",
           "alpn": [
             "h3"
           ]
+        },
+        "finalmask": {
+          "obfs": {
+            "type": "salamander",
+            "password": "yzrsHRu3dsu2G9zJeEjPxBAI"
+          },
+          "quicParams": {
+            "debug": false,
+            "congestion": "bbr"
+          }
         }
       }
     },
@@ -719,5 +729,5 @@
       "protocol": "blackhole"
     }
   ],
-  "remarks": "🌐 Белый интернет • 1"
+  "remarks": "🇦🇹 Австрия"
 }
