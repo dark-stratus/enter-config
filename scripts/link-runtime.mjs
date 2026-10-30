@@ -233,12 +233,22 @@ function buildVlessStream(server) {
         }
 
         stream.network = "xhttp";
+        // Xray's XHTTP schema places XMUX, padding, upload framing and
+        // custom headers inside xhttpSettings.extra. They are not top-level
+        // XHTTP settings. Keep only host/path/mode beside the extra object.
+        const xhttpExtra = { ...extra };
+        const mode = xhttpExtra.mode || server.mode || "packet-up";
+        const host = xhttpExtra.host || server.host || "";
+        const path = xhttpExtra.path || server.path || "";
+        delete xhttpExtra.mode;
+        delete xhttpExtra.host;
+        delete xhttpExtra.path;
+
         stream.xhttpSettings = {
-            ...extra,
-            mode: extra.mode || server.mode || "packet-up",
-            host: extra.host || server.host || "",
-            path: extra.path || server.path || "",
-            ...(extra.headers ? { headers: extra.headers } : {}),
+            mode,
+            host,
+            path,
+            ...(Object.keys(xhttpExtra).length ? { extra: xhttpExtra } : {}),
         };
     }
 
