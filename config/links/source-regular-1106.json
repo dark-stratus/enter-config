@@ -151,32 +151,31 @@
   "outbounds": [
     {
       "tag": "proxy",
-      "protocol": "hysteria",
+      "protocol": "vless",
       "settings": {
-        "address": "se1.xxxqqq.net",
-        "port": 443,
-        "version": 2
+        "vnext": [
+          {
+            "address": "pl1.xxxqqq.net",
+            "port": 443,
+            "users": [
+              {
+                "id": "735cde6c-e6f3-44f8-9f49-5ba2c3f2c1e1",
+                "encryption": "none",
+                "flow": "xtls-rprx-vision"
+              }
+            ]
+          }
+        ]
       },
       "streamSettings": {
-        "network": "hysteria",
-        "hysteriaSettings": {
-          "version": 2,
-          "auth": "735cde6c-e6f3-44f8-9f49-5ba2c3f2c1e1"
-        },
-        "security": "tls",
-        "tlsSettings": {
-          "serverName": "se1.xxxqqq.net",
-          "enableSessionResumption": false,
-          "fingerprint": "edge",
-          "alpn": [
-            "h3"
-          ]
-        },
-        "finalmask": {
-          "quicParams": {
-            "debug": false,
-            "congestion": "bbr"
-          }
+        "network": "tcp",
+        "tcpSettings": {},
+        "security": "reality",
+        "realitySettings": {
+          "serverName": "www.icloud.com",
+          "publicKey": "-YpJ_Xav7sUkd77sEZjg58Pn6dnNpj5himuUS-OFDh4",
+          "shortId": "fd44fcf1c3afa0af",
+          "fingerprint": "edge"
         }
       }
     },
@@ -189,5 +188,5 @@
       "protocol": "blackhole"
     }
   ],
-  "remarks": "🇸🇪 Швеция"
+  "remarks": "🇵🇱 Польша"
 }

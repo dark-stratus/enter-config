@@ -1,6 +1,6 @@
 {
-  "remarks": "🇩🇪 Frankfurt #1‌​‍​⁠⁠‍⁠‌​‍‌⁠‍‌⁠⁠​‍​⁠⁠‌‍",
-  "location_id": "53cde064-ca96-4409-860c-1e00e27011fc",
+  "remarks": "🇵🇱 Poland #1",
+  "location_id": "558b2c16-d6e0-4912-acc1-cd01c7bdba24",
   "log": {
     "loglevel": "warning"
   },
@@ -12,19 +12,6 @@
       "1.1.1.1",
       "1.0.0.1"
     ]
-  },
-  "burstObservatory": {
-    "subjectSelector": [
-      "proxy-"
-    ],
-    "pingConfig": {
-      "destination": "https://www.gstatic.com/generate_204",
-      "connectivity": "https://yandex.ru/",
-      "httpMethod": "HEAD",
-      "interval": "3m",
-      "sampling": 3,
-      "timeout": "5s"
-    }
   },
   "inbounds": [
     {
@@ -66,32 +53,6 @@
   ],
   "outbounds": [
     {
-      "protocol": "hysteria",
-      "settings": {
-        "port": 2443,
-        "address": "95.140.155.154",
-        "version": 2
-      },
-      "streamSettings": {
-        "method": "hysteria",
-        "network": "hysteria",
-        "security": "tls",
-        "tlsSettings": {
-          "alpn": [
-            "h3"
-          ],
-          "serverName": "vc9.mizulina.top",
-          "fingerprint": "edge",
-          "allowInsecure": false
-        },
-        "hysteriaSettings": {
-          "auth": "dcda0d72-a3ce-44a1-b621-3d67d5a9e1a2",
-          "version": 2
-        }
-      },
-      "tag": "proxy-0"
-    },
-    {
       "protocol": "vless",
       "settings": {
         "vnext": [
@@ -105,7 +66,7 @@
                 "encryption": "none"
               }
             ],
-            "address": "95.140.155.154"
+            "address": "31.56.188.111"
           }
         ]
       },
@@ -113,11 +74,11 @@
         "network": "tcp",
         "security": "tls",
         "tlsSettings": {
-          "serverName": "vc9.mizulina.top",
+          "serverName": "vc21.mizulina.top",
           "fingerprint": "edge"
         }
       },
-      "tag": "proxy-1"
+      "tag": "proxy"
     },
     {
       "tag": "direct",
@@ -134,22 +95,6 @@
   ],
   "routing": {
     "domainStrategy": "IPIfNonMatch",
-    "balancers": [
-      {
-        "tag": "proxy",
-        "selector": [
-          "proxy-0",
-          "proxy-1"
-        ],
-        "strategy": {
-          "type": "leastLoad",
-          "settings": {
-            "expected": 1,
-            "maxRTT": "2s"
-          }
-        }
-      }
-    ],
     "rules": [
       {
         "ip": [
@@ -8903,7 +8848,7 @@
           "socks-in",
           "http-in"
         ],
-        "balancerTag": "proxy",
+        "outboundTag": "proxy",
         "type": "field"
       }
     ]

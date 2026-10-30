@@ -687,37 +687,40 @@
   "outbounds": [
     {
       "tag": "proxy",
-      "protocol": "hysteria",
+      "protocol": "vless",
       "settings": {
-        "address": "edge-628b71df4fcb.eu-cdn391.com",
-        "port": 443,
-        "version": 2
+        "vnext": [
+          {
+            "address": "chx99a7fd383f.eu-cdn539.com",
+            "port": 2087,
+            "users": [
+              {
+                "id": "e75ad2eb-6c1f-45ce-8023-f5f10875df66",
+                "encryption": "none",
+                "flow": "xtls-rprx-vision"
+              }
+            ]
+          }
+        ]
       },
       "streamSettings": {
-        "network": "hysteria",
-        "hysteriaSettings": {
-          "version": 2,
-          "auth": "e75ad2eb-6c1f-45ce-8023-f5f10875df66"
+        "network": "tcp",
+        "tcpSettings": {},
+        "security": "reality",
+        "realitySettings": {
+          "serverName": "chx99a7fd383f.eu-cdn539.com",
+          "publicKey": "e2v6CEDsB86yIjvTzONV5D0pX9VnHiXcQMhcUFxcGnE",
+          "shortId": "ab6a6b6d3436ec0b",
+          "fingerprint": "firefox"
         },
-        "security": "tls",
-        "tlsSettings": {
-          "serverName": "edge-628b71df4fcb.eu-cdn391.com",
-          "enableSessionResumption": false,
-          "fingerprint": "chrome",
-          "alpn": [
-            "h3"
-          ]
-        },
-        "finalmask": {
-          "obfs": {
-            "type": "salamander",
-            "password": "yzrsHRu3dsu2G9zJeEjPxBAI"
-          },
-          "quicParams": {
-            "debug": false,
-            "congestion": "bbr"
-          }
+        "sockopt": {
+          "tcpUserTimeout": 90000,
+          "tcpKeepAliveIdle": 60,
+          "tcpKeepAliveInterval": 15
         }
+      },
+      "mux": {
+        "enabled": false
       }
     },
     {
@@ -729,5 +732,5 @@
       "protocol": "blackhole"
     }
   ],
-  "remarks": "🇦🇹 Австрия"
+  "remarks": "🇨🇭 Швейцария"
 }
