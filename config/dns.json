@@ -3,9 +3,19 @@
   "hosts": {
     "cloudflare-dns.com": "1.1.1.1",
     "dns.google": "8.8.8.8",
-    "dns.quad9.net": "9.9.9.9"
+    "dns.quad9.net": "9.9.9.9",
+    "dns.adguard-dns.com": [
+      "94.140.14.14",
+      "94.140.15.15"
+    ]
   },
   "servers": [
+    {
+      "address": "https://dns.adguard-dns.com/dns-query",
+      "domains": [],
+      "finalQuery": true,
+      "skipFallback": true
+    },
     {
       "address": "https://cloudflare-dns.com/dns-query",
       "domains": []
