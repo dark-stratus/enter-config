@@ -13,6 +13,7 @@ import {
     REGULAR_COUNTRY_RANK,
     MAX_SERVERS_PER_REGULAR_COUNTRY,
     calculateFeaturedTargetCounts,
+    isAllowedRegularCountry,
 } from "./pool-policy.mjs";
 
 import {
@@ -984,11 +985,10 @@ function selectRussiaGateCanaryItems(items) {
         groups.set(country, bucket);
     }
 
-    const preferredCountries = [
-        "Germany", "Netherlands", "United Kingdom", "UK", "United States", "USA",
-        "France", "Sweden", "Finland", "Poland", "Austria", "Italy", "Canada",
-        "Switzerland", "Czechia", "Hungary", "Bulgaria", "Russia",
-    ];
+    // Keep the health canary aligned with the shared regular-pool policy.
+    // This prevents excluded countries (notably external Germany) from being
+    // selected for source checks and ensures Georgia is checked last.
+    const preferredCountries = [...REGULAR_COUNTRY_RANK.keys()];
     const preferred = [];
     const preferredKeys = new Set();
     for (const country of preferredCountries) {
@@ -4485,7 +4485,22 @@ async function main() {
         );
     }
 
-    index = candidates;
+    // The updater already enforces the regular-country allow-list. Repeat the
+    // guard here as a fail-safe so a stale/hand-edited manifest cannot send an
+    // excluded ordinary country (for example external Germany) through the
+    // Russia Gate or the expensive health pipeline. LTE/whitelist candidates
+    // intentionally remain independent of the ordinary country catalogue.
+    index = candidates.filter(item => {
+        const id = String(item?.id || "");
+        const remarks = String(item?.remarks || "");
+        const isWhiteList = Boolean(
+            item?.whiteList === true ||
+            MANAGED_WHITE_LIST_RE.test(id) ||
+            /🏳️\s*LTE\b/i.test(remarks)
+        );
+        if (isWhiteList) return true;
+        return isAllowedRegularCountry(String(item?.country || "").trim());
+    });
 
     let updateStatus = null;
     try {

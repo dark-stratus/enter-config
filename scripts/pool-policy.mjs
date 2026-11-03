@@ -6,7 +6,6 @@
  */
 
 export const REGULAR_COUNTRY_ORDER = Object.freeze([
-    "Germany",
     "Netherlands",
     "United Kingdom",
     "United States",
@@ -21,6 +20,7 @@ export const REGULAR_COUNTRY_ORDER = Object.freeze([
     "Italy",
     "Hungary",
     "Bulgaria",
+    "Georgia",
 ]);
 
 export const ALLOWED_REGULAR_COUNTRIES = new Set(
