@@ -1,6 +1,6 @@
 {
-  "remarks": "🇵🇱 Poland #2",
-  "location_id": "8d6e99a4-5d76-4e3e-a246-b321eccdac40",
+  "remarks": "🇫🇮 FIN #1",
+  "location_id": "99566a25-6587-457f-82c0-e16ee84f5ef5",
   "log": {
     "loglevel": "warning"
   },
@@ -53,32 +53,47 @@
   ],
   "outbounds": [
     {
+      "tag": "proxy",
       "protocol": "vless",
       "settings": {
         "vnext": [
           {
-            "port": 22231,
+            "port": 443,
             "users": [
               {
                 "id": "dcda0d72-a3ce-44a1-b621-3d67d5a9e1a2",
-                "flow": "xtls-rprx-vision",
-                "level": 0,
+                "flow": "",
                 "encryption": "none"
               }
             ],
-            "address": "31.56.188.113"
+            "address": "72.56.229.153"
           }
         ]
       },
       "streamSettings": {
-        "network": "tcp",
+        "network": "xhttp",
         "security": "tls",
         "tlsSettings": {
-          "serverName": "vc22.mizulina.top",
+          "alpn": [
+            "h2"
+          ],
+          "serverName": "pixel.vth-fi-n1.mizulina.top",
           "fingerprint": "edge"
+        },
+        "xhttpSettings": {
+          "host": "pixel.vth-fi-n1.mizulina.top",
+          "mode": "packet-up",
+          "path": "/api/pixel/",
+          "extra": {
+            "scMaxEachPostBytes": 1800000,
+            "uplinkDataPlacement": "body",
+            "scMinPostsIntervalMs": 24
+          },
+          "headers": {
+            "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.6.1 Mobile/15E148 Safari/604.1"
+          }
         }
-      },
-      "tag": "proxy"
+      }
     },
     {
       "tag": "direct",
@@ -4663,6 +4678,7 @@
           "153.76.160.0/20",
           "153.76.178.0/23",
           "153.79.176.0/20",
+          "153.80.163.0/24",
           "153.80.172.0/22",
           "153.80.176.0/20",
           "153.80.224.0/19",
