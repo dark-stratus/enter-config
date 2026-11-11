@@ -10,6 +10,7 @@ import { parseLink, buildOutbound } from "./link-runtime.mjs";
 import { runLteGlobalpingGate } from "./lte-globalping-gate.mjs";
 import {
     FEATURED_COUNTRIES,
+    FALLBACK_ONLY_COUNTRIES,
     REGULAR_COUNTRY_RANK,
     MAX_SERVERS_PER_REGULAR_COUNTRY,
     calculateFeaturedTargetCounts,
@@ -3989,7 +3990,8 @@ async function writeGamingAssignments(
 
 function buildCountryHealthPool(
     healthResults,
-    whiteListOnly = false
+    whiteListOnly = false,
+    includeAllCountries = false
 ) {
     const groups = new Map();
 
@@ -4137,7 +4139,20 @@ function buildCountryHealthPool(
         return bScore - aScore || b.countryScore - a.countryScore;
     });
 
-    return entries.slice(0, MAX_VISIBLE_COUNTRIES);
+    if (!whiteListOnly) {
+        if (includeAllCountries) return entries;
+
+        const fallbackOnly = entries.filter(entry =>
+            FALLBACK_ONLY_COUNTRIES.has(String(entry.country || "").trim().toLowerCase())
+        );
+        const visible = entries.filter(entry =>
+            !FALLBACK_ONLY_COUNTRIES.has(String(entry.country || "").trim().toLowerCase())
+        ).slice(0, MAX_VISIBLE_COUNTRIES);
+        // Keep failover-only pools in the generated index without consuming
+        // one of the user's visible country slots.
+        return [...visible, ...fallbackOnly];
+    }
+    return includeAllCountries ? entries : entries.slice(0, MAX_VISIBLE_COUNTRIES);
 }
 
 function assertFeaturedCountryPartition(featured, ordinaryCountries) {
@@ -5744,17 +5759,30 @@ async function main() {
     const healthHistory = await updateHealthHistory(healthResults);
     const updateVpnPool = selectUpdateVpnPool(healthResults, healthHistory, 10);
 
-    const selectedCountries =
+    const qualifiedRegularCountries =
         buildCountryHealthPool(healthResults, false);
+    // Keep a complete, hidden catalogue of the best regular members for every
+    // eligible country. The Worker consumes it only when a matching managed
+    // node is down; these entries never appear directly in user subscriptions.
+    const managedFailoverCountries =
+        buildCountryHealthPool(healthResults, false, true);
+    const selectedCountries = qualifiedRegularCountries.filter(country =>
+        !FALLBACK_ONLY_COUNTRIES.has(String(country.country || "").trim().toLowerCase())
+    );
+    const fallbackOnlyCountries = qualifiedRegularCountries.filter(country =>
+        FALLBACK_ONLY_COUNTRIES.has(String(country.country || "").trim().toLowerCase())
+    );
 
-    // Europe is a permanent visible location and therefore counts toward the
-    // Fast/Gaming thresholds.
+    // Germany remains health-checked and published to the internal catalogue,
+    // but is not a visible regular location or Fast/Gaming candidate. It is
+    // consumed by the Worker only when the corresponding managed ⭐ node fails.
+    // Europe is a permanent visible location and counts toward Fast/Gaming.
     const featuredTargets = calculateFeaturedTargetCounts(
         selectedCountries.length + 1
     );
 
     console.log(
-        `FEATURED TARGETS: eligibleLocations=${selectedCountries.length}; ` +
+        `FEATURED TARGETS: eligibleLocations=${selectedCountries.length}; fallbackOnly=${fallbackOnlyCountries.length}; ` +
         `total=${featuredTargets.total}; fast=${featuredTargets.fast}; gaming=${featuredTargets.gaming}`
     );
 
@@ -5774,7 +5802,7 @@ async function main() {
     const selectedWhiteListCountries =
         buildCountryHealthPool(healthResults, true);
 
-    const qualifiedCountryCount = selectedCountries.length + selectedWhiteListCountries.length;
+    const qualifiedCountryCount = qualifiedRegularCountries.length + selectedWhiteListCountries.length;
     if (initialManagedCandidateCount > 0 && qualifiedCountryCount === 0) {
         throw new Error(
             `No country passed publication policy: at least one healthy server in a country must have a positive ${CHECKER_POLICY.primaryNode} result. Existing generated pool is preserved.`
@@ -5785,7 +5813,7 @@ async function main() {
         `PRIMARY CHECKER COUNTRY POLICY: node=${CHECKER_POLICY.primaryNode}; ` +
         `priorityWeight=${Math.round(CHECKER_POLICY.primaryCheckerWeight * 100)}%; ` +
         `qualifiedCountries=${qualifiedCountryCount}; ` +
-        `regular=${selectedCountries.length}; whitelist=${selectedWhiteListCountries.length}`
+        `regular=${selectedCountries.length}; fallbackOnly=${fallbackOnlyCountries.length}; whitelist=${selectedWhiteListCountries.length}`
     );
 
     // Fast/Gaming reserve the entire country. A country may appear in exactly
@@ -5820,6 +5848,9 @@ async function main() {
     const selectedRegularFingerprints = new Set([
         ...featuredRegularFingerprints,
         ...selectedNormalCountries.flatMap(
+            country => country.members.map(member => member.linkFingerprint)
+        ),
+        ...fallbackOnlyCountries.flatMap(
             country => country.members.map(member => member.linkFingerprint)
         ),
     ]);
@@ -5901,6 +5932,7 @@ async function main() {
                 ...(country ? { country } : {}),
                 ...(flag ? { flag } : {}),
                 ...(result?.retained ? { retained: true } : {}),
+                ...(FALLBACK_ONLY_COUNTRIES.has(String(country || "").trim().toLowerCase()) ? { fallbackOnly: true } : {}),
             });
         }
     }
@@ -5945,7 +5977,8 @@ async function main() {
             country => country.members
                 .filter(member => !featuredFastIds.has(member.id))
                 .map(member => member.id)
-        )
+        ),
+        ...fallbackOnlyCountries.flatMap(country => country.members.map(member => member.id))
     ].filter((id, index, list) => list.indexOf(id) === index);
 
     const selectedWhiteListOrder =
@@ -6031,6 +6064,26 @@ async function main() {
             nextIndex
         );
 
+    const managedFailoverIndex = managedFailoverCountries.flatMap(country => {
+        const countryName = normalizeCountryName(country.country) || String(country.country || "").trim();
+        const flag = flagForCountry(countryName) || "🌐";
+        return (Array.isArray(country.members) ? country.members : [])
+            .filter(member => member?.ok !== false && member?.whiteList !== true && member?.link)
+            .slice(0, MAX_SERVERS_PER_REGULAR_COUNTRY)
+            .map(member => ({
+                id: String(member.id || "").trim(),
+                remarks: `${flag} ${countryName}`.replace(/\s+/gu, " ").trim(),
+                link: String(member.link || "").trim(),
+                source: String(member.source || "").trim(),
+                country: countryName,
+                flag,
+                whiteList: false,
+                ...(member.configFile ? { configFile: member.configFile } : {}),
+                ...(member.sourceKind ? { sourceKind: member.sourceKind } : {})
+            }))
+            .filter(item => item.id && item.link);
+    });
+
     const stageDir = path.join(
         ROOT,
         `.health-stage-${process.pid}`
@@ -6065,7 +6118,10 @@ async function main() {
     }
 
     const allowedManagedIds = new Set(
-        normalizedIndex
+        [
+            ...normalizedIndex,
+            ...managedFailoverIndex
+        ]
             .filter(item => isManagedSourceId(item?.id))
             .map(item => item.id)
     );
@@ -6101,6 +6157,12 @@ async function main() {
             null,
             2
         )}\n`,
+        "utf8"
+    );
+
+    await fs.writeFile(
+        path.join(stageDir, "managed-failover-index.json"),
+        `${JSON.stringify(managedFailoverIndex, null, 2)}\n`,
         "utf8"
     );
 
@@ -6262,6 +6324,17 @@ async function main() {
             COUNTRY_POOL_SIZE,
         selectedCountries:
             selectedCountries.map(
+                country => ({
+                    country: country.country,
+                    members: country.members.map(member => ({
+                        id: member.id,
+                        kbps: Number(member.quality?.kbps) || 0
+                    })),
+                    score: country.countryScore
+                })
+            ),
+        fallbackOnlyCountries:
+            fallbackOnlyCountries.map(
                 country => ({
                     country: country.country,
                     members: country.members.map(member => ({

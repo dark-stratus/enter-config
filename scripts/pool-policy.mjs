@@ -21,7 +21,12 @@ export const REGULAR_COUNTRY_ORDER = Object.freeze([
     "Hungary",
     "Bulgaria",
     "Georgia",
+    // Germany is retained in the generated health catalogue exclusively as a
+    // fallback pool for an unavailable Escape-managed Germany ⭐ node.
+    "Germany",
 ]);
+
+export const FALLBACK_ONLY_COUNTRIES = new Set(["germany"]);
 
 export const ALLOWED_REGULAR_COUNTRIES = new Set(
     REGULAR_COUNTRY_ORDER.map(country => country.toLowerCase())
@@ -35,14 +40,15 @@ export const REGULAR_COUNTRY_RANK = new Map(
 );
 
 /**
- * Featured Fast/Gaming candidates use the ordinary-country pool except Russia.
- * Russia remains a normal visible location, but it is never eligible for a
- * Featured Fast/Gaming role. Europe is a separate permanent/manual location.
+ * Featured Fast/Gaming candidates use visible ordinary countries except Russia.
+ * Russia remains visible but is never Fast/Gaming; fallback-only Germany is
+ * retained for recovery and is never featured. Europe is a separate location.
  */
 export const FEATURED_COUNTRY_ORDER = Object.freeze(
-    REGULAR_COUNTRY_ORDER.filter(country =>
-        String(country).trim().toLowerCase() !== "russia"
-    )
+    REGULAR_COUNTRY_ORDER.filter(country => {
+        const key = String(country).trim().toLowerCase();
+        return key !== "russia" && !FALLBACK_ONLY_COUNTRIES.has(key);
+    })
 );
 export const FEATURED_COUNTRIES = new Set(
     FEATURED_COUNTRY_ORDER.map(country => country.toLowerCase())
