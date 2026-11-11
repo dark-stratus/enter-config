@@ -553,13 +553,19 @@ jobs:
           node scripts/check-source-health.mjs
 
       - name: Upload Russia gate diagnostics
+        id: upload_russia_gate_diagnostics
         if: ${{ always() && hashFiles('russia-gate-diagnostics.json') != '' }}
-        uses: actions/upload-artifact@v4
+        continue-on-error: true
+        uses: actions/upload-artifact@v7.0.2
         with:
-          name: russia-gate-diagnostics-${{ github.run_id }}
+          name: russia-gate-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
           path: russia-gate-diagnostics.json
           if-no-files-found: error
           retention-days: 7
+
+      - name: Warn if Russia gate diagnostics could not be uploaded
+        if: ${{ always() && steps.upload_russia_gate_diagnostics.outcome == 'failure' }}
+        run: echo "::warning::Russia gate diagnostics were not uploaded; this is non-blocking and does not affect the gate result."
 
       - name: Verify Russia gate artifact
         if: ${{ steps.russia_gate.outcome == 'success' }}
@@ -578,9 +584,9 @@ jobs:
 
       - name: Upload Russia gate inputs
         if: ${{ steps.russia_gate.outcome == 'success' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.2
         with:
-          name: russia-gate-inputs-${{ github.run_id }}
+          name: russia-gate-inputs-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             config/links/
             config/links/index.json
@@ -612,9 +618,9 @@ jobs:
 
       - name: Download Russia gate inputs
         id: restore_inputs
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8.0.2
         with:
-          name: russia-gate-inputs-${{ github.run_id }}
+          name: russia-gate-inputs-${{ github.run_id }}-${{ github.run_attempt }}
           path: .russia-gate-inputs
 
       - name: Restore generated inputs
@@ -729,10 +735,12 @@ jobs:
         run: node scripts/check-source-health.mjs
 
       - name: Upload LTE Globalping diagnostics
+        id: upload_lte_globalping_diagnostics
         if: ${{ always() && hashFiles('lte-russia-globalping-diagnostic.json') != '' }}
-        uses: actions/upload-artifact@v4
+        continue-on-error: true
+        uses: actions/upload-artifact@v7.0.2
         with:
-          name: lte-globalping-diagnostics-${{ github.run_id }}
+          name: lte-globalping-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             lte-russia-globalping-diagnostic.json
             lte-russia-before-globalping.txt
@@ -741,6 +749,10 @@ jobs:
             lte-russia-globalping-final.txt
           if-no-files-found: warn
           retention-days: 7
+
+      - name: Warn if LTE Globalping diagnostics could not be uploaded
+        if: ${{ always() && steps.upload_lte_globalping_diagnostics.outcome == 'failure' }}
+        run: echo "::warning::LTE Globalping diagnostics were not uploaded; VPN config health processing continues."
 
       - name: Verify UPDATE VPN pool
         if: ${{ steps.health.outcome == 'success' }}
@@ -814,10 +826,12 @@ jobs:
           git push origin HEAD:main
 
       - name: Upload VPN config diagnostics
+        id: upload_vpn_config_diagnostics
         if: always()
-        uses: actions/upload-artifact@v4
+        continue-on-error: true
+        uses: actions/upload-artifact@v7.0.2
         with:
-          name: vpn-config-report-${{ github.run_number }}
+          name: vpn-config-report-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             source-report.json
             config/source-update-status.json
@@ -827,3 +841,7 @@ jobs:
             config/source-update-pool.json
           if-no-files-found: ignore
           retention-days: 7
+
+      - name: Warn if VPN config diagnostics could not be uploaded
+        if: ${{ always() && steps.upload_vpn_config_diagnostics.outcome == 'failure' }}
+        run: echo "::warning::VPN config diagnostics were not uploaded; the generated config commit is unaffected."
