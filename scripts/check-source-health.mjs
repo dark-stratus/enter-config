@@ -21,6 +21,10 @@ import {
     flagForCountry,
     normalizeCountryName,
 } from "./country-catalog.mjs";
+import {
+    CHECKER_POLICY,
+    getPrimaryCheckerEvidence,
+} from "./checker-policy.mjs";
 
 const SOURCE_REGISTRY = {
     15: "igareck/vpn-configs-for-russia — BLACK_VLESS_RUS_mobile.txt (TOP mobile VLESS)",
@@ -199,12 +203,15 @@ const REQUEST_RETRIES =
 const CHECK_HOST_API_BASE =
     process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_API_BASE ||
     "https://check-host.net";
-const CHECK_HOST_RUSSIA_NODES = String(
-    process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_NODES ||
-    "ru1.node.check-host.net,ru2.node.check-host.net,ru3.node.check-host.net"
-).split(/[,\r\n;]+/).map(v => v.trim()).filter(Boolean);
+const CHECK_HOST_RUSSIA_NODES = [...new Set([
+    CHECKER_POLICY.primaryNode,
+    ...String(
+        process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_NODES ||
+        CHECKER_POLICY.defaultNodes.join(",")
+    ).split(/[,\r\n;]+/).map(value => value.trim()).filter(Boolean),
+])];
 let ACTIVE_CHECK_HOST_RUSSIA_NODES = [...CHECK_HOST_RUSSIA_NODES];
-const CHECK_HOST_GATE_QUORUM = Math.max(1, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_QUORUM) || 2);
+const CHECK_HOST_GATE_QUORUM = Math.max(1, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_QUORUM) || CHECKER_POLICY.defaultQuorum);
 let ACTIVE_CHECK_HOST_GATE_QUORUM = CHECK_HOST_GATE_QUORUM;
 const CHECK_HOST_TIMEOUT_MS = Math.max(5000, Number(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_TIMEOUT_MS) || 12000);
 // Check-Host creation and result retrieval have very different latency profiles.
@@ -304,7 +311,7 @@ const RUSSIA_GATE_USE_CACHE =
     );
 // Bump whenever the gate semantics change so old cached verdicts cannot be
 // reused after changing providers or reachability rules.
-const RUSSIA_GATE_ALGORITHM_VERSION = Math.max(1, Number(process.env.HEALTHCHECK_RUSSIA_GATE_ALGORITHM_VERSION) || 38);
+const RUSSIA_GATE_ALGORITHM_VERSION = Math.max(1, Number(process.env.HEALTHCHECK_RUSSIA_GATE_ALGORITHM_VERSION) || CHECKER_POLICY.algorithmVersion);
 // Russia Gate is deliberately single-process. A per-shard limiter would create
 // multiple independent API streams and can trigger Check-Host 429 responses.
 const RUSSIA_GATE_SHARD_INDEX = 0;
@@ -961,13 +968,20 @@ function getRussiaCheckerLocation(node) {
 }
 
 function selectRussiaGateCanaryItems(items) {
+    const sourceItems = Array.isArray(items) ? items.filter(Boolean) : [];
+    const regularItems = sourceItems.filter(
+        item => !MANAGED_WHITE_LIST_RE.test(String(item?.id || ""))
+    );
+    const canaryItems = regularItems.length ? regularItems : sourceItems;
     const groups = new Map();
-    for (const item of Array.isArray(items) ? items : []) {
+
+    for (const item of canaryItems) {
         const link = String(item?.link || "").trim();
         if (!link) continue;
-        if (getTransportType(getProtocol(link)) !== "tcp") continue;
-        if (MANAGED_WHITE_LIST_RE.test(String(item?.id || ""))) continue;
 
+        // Preflight always uses TCP Connect. It measures whether a Check-Host
+        // node returns a definitive result, not whether this target speaks TCP.
+        // That also lets UDP-only pools (Hysteria/TUIC) verify checker liveness.
         const key = russiaGateEndpointKey(item);
         if (groups.has(key)) continue;
         let url;
@@ -985,9 +999,11 @@ function selectRussiaGateCanaryItems(items) {
         groups.set(country, bucket);
     }
 
-    // Keep the health canary aligned with the shared regular-pool policy.
+    // Prefer regular-pool endpoints to keep preflight aligned with the
+    // published country policy. If the source set contains only whitelist/LTE
+    // servers, use those as canaries rather than failing open/closed by accident.
     // This prevents excluded countries (notably external Germany) from being
-    // selected for source checks and ensures Georgia is checked last.
+    // selected for source checks when regular candidates are available.
     const preferredCountries = [...REGULAR_COUNTRY_RANK.keys()];
     const preferred = [];
     const preferredKeys = new Set();
@@ -1369,37 +1385,51 @@ async function checkHostProviderPreflight(items = []) {
             .map(row => [row.node, row])
     ).values()];
 
+    const primaryNode = selectableNodes
+        .find(row => row.node === CHECKER_POLICY.primaryNode) || null;
     const saintPetersburg = selectableNodes
-        .filter(row => row.cityGroup === "saint-petersburg")
+        .filter(row => row.cityGroup === "saint-petersburg" && row.node !== CHECKER_POLICY.primaryNode)
         .sort((a, b) => Number(b.score) - Number(a.score))[0] || null;
-    const moscow = selectableNodes
-        .filter(row => row.cityGroup === "moscow")
-        .sort((a, b) => Number(b.score) - Number(a.score));
 
-    let selectedPair = null;
-    let selectionReason = "No Russian Check-Host node returned a definitive canary result.";
+    let selectedNodes = [];
+    let selectionReason = `Primary checker ${CHECKER_POLICY.primaryNode} returned no definitive canary results; Russia Gate is closed.`;
 
-    // Preserve Moscow + Saint Petersburg when both are demonstrably alive.
-    if (saintPetersburg && moscow.length >= 1) {
-        selectedPair = [moscow[0].node, saintPetersburg.node];
-        selectionReason = "Selected Moscow + Saint Petersburg from canary-observed healthy nodes.";
-    } else if (selectableNodes.length >= 2) {
-        selectedPair = selectableNodes.slice(0, 2).map(row => row.node);
-        selectionReason = canaryReliable
-            ? "Selected the two healthiest Russian Check-Host nodes by canary quality."
-            : "Canary quorum was not fully reliable; selected the two nodes with the strongest observed definitive results.";
-    } else if (selectableNodes.length === 1) {
-        selectedPair = [selectableNodes[0].node];
-        selectionReason = "Only one Russian Check-Host node returned definitive canary results; single-node fallback enabled.";
+    // ru1 is deliberately always part of the live set. With three live nodes,
+    // two positive results are enough (2-of-3); this gives ru1 influence without
+    // making it the sole authority for every individual endpoint.
+    if (primaryNode) {
+        selectedNodes = [primaryNode.node];
+        if (saintPetersburg) selectedNodes.push(saintPetersburg.node);
+
+        const remaining = selectableNodes
+            .filter(row => !selectedNodes.includes(row.node))
+            .sort((a, b) => Number(b.score) - Number(a.score) || a.node.localeCompare(b.node));
+        for (const row of remaining) {
+            if (selectedNodes.length >= CHECKER_POLICY.maxActiveNodes) break;
+            selectedNodes.push(row.node);
+        }
+
+        selectionReason = selectedNodes.length >= 3
+            ? `Selected primary ${CHECKER_POLICY.primaryNode} plus the two healthiest available peers; endpoint quorum is ${Math.min(CHECK_HOST_GATE_QUORUM, selectedNodes.length)}-of-3.`
+            : selectedNodes.length === 2
+                ? `Selected primary ${CHECKER_POLICY.primaryNode} plus one healthy peer; both must pass.`
+                : `Only primary ${CHECKER_POLICY.primaryNode} returned definitive canary results; single-node fallback is enabled.`;
     }
 
     const liveNodes = observedNodes.map(row => row.node);
-    const selectedLiveNodes = selectedPair || [];
-    const checkerMode = selectedLiveNodes.length >= 2
-        ? "dual"
+    const selectedLiveNodes = selectedNodes;
+    const checkerMode = selectedLiveNodes.length >= 3
+        ? "triple"
+        : selectedLiveNodes.length === 2
+            ? "dual"
+            : selectedLiveNodes.length === 1
+                ? "single"
+                : "unavailable";
+    const quorumRequired = selectedLiveNodes.length >= 2
+        ? Math.min(CHECK_HOST_GATE_QUORUM, selectedLiveNodes.length)
         : selectedLiveNodes.length === 1
-            ? "single"
-            : "skipped";
+            ? 1
+            : 0;
 
     const nodeProbes = canaryStats.map(row => ({
         node: row.node,
@@ -1435,11 +1465,7 @@ async function checkHostProviderPreflight(items = []) {
         // preflight this means "returned a definitive canary result", not
         // "successfully reached the canary endpoint".
         nodesReachable: liveNodes.length,
-        quorumRequired: selectedLiveNodes.length >= 2
-            ? 2
-            : selectedLiveNodes.length === 1
-                ? 1
-                : 0,
+        quorumRequired,
         quorumMet: selectedLiveNodes.length >= 1,
         checkerMode,
         selectionReason,
@@ -1499,6 +1525,15 @@ async function runRussiaGateEndpointCoordinator(endpointGroups, { maxInFlight = 
         reason: errorMessage,
         providersUnavailable: true,
         transport: getTransportType(getProtocol(group.representative.link || "")),
+        primaryChecker: {
+            node: CHECKER_POLICY.primaryNode,
+            positive: false,
+            status: "not-tested",
+            reachable: false,
+            udpUsable: false,
+            inconclusive: true,
+            latencyMs: 0,
+        },
         checkHost: {
             provider: "check-host",
             ok: false,
@@ -1809,6 +1844,7 @@ async function runRussiaGateEndpointCoordinator(endpointGroups, { maxInFlight = 
 }
 
 async function checkRussiaReachabilityFromProbe(item, url, protocol, checkHost) {
+    const transport = getTransportType(protocol);
     return {
         required: true,
         skipped: false,
@@ -1816,7 +1852,8 @@ async function checkRussiaReachabilityFromProbe(item, url, protocol, checkHost) 
         gatePending: !checkHost.ok && Boolean(checkHost.unavailable || checkHost.inconclusive),
         anyReachable: Boolean(checkHost.ok),
         providersUnavailable: Boolean(checkHost.unavailable),
-        transport: getTransportType(protocol),
+        transport,
+        primaryChecker: getPrimaryCheckerEvidence(checkHost.results, transport),
         checkHost,
         minLatencyMs: Number(checkHost.minLatencyMs) > 0 ? Number(checkHost.minLatencyMs) : 0,
         checkedAt: Date.now()
@@ -3966,16 +4003,63 @@ function buildCountryHealthPool(
         groups.set(result.country, bucket);
     }
 
+    const rankPercentile = (value, values, higherIsBetter = true) => {
+        const finite = values.filter(Number.isFinite);
+        if (!finite.length || !Number.isFinite(value)) return 0;
+        if (finite.length === 1) return 1;
+        const noWorseCount = finite.reduce(
+            (count, candidate) => count + (higherIsBetter ? candidate <= value : candidate >= value),
+            0
+        );
+        return noWorseCount / finite.length;
+    };
+
     const entries = [...groups.entries()]
         .map(([country, members]) => {
+            const primaryPassedMembers = members.filter(
+                item => item?.russiaProbe?.primaryChecker?.positive === true
+            );
+
+            // A country is not a publishable location unless at least one of
+            // its healthy servers was positively reached from the primary ru1.
+            if (!primaryPassedMembers.length) return null;
+
+            const speedValues = members
+                .map(item => Number(item.quality?.kbps) || 0)
+                .filter(Number.isFinite);
+            const providerValues = members
+                .map(item => Number(item.quality?.passedCount) || 0)
+                .filter(Number.isFinite);
+            const latencyValues = members
+                .map(item => Number(item.connection?.medianMs))
+                .filter(value => Number.isFinite(value) && value > 0);
+
+            const priorityScores = new Map();
+            for (const item of members) {
+                const speed = Number(item.quality?.kbps) || 0;
+                const providers = Number(item.quality?.passedCount) || 0;
+                const latency = Number(item.connection?.medianMs);
+                const baseScore =
+                    rankPercentile(speed, speedValues, true) * 0.65 +
+                    rankPercentile(providers, providerValues, true) * 0.20 +
+                    rankPercentile(latency, latencyValues, false) * 0.15;
+                const primaryBonus = item?.russiaProbe?.primaryChecker?.positive === true
+                    ? CHECKER_POLICY.primaryCheckerWeight
+                    : 0;
+                priorityScores.set(
+                    item,
+                    baseScore * (1 - CHECKER_POLICY.primaryCheckerWeight) + primaryBonus
+                );
+            }
+
             const sorted = [...members].sort((a, b) => {
+                const priorityDifference = (priorityScores.get(b) || 0) - (priorityScores.get(a) || 0);
+                if (Math.abs(priorityDifference) > 1e-9) return priorityDifference;
+
                 const aSpeed = Number(a.quality?.kbps) || 0;
                 const bSpeed = Number(b.quality?.kbps) || 0;
                 if (aSpeed !== bSpeed) return bSpeed - aSpeed;
 
-                // Speed remains the primary criterion. When speeds tie, prefer
-                // candidates backed by more independent providers, then lower
-                // measured connection latency, then lower gaming latency.
                 const aProviders = Number(a.quality?.passedCount) || 0;
                 const bProviders = Number(b.quality?.passedCount) || 0;
                 if (aProviders !== bProviders) return bProviders - aProviders;
@@ -3990,25 +4074,34 @@ function buildCountryHealthPool(
             });
 
             // Regular countries publish at most the three best healthy members.
-            // White List/LTE is intentionally uncapped for now so every
-            // server that passes health-check is published and can be tested
-            // directly; a future per-country cap can be introduced later.
-            const top = whiteListOnly
+            // Keep one ru1-positive member even when its speed rank alone would
+            // place it just outside the top-three cut. LTE remains uncapped.
+            let top = whiteListOnly
                 ? sorted
                 : sorted.slice(0, COUNTRY_POOL_SIZE);
+            if (!whiteListOnly && !top.some(item => item?.russiaProbe?.primaryChecker?.positive === true)) {
+                const primaryCandidate = sorted.find(item => item?.russiaProbe?.primaryChecker?.positive === true);
+                if (primaryCandidate) {
+                    top = [primaryCandidate, ...top.slice(0, Math.max(0, COUNTRY_POOL_SIZE - 1))]
+                        .sort((a, b) => (priorityScores.get(b) || 0) - (priorityScores.get(a) || 0));
+                }
+            }
+
             const speeds = top
                 .map(item => Number(item.quality?.kbps))
-                .filter(Number.isFinite);
-
+                .filter(Number.isFinite)
+                .sort((a, b) => b - a);
             const bestSpeed = speeds[0] || 0;
             const secondSpeed = speeds[1] || 0;
             const thirdSpeed = speeds[2] || 0;
-
             const countryScore =
                 bestSpeed * 0.50 +
                 secondSpeed * 0.25 +
                 thirdSpeed * 0.15 +
                 speeds.length * 10;
+            const primaryCheckerPassCount = top.filter(
+                item => item?.russiaProbe?.primaryChecker?.positive === true
+            ).length;
 
             return {
                 country,
@@ -4017,31 +4110,36 @@ function buildCountryHealthPool(
                 countryScore: Math.round(countryScore * 10) / 10,
                 bestSpeed: Math.round(bestSpeed * 10) / 10,
                 goodServerCount: speeds.length,
+                primaryCheckerNode: CHECKER_POLICY.primaryNode,
+                primaryCheckerPassCount,
+                primaryCheckerPassRate: top.length ? primaryCheckerPassCount / top.length : 0,
             };
         })
-        .sort((a, b) => {
-            // Ordinary locations use the fixed product order. Score is only a
-            // tie-breaker, so a slow/poor country can never reorder the UX.
-            // Whitelist/LTE remains score-driven because it is an independent
-            // reachability pool rather than the ordinary location menu.
-            if (!whiteListOnly) {
-                const aRank =
-                    REGULAR_COUNTRY_RANK.get(
-                        String(a.country || "").trim().toLowerCase()
-                    ) ?? Number.MAX_SAFE_INTEGER;
-                const bRank =
-                    REGULAR_COUNTRY_RANK.get(
-                        String(b.country || "").trim().toLowerCase()
-                    ) ?? Number.MAX_SAFE_INTEGER;
+        .filter(Boolean);
 
-                if (aRank !== bRank) return aRank - bRank;
-            }
-
+    const countryScores = entries.map(entry => Number(entry.countryScore) || 0);
+    entries.sort((a, b) => {
+        // Ordinary locations keep the established fixed country order. Within
+        // each country, ru1 adds a 12% score blend to server selection.
+        if (!whiteListOnly) {
+            const aRank = REGULAR_COUNTRY_RANK.get(String(a.country || "").trim().toLowerCase()) ?? Number.MAX_SAFE_INTEGER;
+            const bRank = REGULAR_COUNTRY_RANK.get(String(b.country || "").trim().toLowerCase()) ?? Number.MAX_SAFE_INTEGER;
+            if (aRank !== bRank) return aRank - bRank;
             return b.countryScore - a.countryScore;
-        });
+        }
+
+        // For LTE/whitelist locations, use a small country-level bonus based
+        // on the share of published servers that ru1 independently reached.
+        const aScore = rankPercentile(a.countryScore, countryScores, true) * (1 - CHECKER_POLICY.primaryCheckerWeight) +
+            a.primaryCheckerPassRate * CHECKER_POLICY.primaryCheckerWeight;
+        const bScore = rankPercentile(b.countryScore, countryScores, true) * (1 - CHECKER_POLICY.primaryCheckerWeight) +
+            b.primaryCheckerPassRate * CHECKER_POLICY.primaryCheckerWeight;
+        return bScore - aScore || b.countryScore - a.countryScore;
+    });
 
     return entries.slice(0, MAX_VISIBLE_COUNTRIES);
 }
+
 function assertFeaturedCountryPartition(featured, ordinaryCountries) {
     const owners = new Map();
 
@@ -4634,6 +4732,7 @@ async function main() {
 
     const checked =
         managedItems.length;
+    const initialManagedCandidateCount = managedItems.length;
 
     let persistentState = {};
     try {
@@ -5186,7 +5285,7 @@ async function main() {
 
         console.log(
             `RUSSIA GATE START: Check-Host=${ACTIVE_CHECK_HOST_RUSSIA_NODES.length} live Russian nodes for all managed candidates; ` +
-            `strategy=${russiaCheckerMode === "dual" ? "strict-positive-reachability-2-of-2" : russiaCheckerMode === "single" ? "single-live-node-warning-mode" : "skipped-all-checkers-unavailable"}; ` +
+            `strategy=${russiaCheckerMode === "triple" ? "2-of-3-with-ru1-primary" : russiaCheckerMode === "dual" ? "2-of-2-with-ru1-primary" : russiaCheckerMode === "single" ? "ru1-single-node" : "fail-closed-primary-unavailable"}; ` +
             `cache=${RUSSIA_GATE_USE_CACHE ? "enabled" : "disabled"}; ` +
             `Globalping=LTE-only post-Xray gate; ` +
             `adaptive-pacing=global-api>=${CHECK_HOST_TOTAL_MIN_INTERVAL_MS}ms; ` +
@@ -5194,46 +5293,58 @@ async function main() {
         );
 
         if (ACTIVE_CHECK_HOST_GATE_QUORUM === 0) {
+            const checkedAt = Date.now();
             for (const item of requiredRussiaItems) {
                 const fp = fingerprintLink(item.link || "");
                 russiaProbeByFingerprint.set(fp, {
-                    required: false,
-                    skipped: true,
-                    gatePassed: true,
+                    required: true,
+                    skipped: false,
+                    gatePassed: false,
                     gatePending: false,
                     anyReachable: false,
-                    reason: "Russia Gate skipped: no usable Russian Check-Host node was available; passed directly to Heavy",
+                    providersUnavailable: true,
+                    reason: `Russia Gate closed: primary checker ${CHECKER_POLICY.primaryNode} was unavailable during preflight`,
                     warning: true,
-                    checkedAt: Date.now(),
+                    checkedAt,
+                    primaryChecker: {
+                        node: CHECKER_POLICY.primaryNode,
+                        positive: false,
+                        status: "not-tested",
+                        reachable: false,
+                        udpUsable: false,
+                        inconclusive: true,
+                        latencyMs: 0,
+                    },
                     checkHost: {
                         provider: "check-host",
                         ok: false,
                         unavailable: true,
-                        skipped: true,
+                        skipped: false,
                         nodesTested: 0,
                         nodesReachable: 0,
                         nodesInconclusive: 0,
-                        quorumRequired: 0,
+                        quorumRequired: CHECK_HOST_GATE_QUORUM,
                         quorumMet: false,
                         results: []
                     }
                 });
             }
 
-            const skippedReport = {
+            const closedReport = {
                 generatedAt: new Date().toISOString(),
                 generationId: updateStatus.generationId || null,
                 manifestSha256,
                 candidates: checked,
-                requiredCandidates: 0,
+                requiredCandidates: requiredRussiaItems.length,
                 allowedCandidates: 0,
-                failedCandidates: 0,
-                skippedCandidates: requiredRussiaItems.length,
-                checkerMode: "skipped",
-                warning: "No Russian Check-Host nodes were available. Russia Gate was skipped; candidates were passed directly to Heavy.",
+                failedCandidates: requiredRussiaItems.length,
+                skippedCandidates: 0,
+                checkerMode: "unavailable",
+                warning: `Primary checker ${CHECKER_POLICY.primaryNode} was unavailable. Russia Gate failed closed; no candidates were passed to Heavy.`,
                 checkHostNodes: [],
                 configuredCheckHostNodes: CHECK_HOST_RUSSIA_NODES,
-                positiveReachabilityRequired: 0,
+                primaryCheckerNode: CHECKER_POLICY.primaryNode,
+                positiveReachabilityRequired: CHECK_HOST_GATE_QUORUM,
                 nodeStats: CHECK_HOST_RUSSIA_NODES.map(node => ({
                     node,
                     candidateChecks: 0,
@@ -5243,21 +5354,21 @@ async function main() {
                     rateLimited: 0,
                     otherErrors: 0
                 })),
-                results: managedItems.map(item => ({
+                results: requiredRussiaItems.map(item => ({
                     id: item.id,
                     link: String(item.link || "").trim(),
                     source: getCandidateMeta(fingerprintLink(item.link || ""))?.source || item.source || "retained/manual",
                     country: getCandidateMeta(fingerprintLink(item.link || ""))?.country || "",
-                    required: false,
-                    gatePassed: true,
+                    required: true,
+                    gatePassed: false,
                     gatePending: false,
-                    skipped: true,
-                    checkedAt: Date.now(),
+                    skipped: false,
+                    checkedAt,
                     probe: russiaProbeByFingerprint.get(fingerprintLink(item.link || ""))
                 }))
             };
-            await fs.writeFile(RUSSIA_GATE_FILE, `${JSON.stringify(skippedReport, null, 2)}\n`, "utf8");
-            console.warn(`⚠️ RUSSIA GATE SKIPPED: no usable Russian Check-Host nodes; ${requiredRussiaItems.length} candidates go directly to Heavy`);
+            await fs.writeFile(RUSSIA_GATE_FILE, `${JSON.stringify(closedReport, null, 2)}\n`, "utf8");
+            console.error(`RUSSIA GATE CLOSED: primary checker ${CHECKER_POLICY.primaryNode} unavailable; ${requiredRussiaItems.length} candidates rejected safely`);
             return;
         }
 
@@ -5349,7 +5460,7 @@ async function main() {
             generatedAt: new Date().toISOString(),
             algorithmVersion: RUSSIA_GATE_ALGORITHM_VERSION,
             checkerMode: russiaCheckerMode,
-            warning: russiaCheckerMode !== "dual" ? (russiaCheckerMode === "single" ? "Only one Russian Check-Host node was available." : "No Russian Check-Host nodes were available; gate skipped.") : "",
+            warning: russiaCheckerMode === "unavailable" ? `Primary checker ${CHECKER_POLICY.primaryNode} was unavailable; gate closed.` : russiaCheckerMode === "single" ? "Only the primary Russian Check-Host node was available." : russiaCheckerMode === "dual" ? "Only two Russian Check-Host nodes were available; both must pass." : "",
             configuredNodes: ACTIVE_CHECK_HOST_RUSSIA_NODES,
             candidateCount: requiredRussiaItems.length,
             uniqueEndpointChecks: russiaEndpointGroups.length,
@@ -5413,10 +5524,9 @@ async function main() {
             `rate=${endpointRate.toFixed(2)}/s`
         );
 
-        // Every endpoint uses one Check-Host request containing exactly the two
-        // geographically distinct Russian nodes selected by preflight. Both
-        // definitive reachable results are required for publication; unresolved
-        // or failed results remain non-publishable.
+        // Each endpoint is checked from ru1 plus up to two healthy peers. With
+        // three live nodes the endpoint quorum is 2-of-3; ru1-positive evidence
+        // is retained separately for the country-level publication rule.
         if (russiaGatePending > 0) {
             console.warn(
                 `RUSSIA GATE PENDING: ${russiaGatePending} candidate(s) remain unresolved ` +
@@ -5493,7 +5603,13 @@ async function main() {
                 allowedCandidates: gateResults.filter(item => item.required && item.gatePassed).length,
                 failedCandidates: gateResults.filter(item => item.required && !item.gatePassed && !item.gatePending).length,
                 checkerMode: russiaCheckerMode,
-                warning: russiaCheckerMode !== "dual" ? (russiaCheckerMode === "single" ? "⚠️ Only one Russian Check-Host node was available; single-node mode used." : "⚠️ No Russian Check-Host nodes were available; Russia Gate was skipped and candidates were passed directly to Heavy.") : "",
+                warning: russiaCheckerMode === "unavailable"
+                    ? `⚠️ Primary checker ${CHECKER_POLICY.primaryNode} was unavailable; Russia Gate failed closed and no candidates were passed to Heavy.`
+                    : russiaCheckerMode === "single"
+                        ? `⚠️ Only ${CHECKER_POLICY.primaryNode} was available; single-node primary check was used.`
+                        : russiaCheckerMode === "dual"
+                            ? "⚠️ Only two Check-Host nodes were available; both had to pass."
+                            : "",
                 nodeStats,
                 checkerPreflight: russiaPreflight,
                 cachedResults: gateResults.filter(item => {
@@ -5625,12 +5741,6 @@ async function main() {
     passed = healthResults.filter(result => result.ok).length;
     failed = healthResults.filter(result => !result.ok).length;
 
-    if (checked > 0 && managedItems.some(item => !MANAGED_WHITE_LIST_RE.test(String(item.id || ""))) && healthResults.filter(result => result.ok && !result.whiteList).length === 0) {
-        throw new Error(
-            "All Source servers failed health checks; existing generated pool is preserved."
-        );
-    }
-
     const healthHistory = await updateHealthHistory(healthResults);
     const updateVpnPool = selectUpdateVpnPool(healthResults, healthHistory, 10);
 
@@ -5663,6 +5773,20 @@ async function main() {
 
     const selectedWhiteListCountries =
         buildCountryHealthPool(healthResults, true);
+
+    const qualifiedCountryCount = selectedCountries.length + selectedWhiteListCountries.length;
+    if (initialManagedCandidateCount > 0 && qualifiedCountryCount === 0) {
+        throw new Error(
+            `No country passed publication policy: at least one healthy server in a country must have a positive ${CHECKER_POLICY.primaryNode} result. Existing generated pool is preserved.`
+        );
+    }
+
+    console.log(
+        `PRIMARY CHECKER COUNTRY POLICY: node=${CHECKER_POLICY.primaryNode}; ` +
+        `priorityWeight=${Math.round(CHECKER_POLICY.primaryCheckerWeight * 100)}%; ` +
+        `qualifiedCountries=${qualifiedCountryCount}; ` +
+        `regular=${selectedCountries.length}; whitelist=${selectedWhiteListCountries.length}`
+    );
 
     // Fast/Gaming reserve the entire country. A country may appear in exactly
     // one subscription section: Fast, Gaming, or ordinary.
@@ -6052,6 +6176,10 @@ async function main() {
             checkHostNodes: Array.isArray(gateReport?.checkHostNodes)
                 ? gateReport.checkHostNodes
                 : CHECK_HOST_RUSSIA_NODES,
+            primaryCheckHostNode: CHECKER_POLICY.primaryNode,
+            primaryCheckHostWeight: CHECKER_POLICY.primaryCheckerWeight,
+            countryRequiresPrimaryCheckHostPositive: true,
+            endpointQuorumPolicy: "2-of-3 when all three Russian Check-Host nodes are operational; ru1 is always included",
             checkHostTimeoutMs: CHECK_HOST_TIMEOUT_MS,
             checkHostPollingMs: CHECK_HOST_POLL_MS,
             checkHostMaxPollingMs: CHECK_HOST_MAX_POLL_MS,

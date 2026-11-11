@@ -3,6 +3,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import crypto from "node:crypto";
+import { CHECKER_POLICY } from "./checker-policy.mjs";
 
 const ROOT = process.cwd();
 const candidatesFile = process.env.HEALTH_CANDIDATES_FILE || path.join(ROOT, "config", "source-health-candidates.json");
@@ -11,7 +12,10 @@ const stateFile = path.join(ROOT, "config", ".source-state.json");
 const outputFile = process.env.RUSSIA_GATE_FILE || path.join(ROOT, "config", "source-russia-gate.json");
 const shardDir = process.env.RUSSIA_GATE_SHARD_DIR || path.join(ROOT, ".russia-gate-shards");
 const shardCount = Math.max(1, Number(process.env.HEALTHCHECK_RUSSIA_GATE_SHARD_COUNT) || 1);
-const algorithmVersion = Math.max(1, Number(process.env.HEALTHCHECK_RUSSIA_GATE_ALGORITHM_VERSION) || 14);
+const algorithmVersion = Math.max(
+  1,
+  Number(process.env.HEALTHCHECK_RUSSIA_GATE_ALGORITHM_VERSION) || CHECKER_POLICY.algorithmVersion
+);
 
 const [candidateText, candidates, updateStatus] = await Promise.all([
   fs.readFile(candidatesFile, "utf8"),
@@ -94,7 +98,11 @@ const report = {
   pendingCandidates: pending.length,
   cachedResults: 0,
   checkHostNodes: nodes,
-  configuredCheckHostNodes: String(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_NODES || "").split(/[,:;]+/).filter(Boolean),
+  configuredCheckHostNodes: [...new Set([
+    ...CHECKER_POLICY.defaultNodes,
+    ...String(process.env.HEALTHCHECK_RUSSIA_CHECK_HOST_NODES || "").split(/[,:;]+/).map(node => node.trim()).filter(Boolean),
+  ])],
+  primaryCheckerNode: CHECKER_POLICY.primaryNode,
   globalpingSelectionCount: 0,
   gateAlgorithmVersion: algorithmVersion,
   sharded: true,
