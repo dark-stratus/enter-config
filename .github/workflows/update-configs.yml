@@ -547,6 +547,9 @@ jobs:
           HEALTHCHECK_RUSSIA_ACTIVE_WINDOW: 24
           HEALTHCHECK_RUSSIA_GATE_USE_CACHE: 0
           HEALTHCHECK_RUSSIA_GATE_STATE_MAX_AGE_MS: 21600000
+          HEALTHCHECK_GLOBALPING_API_TOKEN: ${{ secrets.GLOBALPING_API_TOKEN }}
+          HEALTHCHECK_GLOBALPING_RUSSIA_RESERVE_TESTS: 20
+          HEALTHCHECK_GLOBALPING_TIMEOUT_MS: 30000
           HEALTH_CANDIDATES_FILE: ${{ github.workspace }}/config/source-health-candidates.json
         run: |
           set -euo pipefail
