@@ -57,6 +57,7 @@ async function requestJson(url, options, timeoutMs, attempts = 3) {
                 signal: controller.signal,
                 headers: {
                     accept: "application/json",
+                    "user-agent": "EscapeVPN-config-health/1.0",
                     ...(options?.headers || {}),
                 },
             });
@@ -130,9 +131,9 @@ function chooseCities(probes, cityLimit, requireEyeball) {
     return selected;
 }
 
-function buildMeasurementOptions(host, port) {
+function buildMeasurementOptions(host, port, transport = "tcp") {
     return {
-        protocol: "TCP",
+        protocol: String(transport).toLowerCase() === "udp" ? "UDP" : "TCP",
         port,
         packets: 3,
         ...(net.isIP(host) === 0 ? { ipVersion: 4 } : {}),
@@ -187,7 +188,16 @@ async function getProbes(apiBase, token, timeoutMs) {
     return Array.isArray(data) ? data : (Array.isArray(data?.probes) ? data.probes : []);
 }
 
-async function runMeasurement(apiBase, token, endpoint, cities, timeoutMs, pollMs, mtrTimeoutSeconds) {
+async function runMeasurement(
+    apiBase,
+    token,
+    endpoint,
+    cities,
+    timeoutMs,
+    pollMs,
+    mtrTimeoutSeconds,
+    { transport = "tcp", requiredDistinctCities = 2, strictResultStatus = false } = {}
+) {
     const url = new URL(String(endpoint.link || "").trim());
     const host = url.hostname;
     const port = Number(url.port || 443);
@@ -202,7 +212,7 @@ async function runMeasurement(apiBase, token, endpoint, cities, timeoutMs, pollM
         target: host,
         timeout: mtrTimeoutSeconds,
         locations,
-        measurementOptions: buildMeasurementOptions(host, port),
+        measurementOptions: buildMeasurementOptions(host, port, transport),
     };
 
     const created = await requestJson(
@@ -245,9 +255,31 @@ async function runMeasurement(apiBase, token, endpoint, cities, timeoutMs, pollM
         };
     }
 
+    if (strictResultStatus && finalStatus !== "finished") {
+        return {
+            verdict: "UNKNOWN-GLOBALPING",
+            measurementId,
+            error: `measurement ${measurementId} finished with status ${finalStatus}`,
+            serviceFailure: true,
+            cities: [],
+            validReachedCities: 0,
+        };
+    }
+
     const results = Array.isArray(data?.results) ? data.results : [];
-    const cityRows = cities.map((requestedCity, index) => {
-        const row = results[index] || {};
+    // API result order is not part of the location-selection contract. Match
+    // probes by their actual city so a reordered response cannot invalidate a
+    // good check or attribute one city's result to another.
+    const resultsByCity = new Map();
+    for (const row of results) {
+        const probe = row?.probe || {};
+        const city = String(probe.city || probe.location?.city || "").trim();
+        const key = normalizeLocationName(city);
+        if (key && !resultsByCity.has(key)) resultsByCity.set(key, row);
+    }
+
+    const cityRows = cities.map(requestedCity => {
+        const row = resultsByCity.get(normalizeLocationName(requestedCity.city)) || {};
         const probe = row?.probe || {};
         const actualCity = String(probe.city || probe.location?.city || "").trim();
         const country = String(probe.country || probe.location?.country || "").toUpperCase();
@@ -257,17 +289,23 @@ async function runMeasurement(apiBase, token, endpoint, cities, timeoutMs, pollM
         const countryMatches = country === "RU";
         const eyeballMatches = normalizedTags.has("eyeball-network") && !normalizedTags.has("datacenter-network");
         const validProbe = cityMatches && countryMatches && eyeballMatches;
-        const reached = reachedTarget(row, host);
+        const resultStatus = String(row?.result?.status || "").toLowerCase();
+        const targetFailure = resultStatus === "failed" &&
+            String(row?.result?.failureSource || "").toLowerCase() === "target";
+        const providerFailure = !validProbe || (resultStatus !== "finished" && !targetFailure);
+        const reached = resultStatus === "finished" && reachedTarget(row, host);
         return {
             requestedCity: requestedCity.city,
             city: actualCity,
             country,
             network: probe.network || probe.location?.network || "",
             tags,
-            status: String(row?.result?.status || data?.status || "unknown"),
+            status: resultStatus || "unknown",
+            failureSource: row?.result?.failureSource || "",
             reachedTarget: reached,
             validProbe,
             validReached: validProbe && reached,
+            providerFailure,
             resolvedAddress: row?.result?.resolvedAddress || "",
             finalHopLoss: Number([...((row?.result?.hops) || [])].at(-1)?.stats?.loss),
         };
@@ -276,18 +314,189 @@ async function runMeasurement(apiBase, token, endpoint, cities, timeoutMs, pollM
     const validReachedCities = new Set(
         cityRows.filter(row => row.validReached).map(row => normalizeLocationName(row.city)).filter(Boolean)
     ).size;
-
-    const verdict = validReachedCities >= 2 ? "PASS-GLOBALPING" : "FAIL-GLOBALPING";
+    const serviceFailure = cityRows.some(row => row.providerFailure);
+    const verdict = validReachedCities >= requiredDistinctCities
+        ? "PASS-GLOBALPING"
+        : serviceFailure ? "UNKNOWN-GLOBALPING" : "FAIL-GLOBALPING";
     return {
         verdict,
         measurementId,
         cities: cityRows,
         reachedCities: cityRows.filter(row => row.reachedTarget).length,
         validReachedCities,
-        requiredDistinctCities: 2,
-        serviceFailure: false,
-        error: "",
+        requiredDistinctCities,
+        serviceFailure,
+        error: serviceFailure ? "Globalping did not return three valid completed Russian eyeball-probe results" : "",
     };
+}
+
+export async function runGlobalpingStrictFallback({
+    endpoints = [],
+    enabled = true,
+    apiBase = "https://api.globalping.io/v1",
+    token = "",
+    reserveTests = 20,
+    timeoutMs = 30000,
+    pollMs = 700,
+    mtrTimeoutSeconds = 12,
+} = {}) {
+    const requiredDistinctCities = 3;
+    const normalizedCityLimit = 3;
+    const targets = [...new Map(
+        (Array.isArray(endpoints) ? endpoints : [])
+            .filter(endpoint => endpoint?.key && endpoint?.link)
+            .map(endpoint => [String(endpoint.key), {
+                key: String(endpoint.key),
+                link: String(endpoint.link),
+                transport: String(endpoint.transport || "tcp").toLowerCase() === "udp" ? "udp" : "tcp",
+            }])
+    ).values()].sort((a, b) => a.key.localeCompare(b.key));
+
+    const diagnostic = {
+        generatedAt: new Date().toISOString(),
+        provider: "globalping",
+        purpose: "strict fallback for unavailable primary Check-Host providers",
+        enabled: Boolean(enabled),
+        requiredDistinctCities,
+        selectedCities: [],
+        cityCount: 0,
+        attemptedEndpoints: 0,
+        passedEndpoints: 0,
+        failedEndpoints: 0,
+        unknownEndpoints: 0,
+        serviceAvailable: false,
+        skippedReason: "",
+        limits: null,
+        endpoints: [],
+    };
+    const endpointResults = {};
+    const setUnknownForRemaining = (reason, fromIndex = 0) => {
+        for (const endpoint of targets.slice(fromIndex)) {
+            if (endpointResults[endpoint.key]) continue;
+            endpointResults[endpoint.key] = {
+                verdict: "UNKNOWN-GLOBALPING",
+                serviceFailure: true,
+                error: reason,
+                validReachedCities: 0,
+                cities: [],
+                requiredDistinctCities,
+                endpointKey: endpoint.key,
+            };
+        }
+    };
+
+    if (!enabled || !targets.length) {
+        diagnostic.skippedReason = !enabled ? "disabled" : "no-fallback-endpoints";
+        return { endpointResults, diagnostic };
+    }
+    if (!String(token || "").trim()) {
+        diagnostic.skippedReason = "Globalping API token is not configured";
+        setUnknownForRemaining(diagnostic.skippedReason);
+        diagnostic.unknownEndpoints = targets.length;
+        return { endpointResults, diagnostic };
+    }
+
+    let probes;
+    let limits;
+    try {
+        [probes, limits] = await Promise.all([
+            getProbes(apiBase, token, timeoutMs),
+            getLimits(apiBase, token, timeoutMs),
+        ]);
+    } catch (error) {
+        diagnostic.skippedReason = `Globalping discovery/limits failed: ${error?.message || String(error)}`;
+        setUnknownForRemaining(diagnostic.skippedReason);
+        diagnostic.unknownEndpoints = targets.length;
+        return { endpointResults, diagnostic };
+    }
+
+    const selectedCities = chooseCities(probes, normalizedCityLimit, true);
+    diagnostic.selectedCities = selectedCities;
+    diagnostic.cityCount = selectedCities.length;
+    diagnostic.limits = limits;
+    if (selectedCities.length !== requiredDistinctCities) {
+        diagnostic.skippedReason = `need-3-distinct-Russian-eyeball-cities, found-${selectedCities.length}`;
+        setUnknownForRemaining(diagnostic.skippedReason);
+        diagnostic.unknownEndpoints = targets.length;
+        return { endpointResults, diagnostic };
+    }
+
+    const remaining = Number(limits?.remaining);
+    const availableEndpoints = Number.isFinite(remaining)
+        ? Math.floor(Math.max(0, remaining - Math.max(0, Number(reserveTests) || 0)) / requiredDistinctCities)
+        : 0;
+    if (!Number.isFinite(remaining) || availableEndpoints < 1) {
+        diagnostic.skippedReason = "Globalping budget unavailable or exhausted";
+        setUnknownForRemaining(diagnostic.skippedReason);
+        diagnostic.unknownEndpoints = targets.length;
+        return { endpointResults, diagnostic };
+    }
+
+    const attemptCount = Math.min(targets.length, availableEndpoints);
+    let serviceFailure = false;
+    for (let index = 0; index < attemptCount; index += 1) {
+        const endpoint = targets[index];
+        try {
+            const result = await runMeasurement(
+                apiBase,
+                token,
+                endpoint,
+                selectedCities,
+                timeoutMs,
+                pollMs,
+                mtrTimeoutSeconds,
+                { transport: endpoint.transport, requiredDistinctCities, strictResultStatus: true },
+            );
+            const row = { ...result, endpointKey: endpoint.key, transport: endpoint.transport };
+            endpointResults[endpoint.key] = row;
+            diagnostic.endpoints.push({ key: endpoint.key, ...row });
+            diagnostic.attemptedEndpoints += 1;
+            if (row.verdict === "PASS-GLOBALPING") diagnostic.passedEndpoints += 1;
+            else if (row.verdict === "FAIL-GLOBALPING") diagnostic.failedEndpoints += 1;
+            else diagnostic.unknownEndpoints += 1;
+
+            console.log(
+                `RUSSIA GLOBALPING FALLBACK ${index + 1}/${attemptCount}: ${endpoint.key} => ${row.verdict} ` +
+                `(${row.validReachedCities || 0}/${requiredDistinctCities})`
+            );
+            if (row.serviceFailure || row.verdict === "UNKNOWN-GLOBALPING") {
+                serviceFailure = true;
+                setUnknownForRemaining("Globalping service became unavailable during fallback", index + 1);
+                break;
+            }
+        } catch (error) {
+            serviceFailure = true;
+            const row = {
+                verdict: "UNKNOWN-GLOBALPING",
+                serviceFailure: true,
+                error: error?.message || String(error),
+                validReachedCities: 0,
+                cities: [],
+                requiredDistinctCities,
+                endpointKey: endpoint.key,
+                transport: endpoint.transport,
+            };
+            endpointResults[endpoint.key] = row;
+            diagnostic.endpoints.push({ key: endpoint.key, ...row });
+            diagnostic.attemptedEndpoints += 1;
+            diagnostic.unknownEndpoints += 1;
+            setUnknownForRemaining("Globalping service became unavailable during fallback", index + 1);
+            break;
+        }
+    }
+
+    if (attemptCount < targets.length) {
+        setUnknownForRemaining("Globalping hourly quota reserved or exhausted", attemptCount);
+    }
+    diagnostic.unknownEndpoints = Object.values(endpointResults)
+        .filter(row => row.verdict === "UNKNOWN-GLOBALPING").length;
+    diagnostic.serviceAvailable = !serviceFailure && diagnostic.unknownEndpoints === 0;
+    if (diagnostic.unknownEndpoints > 0 && !diagnostic.skippedReason) {
+        diagnostic.skippedReason = serviceFailure
+            ? "Globalping service unavailable during fallback"
+            : "Globalping quota did not cover every required endpoint";
+    }
+    return { endpointResults, diagnostic };
 }
 
 export async function runLteGlobalpingGate({
