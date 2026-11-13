@@ -122,32 +122,19 @@
         "tag": "least_load_balancer",
         "selector": [
           "proxy-1",
-          "proxy-2",
-          "proxy-3"
+          "proxy-2"
         ],
         "strategy": {
           "type": "leastLoad",
           "settings": {
-            "costs": [
-              {
-                "match": "proxy-1",
-                "value": 1,
-                "regexp": false
-              },
-              {
-                "match": "proxy-2",
-                "value": 1,
-                "regexp": false
-              },
-              {
-                "match": "proxy-3",
-                "value": 200000,
-                "regexp": false
-              }
+            "maxRTT": "1500ms",
+            "expected": 2,
+            "baselines": [
+              "300ms",
+              "700ms",
+              "1500ms"
             ],
-            "maxRTT": "2s",
-            "expected": 1,
-            "tolerance": 0.01
+            "tolerance": 0.3
           }
         },
         "fallbackTag": "proxy-3"
@@ -328,15 +315,18 @@
       "protocol": "blackhole"
     }
   ],
-  "observatory": {
-    "probeURL": "http://www.gstatic.com/generate_204",
-    "probeInterval": "10s",
+  "burstObservatory": {
+    "pingConfig": {
+      "timeout": "5s",
+      "interval": "30s",
+      "sampling": 2,
+      "destination": "http://www.gstatic.com/generate_204",
+      "connectivity": ""
+    },
     "subjectSelector": [
       "proxy-1",
-      "proxy-2",
-      "proxy-3"
-    ],
-    "enableConcurrency": true
+      "proxy-2"
+    ]
   },
   "remarks": "🇪🇺LTE - Белые списки 2"
 }
