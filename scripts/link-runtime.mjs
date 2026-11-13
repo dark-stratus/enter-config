@@ -15,11 +15,13 @@ export function parseLink(link) {
     const value = String(link ?? "").trim();
     const protocol = value.split("://")[0].toLowerCase();
 
-    if (protocol === "vless") return buildVlessFromLink(value);
-    if (protocol === "trojan") return buildTrojanFromLink(value);
-    if (protocol === "hysteria2" || protocol === "hysteria") return buildHysteriaFromLink(value);
+    let server;
+    if (protocol === "vless") server = buildVlessFromLink(value);
+    else if (protocol === "trojan") server = buildTrojanFromLink(value);
+    else if (protocol === "hysteria2" || protocol === "hysteria") server = buildHysteriaFromLink(value);
+    else throw new Error(`Unsupported protocol: ${protocol}`);
 
-    throw new Error(`Unsupported protocol: ${protocol}`);
+    return validateParsedServer(server);
 }
 
 export function buildOutbound(server, tag = "proxy") {
@@ -29,9 +31,65 @@ export function buildOutbound(server, tag = "proxy") {
     throw new Error(`Unsupported protocol: ${server.protocol}`);
 }
 
+const VLESS_NETWORKS = new Set([
+    "tcp", "raw", "grpc", "ws", "httpupgrade", "xhttp", "splithttp"
+]);
+const TROJAN_NETWORKS = new Set([
+    "tcp", "raw", "grpc", "ws", "httpupgrade"
+]);
+
+export function validateParsedServer(server) {
+    const missing = [];
+    if (!String(server?.address || "").trim()) missing.push("server address");
+    if (!Number.isInteger(server?.port) || server.port < 1 || server.port > 65535) {
+        missing.push("valid server port");
+    }
+
+    if (server?.protocol === "vless") {
+        const uuid = String(server.uuid || "").trim();
+        if (!/^(?:[0-9a-f]{32}|[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})$/iu.test(uuid)) {
+            missing.push("valid VLESS UUID");
+        }
+        if (!VLESS_NETWORKS.has(String(server.network || "tcp").toLowerCase())) {
+            missing.push(`supported VLESS transport (got ${server.network || "empty"})`);
+        }
+        const security = String(server.security || "none").toLowerCase();
+        if (!["none", "tls", "reality"].includes(security)) {
+            missing.push(`supported VLESS security (got ${security})`);
+        }
+        if (security === "reality") {
+            if (!String(server.publicKey || "").trim()) missing.push("Reality public key (pbk)");
+            const shortId = String(server.shortId ?? "").trim();
+            // Empty short IDs are valid only when the remote inbound allows one.
+            if (!/^(?:[0-9a-f]{2}){0,8}$/iu.test(shortId)) {
+                missing.push("valid Reality short ID (sid: 0-16 even-length hex characters)");
+            }
+            if (!String(server.serverName || "").trim()) missing.push("Reality server name (sni)");
+            if (!["tcp", "raw", "grpc", "xhttp", "splithttp"].includes(String(server.network || "tcp").toLowerCase())) {
+                missing.push("Reality-compatible transport (RAW, XHTTP or gRPC)");
+            }
+        }
+    } else if (server?.protocol === "trojan") {
+        if (!String(server.password || "").trim()) missing.push("Trojan password");
+        if (String(server.security || "tls").toLowerCase() !== "tls") {
+            missing.push("TLS security for Trojan (this builder does not support non-TLS Trojan links)");
+        }
+        if (!TROJAN_NETWORKS.has(String(server.network || "tcp").toLowerCase())) {
+            missing.push(`supported Trojan transport (got ${server.network || "empty"})`);
+        }
+    } else if (server?.protocol !== "hysteria2") {
+        missing.push(`supported protocol (got ${server?.protocol || "empty"})`);
+    }
+
+    if (missing.length) {
+        throw new Error(`Invalid ${server?.protocol || "unknown"} server configuration: missing/invalid ${missing.join(", ")}`);
+    }
+    return server;
+}
+
 function buildVlessFromLink(link) {
     const url = new URL(link);
-    const network = url.searchParams.get("type") || url.searchParams.get("network") || "tcp";
+    const network = (url.searchParams.get("type") || url.searchParams.get("network") || "tcp").toLowerCase();
 
     return {
         protocol: "vless",
@@ -41,10 +99,12 @@ function buildVlessFromLink(link) {
         publicKey: url.searchParams.get("pbk") || url.searchParams.get("publicKey") || "",
         shortId: url.searchParams.get("sid") || url.searchParams.get("shortId") || "",
         serverName: url.searchParams.get("sni") || url.searchParams.get("serverName") || "",
+        spiderX: url.searchParams.get("spx") || url.searchParams.get("spiderX") ||
+            (String(url.searchParams.get("security") || "none").toLowerCase() === "reality" ? "/" : ""),
         serviceName: url.searchParams.get("serviceName") || "",
         mode: url.searchParams.get("mode") || "",
         alpn: url.searchParams.get("alpn") || "",
-        security: url.searchParams.get("security") || "none",
+        security: (url.searchParams.get("security") || "none").toLowerCase(),
         fingerprint: url.searchParams.get("fp") || url.searchParams.get("fingerprint") || "chrome",
         flow: url.searchParams.get("flow") || "",
         network,
@@ -67,9 +127,9 @@ function buildTrojanFromLink(link) {
         serviceName: url.searchParams.get("serviceName") || "",
         mode: url.searchParams.get("mode") || "",
         alpn: url.searchParams.get("alpn") || "",
-        security: url.searchParams.get("security") || "tls",
+        security: (url.searchParams.get("security") || "tls").toLowerCase(),
         fingerprint: url.searchParams.get("fp") || url.searchParams.get("fingerprint") || "chrome",
-        network: url.searchParams.get("type") || url.searchParams.get("network") || "tcp",
+        network: (url.searchParams.get("type") || url.searchParams.get("network") || "tcp").toLowerCase(),
         host: url.searchParams.get("host") || "",
         path: url.searchParams.get("path") || "",
     };
@@ -254,10 +314,13 @@ function buildVlessStream(server) {
 
     if (server.security === "reality") {
         stream.realitySettings = {
+            allowInsecure: false,
             fingerprint: server.fingerprint,
             publicKey: server.publicKey,
             serverName: server.serverName,
             shortId: server.shortId,
+            show: false,
+            spiderX: server.spiderX || "/",
         };
     }
 

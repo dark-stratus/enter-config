@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import crypto from "node:crypto";
+import { parseLink } from "./link-runtime.mjs";
 import {
   REGULAR_COUNTRY_ORDER,
   REGULAR_COUNTRY_RANK,
@@ -1273,6 +1274,9 @@ function buildRealityQuery(reality, extra = {}) {
     sni: reality?.serverName || "",
     pbk: reality?.publicKey || "",
     sid: reality?.shortId || "",
+    // Preserve Xray's client-side Reality path hint when converting JSON
+    // outbounds into links; omitted values use the neutral default.
+    spx: reality?.spiderX || "/",
     fp: reality?.fingerprint || "",
     alpn: Array.isArray(extra.alpn) ? extra.alpn.join(",") : (extra.alpn || ""),
   });
@@ -1379,6 +1383,7 @@ function buildVlessLink(entry) {
 
   const supportedNetworks = [
     "tcp",
+    "raw",
     "grpc",
     "ws",
     "httpupgrade",
@@ -1466,6 +1471,7 @@ function buildTrojanLink(entry) {
 
   const supportedNetworks = [
     "tcp",
+    "raw",
     "grpc",
     "ws",
     "httpupgrade",
@@ -1604,6 +1610,22 @@ function normalizeProfileLink(link, index, source, forceWhiteList = false, stats
     if (stats) {
       stats.droppedUnsupported += 1;
       recordDropSample(stats, { index, reason: "unsupported-protocol" });
+    }
+    return null;
+  }
+
+  try {
+    // Validate the actual outbound contract before the link can enter the
+    // source catalog or reach IP-level availability checks.
+    parseLink(value);
+  } catch (error) {
+    if (stats) {
+      stats.droppedInvalid += 1;
+      recordDropSample(stats, {
+        index,
+        reason: "invalid-config",
+        details: String(error?.message || error).slice(0, 180),
+      });
     }
     return null;
   }
@@ -1806,6 +1828,20 @@ function normalizeEntry(entry, index, source, forceWhiteList = false, stats = nu
     }
     return null;
   }
+  try {
+    parseLink(link);
+  } catch (error) {
+    if (stats) {
+      stats.droppedInvalid += 1;
+      recordDropSample(stats, {
+        index,
+        reason: "invalid-config",
+        details: String(error?.message || error).slice(0, 180),
+      });
+    }
+    return null;
+  }
+
   if (isAutoSelectionRemark(remarks)) return "AUTO_SELECTION";
 
   const normalized =
