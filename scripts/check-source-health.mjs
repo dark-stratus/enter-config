@@ -5264,7 +5264,10 @@ async function main() {
                 required: true,
                 skipped: false,
                 gatePassed: passed,
-                gatePending: false,
+                // A provider-side UNKNOWN is not a negative reachability result.
+                // Keep it pending so the coordinator can protect the active
+                // publication instead of quarantining a server on missing evidence.
+                gatePending: unavailable,
                 anyReachable: passed,
                 providersUnavailable: unavailable,
                 transport,
@@ -5382,12 +5385,6 @@ async function main() {
             },
             rateTelemetry: coordinator.rateTelemetry,
         };
-        await fs.writeFile(
-            RUSSIA_GATE_DIAGNOSTICS_FILE,
-            `${JSON.stringify(russiaGateDiagnostics, null, 2)}\n`,
-            "utf8"
-        );
-
         for (const group of freshEndpointGroups) {
             let probe = coordinator.outcomes.get(group.key);
             if (!probe) {
@@ -5417,6 +5414,13 @@ async function main() {
             }
         }
 
+        const unrepresentedCandidates = Math.max(0, requiredRussiaItems.length - russiaGateChecked);
+        if (unrepresentedCandidates > 0) {
+            // Candidates without a normalized endpoint key never entered a
+            // checker request. They are incomplete evidence, not negatives.
+            russiaGatePending += unrepresentedCandidates;
+        }
+
         const elapsedMs = Math.max(1, Date.now() - russiaGateStartedAt);
         const endpointRate = russiaFreshEndpointChecks / (elapsedMs / 1000);
         console.log(
@@ -5425,12 +5429,37 @@ async function main() {
             `rate=${endpointRate.toFixed(2)}/s`
         );
 
-        // A Check-Host endpoint must pass both ru1 and ru2. If the provider
-        // itself is unavailable, only a strict 3/3 Globalping result can pass.
+        russiaGateDiagnostics.coverage = {
+            candidates: requiredRussiaItems.length,
+            checked: russiaGateChecked,
+            passed: russiaGatePassed,
+            failed: russiaGateFailures,
+            pending: russiaGatePending,
+            uniqueEndpoints: russiaEndpointGroups.length,
+            freshEndpoints: russiaFreshEndpointChecks,
+            unrepresentedCandidates,
+        };
+        russiaGateDiagnostics.publicationAllowed = russiaGatePending === 0;
+        russiaGateDiagnostics.publicationBlockReason = russiaGatePending > 0
+            ? "Russia reachability could not be established for every candidate because one or more checker results are pending/unknown. The last committed config must remain active."
+            : "All required candidates received a definitive Russia reachability verdict.";
+        await fs.writeFile(
+            RUSSIA_GATE_DIAGNOSTICS_FILE,
+            `${JSON.stringify(russiaGateDiagnostics, null, 2)}\n`,
+            "utf8"
+        );
+
+        // Unknown is not equivalent to unreachable. When either checker is
+        // unavailable, publishing only the subset that happened to receive a
+        // positive result would silently remove healthy countries. Stop this
+        // generation before writing gate state or handing inputs to the health
+        // job; GitHub Actions then keeps the last committed links/index.json.
         if (russiaGatePending > 0) {
-            console.warn(
-                `RUSSIA GATE PENDING: ${russiaGatePending} candidate(s) remain unresolved ` +
-                `after coordinator polling + final drain; those candidates will be excluded from publication.`
+            const fallbackReason = String(globalpingFallback?.diagnostic?.skippedReason || "").trim();
+            const details = fallbackReason ? ` Details: ${fallbackReason}.` : "";
+            throw new Error(
+                `Russia Gate coverage incomplete: ${russiaGatePending}/${requiredRussiaItems.length} candidate(s) are pending/unknown.` +
+                `${details} No partial config will be published; the last committed VPN pool remains active.`
             );
         }
 
@@ -5474,7 +5503,7 @@ async function main() {
             const probe = russiaProbeByFingerprint.get(fp) || {
                 required: true,
                 gatePassed: false,
-                gatePending: false,
+                gatePending: true,
                 checkedAt: Date.now(),
                 reason: "Russia gate result missing"
             };
@@ -5502,6 +5531,8 @@ async function main() {
                 requiredCandidates: gateResults.filter(item => item.required).length,
                 allowedCandidates: gateResults.filter(item => item.required && item.gatePassed).length,
                 failedCandidates: gateResults.filter(item => item.required && !item.gatePassed && !item.gatePending).length,
+                pendingCandidates: gateResults.filter(item => item.required && item.gatePending).length,
+                coverageComplete: russiaGatePending === 0,
                 checkerMode: russiaCheckerMode,
                 warning: useGlobalpingFallback
                     ? "⚠️ ru1+ru2 Check-Host unavailable; strict Globalping 3/3 fallback was applied."
@@ -5546,6 +5577,13 @@ async function main() {
     if (Number(gateReport?.candidates) !== checked) {
         throw new Error(
             `Russia gate candidate mismatch: gate=${gateReport?.candidates || 0}, candidates=${checked}`
+        );
+    }
+
+    if (gateReport?.coverageComplete !== true || Number(gateReport?.pendingCandidates || 0) > 0) {
+        throw new Error(
+            `Russia Gate coverage is incomplete (${Number(gateReport?.pendingCandidates) || 0} pending/unknown). ` +
+            `Refusing to replace the last committed VPN pool with a partial candidate set.`
         );
     }
 

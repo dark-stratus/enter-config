@@ -1,6 +1,6 @@
 // Central Russia reachability policy shared by preflight, gate and pool ranking.
 export const CHECKER_POLICY = Object.freeze({
-    algorithmVersion: 40,
+    algorithmVersion: 41,
     primaryNode: "ru1.node.check-host.net",
     defaultNodes: Object.freeze([
         "ru1.node.check-host.net",

@@ -360,6 +360,8 @@ export async function runGlobalpingStrictFallback({
         requiredDistinctCities,
         selectedCities: [],
         cityCount: 0,
+        requiredEndpoints: targets.length,
+        availableEndpoints: null,
         attemptedEndpoints: 0,
         passedEndpoints: 0,
         failedEndpoints: 0,
@@ -425,14 +427,23 @@ export async function runGlobalpingStrictFallback({
     const availableEndpoints = Number.isFinite(remaining)
         ? Math.floor(Math.max(0, remaining - Math.max(0, Number(reserveTests) || 0)) / requiredDistinctCities)
         : 0;
-    if (!Number.isFinite(remaining) || availableEndpoints < 1) {
-        diagnostic.skippedReason = "Globalping budget unavailable or exhausted";
+    diagnostic.availableEndpoints = availableEndpoints;
+
+    // This is a strict publication gate, not a sampling exercise. A partial
+    // Globalping run cannot establish reachability for the whole candidate set;
+    // testing only the first N endpoints would systematically shrink the
+    // published pool when the primary Check-Host pair is unavailable. Require
+    // enough quota for every distinct endpoint before spending any measurements.
+    if (!Number.isFinite(remaining) || availableEndpoints < targets.length) {
+        diagnostic.skippedReason = Number.isFinite(remaining)
+            ? `Globalping budget covers ${availableEndpoints}/${targets.length} required endpoints; complete 3-city coverage is required, so no partial fallback was run`
+            : "Globalping budget unavailable or exhausted";
         setUnknownForRemaining(diagnostic.skippedReason);
         diagnostic.unknownEndpoints = targets.length;
         return { endpointResults, diagnostic };
     }
 
-    const attemptCount = Math.min(targets.length, availableEndpoints);
+    const attemptCount = targets.length;
     let serviceFailure = false;
     for (let index = 0; index < attemptCount; index += 1) {
         const endpoint = targets[index];
