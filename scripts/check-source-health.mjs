@@ -762,11 +762,15 @@ const CHECK_HOST_RATE_EVENT_LIMIT = 250;
 
 let checkHostRateQueueTail = Promise.resolve();
 
-async function reserveCheckHostApiSlot() {
-    // Serialize only slot admission, never the network request itself. Holding
-    // this queue while awaiting fetch accidentally reduced the configured
-    // 12-request pool to one in-flight HTTP request and made the 452-endpoint
-    // gate exceed the GitHub Actions job timeout.
+async function scheduleCheckHostApiRequest(fn, kind = "result") {
+    // Check-Host exposes one API budget to the runner. The previous scheduler
+    // reserved future slots before requests actually started. That meant that
+    // after a 429 increased interval/cooldown, already-reserved old slots kept
+    // firing at the old rate and created a burst of additional 429s.
+    //
+    // Serialize admission to the global queue instead: a caller receives its
+    // slot only after the previous call has finished, and the current interval
+    // is therefore always the interval that was actually in force.
     let releaseQueueTurn;
     const queueTurn = new Promise(resolve => {
         releaseQueueTurn = resolve;
@@ -775,57 +779,32 @@ async function reserveCheckHostApiSlot() {
     checkHostRateQueueTail = previous.then(() => queueTurn, () => queueTurn);
     await previous.catch(() => {});
 
+    const state = checkHostRateState;
     const queuedAt = Date.now();
+    let startedAt = 0;
+
     try {
-        const state = checkHostRateState;
-        let startedAt;
-        while (startedAt === undefined) {
-            // Re-check after every sleep because an in-flight request can
-            // extend the cooldown while this caller is waiting in the queue.
-            const waitUntil = Math.max(Date.now(), state.nextAt, state.cooldownUntil);
-            const waitMs = waitUntil - Date.now();
-            if (waitMs > 0) {
-                await sleep(waitMs);
-                continue;
-            }
-
-            // No await between the final admission check and reservation, so
-            // another request's 429 handler cannot interleave in this section.
-            startedAt = Date.now();
-            state.nextAt = startedAt + state.intervalMs;
+        const waitUntil = Math.max(Date.now(), state.nextAt, state.cooldownUntil);
+        if (waitUntil > Date.now()) {
+            await sleep(waitUntil - Date.now());
         }
-        return {
-            startedAt,
-            queuedAt,
-            release: releaseQueueTurn,
-        };
-    } catch (error) {
-        releaseQueueTurn();
-        throw error;
-    }
-}
 
-async function scheduleCheckHostApiRequest(fn, kind = "result") {
-    return checkHostHttpLimiter(async () => {
-        const slot = await reserveCheckHostApiSlot();
-        // Free the admission lock before fetch. The next call may reserve its
-        // own paced slot while this request is still in flight.
-        slot.release();
-        const { startedAt, queuedAt } = slot;
-        const state = checkHostRateState;
+        const cooldownWait = state.cooldownUntil - Date.now();
+        if (cooldownWait > 0) await sleep(cooldownWait);
+
+        // Only now reserve the next slot, immediately before starting the API
+        // call. This prevents stale pre-reserved slots after adaptive backoff.
+        startedAt = Date.now();
+        state.nextAt = startedAt + state.intervalMs;
 
         try {
             checkHostRateTelemetry.calls += 1;
-            const result = await fn();
+            const result = await checkHostHttpLimiter(fn);
 
-            // Do not immediately relax a backoff while requests admitted before
-            // a concurrent 429/5xx are still completing successfully.
-            if (Date.now() >= state.cooldownUntil) {
-                state.intervalMs = Math.max(
-                    state.minIntervalMs,
-                    Math.round(state.intervalMs * 0.96)
-                );
-            }
+            state.intervalMs = Math.max(
+                state.minIntervalMs,
+                Math.round(state.intervalMs * 0.96)
+            );
             return result;
         } catch (error) {
             const status = Number(error?.status || 0);
@@ -837,7 +816,6 @@ async function scheduleCheckHostApiRequest(fn, kind = "result") {
 
             const beforeIntervalMs = state.intervalMs;
             let retryAfterMs = null;
-            let cooldownMs = 0;
             if (status === 429 || status >= 500) {
                 const parsedRetryAfter = Number(error?.retryAfterMs);
                 retryAfterMs = Number.isFinite(parsedRetryAfter) ? parsedRetryAfter : null;
@@ -856,13 +834,11 @@ async function scheduleCheckHostApiRequest(fn, kind = "result") {
                 );
 
                 const baseCooldownMs = status === 429 ? 3000 : 1200;
-                cooldownMs = Number.isFinite(retryAfterMs)
+                const cooldownMs = Number.isFinite(retryAfterMs)
                     ? Math.max(baseCooldownMs, retryAfterMs)
                     : baseCooldownMs;
-                state.cooldownUntil = Math.max(
-                    state.cooldownUntil,
-                    Date.now() + Math.min(12000, cooldownMs)
-                );
+
+                state.cooldownUntil = Date.now() + Math.min(12000, cooldownMs);
                 state.nextAt = Math.max(state.nextAt, state.cooldownUntil);
             }
 
@@ -873,7 +849,9 @@ async function scheduleCheckHostApiRequest(fn, kind = "result") {
                     beforeIntervalMs,
                     afterIntervalMs: state.intervalMs,
                     retryAfterMs,
-                    cooldownMs,
+                    cooldownMs: state.cooldownUntil > Date.now()
+                        ? state.cooldownUntil - Date.now()
+                        : 0,
                     queueWaitMs: startedAt && queuedAt ? Math.max(0, startedAt - queuedAt) : 0,
                     timestamp: new Date().toISOString(),
                 });
@@ -881,8 +859,11 @@ async function scheduleCheckHostApiRequest(fn, kind = "result") {
 
             throw error;
         }
-    });
+    } finally {
+        releaseQueueTurn();
+    }
 }
+
 
 function parseCheckHostNode(raw, node, transport = "tcp") {
     if (raw == null) {

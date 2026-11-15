@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import crypto from "node:crypto";
-import { parseLink, buildLinkFromOutbound } from "./link-runtime.mjs";
+import { parseLink } from "./link-runtime.mjs";
 import {
   REGULAR_COUNTRY_ORDER,
   REGULAR_COUNTRY_RANK,
@@ -1251,20 +1251,341 @@ async function fetchSourceSources() {
   };
 }
 
+function encodeQuery(params) {
+  return Object.entries(params)
+    .filter(([, value]) => (
+      value !== undefined &&
+      value !== null &&
+      value !== ""
+    ))
+    .map(([key, value]) => (
+      `${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`
+    ))
+    .join("&");
+}
+
+function encodeLinkUsername(value) {
+  return encodeURIComponent(String(value ?? ""));
+}
+
+function buildRealityQuery(reality, extra = {}) {
+  return encodeQuery({
+    security: extra.security || "reality",
+    sni: reality?.serverName || "",
+    pbk: reality?.publicKey || "",
+    sid: reality?.shortId || "",
+    // Preserve Xray's client-side Reality path hint when converting JSON
+    // outbounds into links; omitted values use the neutral default.
+    spx: reality?.spiderX || "/",
+    fp: reality?.fingerprint || "",
+    alpn: Array.isArray(extra.alpn) ? extra.alpn.join(",") : (extra.alpn || ""),
+  });
+}
+
+function buildTransportQuery(stream) {
+  const network = stream?.network || "tcp";
+
+  const base = {
+    type: network,
+  };
+
+  if (network === "grpc") {
+    base.serviceName = stream.grpcSettings?.serviceName || "";
+    base.mode = stream.grpcSettings?.multiMode ? "multi" : "";
+  }
+
+  if (network === "ws") {
+    base.host =
+      stream.wsSettings?.headers?.Host ||
+      stream.wsSettings?.host ||
+      "";
+
+    base.path = stream.wsSettings?.path || "";
+  }
+
+  if (network === "httpupgrade") {
+    base.host =
+      stream.httpupgradeSettings?.host ||
+      stream.httpUpgradeSettings?.host ||
+      "";
+
+    base.path =
+      stream.httpupgradeSettings?.path ||
+      stream.httpUpgradeSettings?.path ||
+      "";
+  }
+
+  if (
+    network === "xhttp" ||
+    network === "splithttp"
+  ) {
+    const settings =
+      stream.xhttpSettings ||
+      stream.splitHttpSettings ||
+      stream.splithttpSettings ||
+      {};
+
+    base.host =
+      settings.host || "";
+
+    base.path =
+      settings.path || "";
+
+    base.mode =
+      settings.mode || "";
+
+    base.type =
+      network;
+  }
+
+  return base;
+}
+
 function findProxyOutbound(entry) {
-  const outbounds = Array.isArray(entry?.outbounds) ? entry.outbounds : [];
+  const outbounds = Array.isArray(
+    entry?.outbounds
+  )
+    ? entry.outbounds
+    : [];
+
   return (
-    outbounds.find(item => item?.tag === "proxy") ||
-    outbounds.find(item => ["vless", "trojan", "hysteria", "hysteria2"].includes(
-      String(item?.protocol || "").toLowerCase()
-    )) ||
+    outbounds.find(
+      item => item?.tag === "proxy"
+    ) ||
+    outbounds.find(
+      item => [
+        "vless",
+        "trojan",
+        "hysteria",
+        "hysteria2",
+      ].includes(
+        String(
+          item?.protocol || ""
+        ).toLowerCase()
+      )
+    ) ||
     null
   );
 }
 
+function buildVlessLink(entry) {
+  const outbound =
+    findProxyOutbound(entry);
+
+  if (!outbound || outbound.protocol !== "vless") return null;
+
+  const server = outbound.settings?.vnext?.[0];
+  const user = server?.users?.[0];
+  const stream = outbound.streamSettings || {};
+
+  if (!server?.address || !server?.port || !user?.id) return null;
+  if (!stream.network || !stream.security) return null;
+
+  const supportedNetworks = [
+    "tcp",
+    "raw",
+    "grpc",
+    "ws",
+    "httpupgrade",
+    "xhttp",
+    "splithttp",
+  ];
+
+  if (!supportedNetworks.includes(stream.network)) return null;
+
+  const transportQuery = encodeQuery({
+    encryption: user.encryption || "none",
+    flow: user.flow || "",
+    ...buildTransportQuery(stream),
+  });
+
+  const security =
+    String(stream.security || "none").toLowerCase();
+
+  let securityQuery = "";
+
+  if (security === "reality") {
+    securityQuery =
+      buildRealityQuery(
+        stream.realitySettings || {},
+        {
+          security,
+          alpn:
+            Array.isArray(
+              stream.tlsSettings?.alpn
+            )
+              ? stream.tlsSettings.alpn
+              : "",
+        }
+      );
+  } else if (security === "tls") {
+    const tls =
+      stream.tlsSettings || {};
+
+    securityQuery =
+      encodeQuery({
+        security: "tls",
+        sni:
+          tls.serverName || "",
+        fp:
+          tls.fingerprint || "",
+        alpn:
+          Array.isArray(tls.alpn)
+            ? tls.alpn.join(",")
+            : "",
+      });
+  } else {
+    securityQuery =
+      encodeQuery({
+        security,
+      });
+  }
+
+  const query = [
+    transportQuery,
+    securityQuery,
+  ]
+    .filter(Boolean)
+    .join("&");
+
+  return (
+    `vless://${encodeLinkUsername(user.id)}@${server.address}:${server.port}?${query}`
+  );
+}
+
+function buildTrojanLink(entry) {
+  const outbound =
+    findProxyOutbound(entry);
+
+  if (!outbound || outbound.protocol !== "trojan") return null;
+
+  const server =
+    outbound.settings?.servers?.[0] ||
+    outbound.settings?.vnext?.[0];
+
+  const stream = outbound.streamSettings || {};
+
+  if (!server?.address || !server?.port || !server?.password) {
+    return null;
+  }
+
+  const supportedNetworks = [
+    "tcp",
+    "raw",
+    "grpc",
+    "ws",
+    "httpupgrade",
+  ];
+
+  if (!supportedNetworks.includes(stream.network)) return null;
+
+  const tls = stream.tlsSettings || {};
+  const query = encodeQuery({
+    ...buildTransportQuery({
+      ...stream,
+      wsSettings: stream.wsSettings,
+      grpcSettings: stream.grpcSettings,
+      httpupgradeSettings: stream.httpupgradeSettings,
+      httpUpgradeSettings: stream.httpUpgradeSettings,
+    }),
+    security: "tls",
+    sni: tls.serverName || "",
+    fp: tls.fingerprint || "",
+    alpn: Array.isArray(tls.alpn) ? tls.alpn.join(",") : "",
+  });
+
+  return (
+    `trojan://${encodeLinkUsername(server.password)}@${server.address}:${server.port}?${query}`
+  );
+}
+
+function buildHysteria2Link(entry) {
+  const outbound =
+    findProxyOutbound(entry);
+
+  if (!outbound) return null;
+
+  const protocol = String(outbound.protocol || "").toLowerCase();
+
+  if (protocol !== "hysteria" && protocol !== "hysteria2") {
+    return null;
+  }
+
+  const settings = outbound.settings || {};
+  const stream = outbound.streamSettings || {};
+  const tls = stream.tlsSettings || {};
+  const hysteria = stream.hysteriaSettings || {};
+
+  const server =
+    settings.address
+      ? {
+          address: settings.address,
+          port: settings.port,
+        }
+      : settings.servers?.[0];
+
+  if (!server?.address || !server?.port) return null;
+
+  const auth =
+    hysteria.auth ||
+    settings.auth ||
+    server.password ||
+    "";
+
+  const finalmask =
+    stream.finalmask ||
+    outbound.finalmask ||
+    null;
+
+  const query = encodeQuery({
+    sni: tls.serverName || "",
+    alpn: Array.isArray(tls.alpn)
+      ? tls.alpn.join(",")
+      : "",
+    insecure:
+      tls.allowInsecure
+        ? "1"
+        : "",
+    pinSHA256:
+      tls.pinnedPeerCertSha256 ||
+      tls.pinSHA256 ||
+      "",
+    fm:
+      finalmask &&
+      typeof finalmask === "object" &&
+      Object.keys(finalmask).length > 0
+        ? JSON.stringify(finalmask)
+        : "",
+  });
+
+  return (
+    `hysteria2://${encodeLinkUsername(auth)}@${server.address}:${server.port}?${query}`
+  );
+}
+
+
 function buildSupportedLink(entry) {
-  const outbound = findProxyOutbound(entry);
-  return buildLinkFromOutbound(outbound);
+  const outbound =
+    findProxyOutbound(entry);
+
+  if (!outbound) return null;
+
+  if (outbound.protocol === "vless") {
+    return buildVlessLink(entry);
+  }
+
+  if (outbound.protocol === "trojan") {
+    return buildTrojanLink(entry);
+  }
+
+  if (
+    outbound.protocol === "hysteria" ||
+    outbound.protocol === "hysteria2"
+  ) {
+    return buildHysteria2Link(entry);
+  }
+
+  return null;
 }
 
 function recordDropSample(stats, sample) {
@@ -1309,13 +1630,36 @@ function normalizeProfileLink(link, index, source, forceWhiteList = false, stats
     return null;
   }
 
-  // Keep the upstream URI byte-for-byte. parseLink validates it and applies
-  // protocol defaults to the parsed representation without rewriting source data.
-  const canonicalLink = value;
+  let canonicalLink = value;
   let remarks = "";
+
   try {
     const url = new URL(value);
     remarks = decodeURIComponent(url.hash.replace(/^#/, "")).trim();
+
+    // Normalize URI inputs to the same minimum contract used by enter-main:
+    // transport is explicit, and protocol security has a deterministic default.
+    if (protocol === "vless") {
+      if (!url.searchParams.get("type") && !url.searchParams.get("network")) {
+        url.searchParams.set("type", "tcp");
+      }
+      if (!url.searchParams.get("security")) {
+        url.searchParams.set("security", "none");
+      }
+    } else if (protocol === "trojan") {
+      if (!url.searchParams.get("type") && !url.searchParams.get("network")) {
+        url.searchParams.set("type", "tcp");
+      }
+      if (!url.searchParams.get("security")) {
+        url.searchParams.set("security", "tls");
+      }
+    }
+
+    // Preserve the Source-provided URI byte-for-byte. Do not add missing
+    // transport/security parameters or otherwise rewrite the source link.
+    // The source configuration is the authority; downstream parsing applies
+    // its own protocol defaults only when the source truly omits them.
+    canonicalLink = value;
   } catch {}
 
   if (!remarks) {
