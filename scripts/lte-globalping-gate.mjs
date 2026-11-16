@@ -19,20 +19,10 @@ const CORE_CITIES = new Set([
     "санкт-петербург",
 ]);
 
-const DEFAULT_CITY_PREFERENCE = [
-    "Kazan",
-    "Novosibirsk",
-    "Krasnodar",
-    "Ufa",
-    "Kursk",
-    "Samara",
-    "Rostov-on-Don",
-    "Nizhny Novgorod",
-    "Perm",
-    "Voronezh",
-    "Chelyabinsk",
-    "Yekaterinburg",
-];
+const RUSSIA_GATE_FALLBACK_CITIES = Object.freeze([
+    "Ufa", "Samara", "Perm", "Kazan", "Novosibirsk", "Rostov-on-Don",
+    "Nizhny Novgorod", "Voronezh", "Chelyabinsk", "Yekaterinburg", "Tyumen", "Omsk",
+]);
 
 function endpointKey(link) {
     const url = new URL(String(link || "").trim());
@@ -91,7 +81,7 @@ async function requestJson(url, options, timeoutMs, attempts = 3) {
     throw lastError || new Error("Globalping request failed");
 }
 
-function chooseCities(probes, cityLimit, requireEyeball) {
+export function chooseLteGateCities(probes, cityLimit = 3, preferEyeball = true) {
     const byCity = new Map();
     for (const probe of Array.isArray(probes) ? probes : []) {
         const location = probe?.location || {};
@@ -100,35 +90,129 @@ function chooseCities(probes, cityLimit, requireEyeball) {
         if (!city) continue;
         const key = normalizeLocationName(city);
         if (CORE_CITIES.has(key)) continue;
+        const status = String(probe?.status || "online").trim().toLowerCase();
+        if (status && !["online", "available", "active"].includes(status)) continue;
         const tags = new Set(Array.isArray(probe?.tags) ? probe.tags.map(tag => String(tag).trim().toLowerCase()) : []);
         const eyeball = tags.has("eyeball-network") && !tags.has("datacenter-network");
-        if (requireEyeball && !eyeball) continue;
         const row = byCity.get(key) || { city, count: 0, eyeball: 0 };
         row.count += 1;
         if (eyeball) row.eyeball += 1;
         byCity.set(key, row);
     }
 
-    const selected = [];
-    const used = new Set();
-    for (const preferred of DEFAULT_CITY_PREFERENCE) {
-        const row = byCity.get(normalizeLocationName(preferred));
-        if (!row || used.has(normalizeLocationName(row.city))) continue;
-        selected.push(row);
-        used.add(normalizeLocationName(row.city));
-        if (selected.length >= cityLimit) break;
-    }
+    const ranked = [...byCity.values()].sort((a, b) =>
+        b.eyeball - a.eyeball || b.count - a.count || a.city.localeCompare(b.city)
+    );
+    const preferred = preferEyeball ? ranked.filter(row => row.eyeball > 0) : ranked;
+    const selected = preferred.slice(0, cityLimit).map(row => ({
+        ...row,
+        requireEyeball: Boolean(preferEyeball && row.eyeball > 0),
+    }));
+    const used = new Set(selected.map(row => normalizeLocationName(row.city)));
 
+    // Fill missing slots from other live Russian probes. The per-city result
+    // is still independently validated after Globalping completes the MTR.
     if (selected.length < cityLimit) {
-        for (const row of [...byCity.values()].sort((a, b) => b.count - a.count || a.city.localeCompare(b.city))) {
+        for (const row of ranked) {
             const key = normalizeLocationName(row.city);
             if (used.has(key)) continue;
-            selected.push(row);
+            selected.push({ ...row, requireEyeball: false, selectionSource: "live-inventory" });
+            used.add(key);
+            if (selected.length >= cityLimit) break;
+        }
+    }
+
+    // If live probe inventory is unavailable/incomplete, try three (or more,
+    // for the LTE gate) ordinary Russian city candidates without an eyeball tag.
+    if (selected.length < cityLimit) {
+        for (const city of RUSSIA_GATE_FALLBACK_CITIES) {
+            const key = normalizeLocationName(city);
+            if (used.has(key)) continue;
+            selected.push({ city, count: 0, eyeball: 0, requireEyeball: false, selectionSource: "fallback-candidate" });
             used.add(key);
             if (selected.length >= cityLimit) break;
         }
     }
     return selected;
+}
+
+
+// Russia Gate uses the live Globalping inventory rather than a hard-coded
+// preferred-city list. Online eyeball probe counts are the best available
+// lightweight quality signal from /probes; if fewer than three such cities
+// exist, fill the remaining slots from any other live Russian cities.
+export function chooseRussiaGateCities(probes, cityLimit = 3) {
+    const byCity = new Map();
+    for (const probe of Array.isArray(probes) ? probes : []) {
+        const location = probe?.location || {};
+        if (String(location.country || "").toUpperCase() !== "RU") continue;
+        const city = String(location.city || "").trim();
+        const key = normalizeLocationName(city);
+        if (!key) continue;
+        const status = String(probe?.status || "online").trim().toLowerCase();
+        if (status && !["online", "available", "active"].includes(status)) continue;
+        const tags = new Set(Array.isArray(probe?.tags)
+            ? probe.tags.map(tag => String(tag).trim().toLowerCase())
+            : []);
+        const eyeball = tags.has("eyeball-network") && !tags.has("datacenter-network");
+        const row = byCity.get(key) || { city, availableProbes: 0, eyeballProbes: 0 };
+        row.availableProbes += 1;
+        if (eyeball) row.eyeballProbes += 1;
+        byCity.set(key, row);
+    }
+
+    const ranked = [...byCity.values()].sort((a, b) =>
+        b.eyeballProbes - a.eyeballProbes ||
+        b.availableProbes - a.availableProbes ||
+        a.city.localeCompare(b.city)
+    );
+    const selected = ranked
+        .filter(row => row.eyeballProbes > 0)
+        .slice(0, cityLimit)
+        .map(row => ({ ...row, requireEyeball: true }));
+    const used = new Set(selected.map(row => normalizeLocationName(row.city)));
+
+    if (selected.length < cityLimit) {
+        for (const row of ranked) {
+            const key = normalizeLocationName(row.city);
+            if (used.has(key)) continue;
+            selected.push({ ...row, requireEyeball: false, selectionSource: "live-inventory" });
+            used.add(key);
+            if (selected.length >= cityLimit) break;
+        }
+    }
+
+    // If the probe inventory is unavailable or incomplete, the request still
+    // tries three ordinary Russian locations. A result counts only when
+    // Globalping returns a valid probe from that exact city.
+    if (selected.length < cityLimit) {
+        for (const city of RUSSIA_GATE_FALLBACK_CITIES) {
+            const key = normalizeLocationName(city);
+            if (used.has(key)) continue;
+            selected.push({ city, availableProbes: 0, eyeballProbes: 0, requireEyeball: false, selectionSource: "fallback-candidate" });
+            used.add(key);
+            if (selected.length >= cityLimit) break;
+        }
+    }
+    return selected;
+}
+
+export function classifyRussiaGlobalpingVotes(cityRows, requiredDistinctCities = 2) {
+    const uniqueCount = rows => new Set(
+        rows.map(row => normalizeLocationName(row?.requestedCity || row?.city)).filter(Boolean)
+    ).size;
+    const rows = Array.isArray(cityRows) ? cityRows : [];
+    const validReachedCities = uniqueCount(rows.filter(row => row?.validReached));
+    const validCompletedCities = uniqueCount(rows.filter(row => row?.validCompleted));
+    const serviceFailure = validCompletedCities < requiredDistinctCities;
+    return {
+        validReachedCities,
+        validCompletedCities,
+        serviceFailure,
+        verdict: validReachedCities >= requiredDistinctCities
+            ? "PASS-GLOBALPING"
+            : serviceFailure ? "UNKNOWN-GLOBALPING" : "FAIL-GLOBALPING",
+    };
 }
 
 function buildMeasurementOptions(host, port, transport = "tcp") {
@@ -204,7 +288,7 @@ async function runMeasurement(
     const locations = cities.map(city => ({
         country: "RU",
         city: city.city,
-        tags: ["eyeball-network"],
+        ...(city.requireEyeball ? { tags: ["eyeball-network"] } : {}),
         limit: 1,
     }));
     const body = {
@@ -288,7 +372,7 @@ async function runMeasurement(
         const cityMatches = normalizeLocationName(actualCity) === normalizeLocationName(requestedCity.city);
         const countryMatches = country === "RU";
         const eyeballMatches = normalizedTags.has("eyeball-network") && !normalizedTags.has("datacenter-network");
-        const validProbe = cityMatches && countryMatches && eyeballMatches;
+        const validProbe = cityMatches && countryMatches && (!requestedCity.requireEyeball || eyeballMatches);
         const resultStatus = String(row?.result?.status || "").toLowerCase();
         const targetFailure = resultStatus === "failed" &&
             String(row?.result?.failureSource || "").toLowerCase() === "target";
@@ -304,6 +388,7 @@ async function runMeasurement(
             failureSource: row?.result?.failureSource || "",
             reachedTarget: reached,
             validProbe,
+            validCompleted: validProbe && (resultStatus === "finished" || targetFailure),
             validReached: validProbe && reached,
             providerFailure,
             resolvedAddress: row?.result?.resolvedAddress || "",
@@ -311,22 +396,23 @@ async function runMeasurement(
         };
     });
 
-    const validReachedCities = new Set(
-        cityRows.filter(row => row.validReached).map(row => normalizeLocationName(row.city)).filter(Boolean)
-    ).size;
-    const serviceFailure = cityRows.some(row => row.providerFailure);
-    const verdict = validReachedCities >= requiredDistinctCities
-        ? "PASS-GLOBALPING"
-        : serviceFailure ? "UNKNOWN-GLOBALPING" : "FAIL-GLOBALPING";
+    // One missing location must not invalidate two independent positive votes.
+    // Fewer than two definitive votes is provider uncertainty, not a failure.
+    const quorum = classifyRussiaGlobalpingVotes(cityRows, requiredDistinctCities);
+    const { validReachedCities, validCompletedCities, serviceFailure, verdict } = quorum;
     return {
         verdict,
         measurementId,
         cities: cityRows,
         reachedCities: cityRows.filter(row => row.reachedTarget).length,
         validReachedCities,
+        validCompletedCities,
         requiredDistinctCities,
+        selectedLocationCount: cities.length,
         serviceFailure,
-        error: serviceFailure ? "Globalping did not return three valid completed Russian eyeball-probe results" : "",
+        error: serviceFailure
+            ? `Globalping returned only ${validCompletedCities}/${cities.length} definitive Russian location results; 2 are required`
+            : "",
     };
 }
 
@@ -340,7 +426,7 @@ export async function runGlobalpingStrictFallback({
     pollMs = 700,
     mtrTimeoutSeconds = 12,
 } = {}) {
-    const requiredDistinctCities = 3;
+    const requiredDistinctCities = 2;
     const normalizedCityLimit = 3;
     const targets = [...new Map(
         (Array.isArray(endpoints) ? endpoints : [])
@@ -355,7 +441,7 @@ export async function runGlobalpingStrictFallback({
     const diagnostic = {
         generatedAt: new Date().toISOString(),
         provider: "globalping",
-        purpose: "strict fallback for unavailable primary Check-Host providers",
+        purpose: "2-of-3 fallback for unavailable Check-Host providers using dynamic Russian locations",
         enabled: Boolean(enabled),
         requiredDistinctCities,
         selectedCities: [],
@@ -398,26 +484,35 @@ export async function runGlobalpingStrictFallback({
         return { endpointResults, diagnostic };
     }
 
-    let probes;
+    let probes = [];
     let limits;
+    let probeDiscoveryError = "";
     try {
-        [probes, limits] = await Promise.all([
-            getProbes(apiBase, token, timeoutMs),
-            getLimits(apiBase, token, timeoutMs),
-        ]);
+        limits = await getLimits(apiBase, token, timeoutMs);
     } catch (error) {
-        diagnostic.skippedReason = `Globalping discovery/limits failed: ${error?.message || String(error)}`;
+        diagnostic.skippedReason = `Globalping limits failed: ${error?.message || String(error)}`;
         setUnknownForRemaining(diagnostic.skippedReason);
         diagnostic.unknownEndpoints = targets.length;
         return { endpointResults, diagnostic };
     }
+    try {
+        probes = await getProbes(apiBase, token, timeoutMs);
+    } catch (error) {
+        probeDiscoveryError = error?.message || String(error);
+    }
 
-    const selectedCities = chooseCities(probes, normalizedCityLimit, true);
+    const selectedCities = chooseRussiaGateCities(probes, normalizedCityLimit);
+    if (probeDiscoveryError) diagnostic.probeDiscoveryError = probeDiscoveryError;
     diagnostic.selectedCities = selectedCities;
     diagnostic.cityCount = selectedCities.length;
+    diagnostic.selectionMode = selectedCities.some(city => city.selectionSource === "fallback-candidate")
+        ? "fallback-candidate-locations-no-complete-live-inventory"
+        : selectedCities.filter(city => city.requireEyeball).length === selectedCities.length
+            ? "best-live-eyeball-inventory"
+            : "best-live-eyeball-plus-other-live-russian-locations";
     diagnostic.limits = limits;
-    if (selectedCities.length !== requiredDistinctCities) {
-        diagnostic.skippedReason = `need-3-distinct-Russian-eyeball-cities, found-${selectedCities.length}`;
+    if (selectedCities.length !== normalizedCityLimit) {
+        diagnostic.skippedReason = `need-3-distinct-live-Russian-locations, found-${selectedCities.length}`;
         setUnknownForRemaining(diagnostic.skippedReason);
         diagnostic.unknownEndpoints = targets.length;
         return { endpointResults, diagnostic };
@@ -425,7 +520,7 @@ export async function runGlobalpingStrictFallback({
 
     const remaining = Number(limits?.remaining);
     const availableEndpoints = Number.isFinite(remaining)
-        ? Math.floor(Math.max(0, remaining - Math.max(0, Number(reserveTests) || 0)) / requiredDistinctCities)
+        ? Math.floor(Math.max(0, remaining - Math.max(0, Number(reserveTests) || 0)) / normalizedCityLimit)
         : 0;
     diagnostic.availableEndpoints = availableEndpoints;
 
@@ -436,7 +531,7 @@ export async function runGlobalpingStrictFallback({
     // enough quota for every distinct endpoint before spending any measurements.
     if (!Number.isFinite(remaining) || availableEndpoints < targets.length) {
         diagnostic.skippedReason = Number.isFinite(remaining)
-            ? `Globalping budget covers ${availableEndpoints}/${targets.length} required endpoints; complete 3-city coverage is required, so no partial fallback was run`
+            ? `Globalping budget covers ${availableEndpoints}/${targets.length} required endpoints; complete 3-location checks (2/3 positive quorum) are required, so no partial fallback was run`
             : "Globalping budget unavailable or exhausted";
         setUnknownForRemaining(diagnostic.skippedReason);
         diagnostic.unknownEndpoints = targets.length;
@@ -468,7 +563,7 @@ export async function runGlobalpingStrictFallback({
 
             console.log(
                 `RUSSIA GLOBALPING FALLBACK ${index + 1}/${attemptCount}: ${endpoint.key} => ${row.verdict} ` +
-                `(${row.validReachedCities || 0}/${requiredDistinctCities})`
+                `(${row.validReachedCities || 0}/${normalizedCityLimit}; quorum ${requiredDistinctCities})`
             );
             if (row.serviceFailure || row.verdict === "UNKNOWN-GLOBALPING") {
                 serviceFailure = true;
@@ -575,10 +670,10 @@ export async function runLteGlobalpingGate({
         };
     }
 
-    let probes;
+    let probes = [];
     let limits;
+    let probeDiscoveryError = "";
     try {
-        probes = await getProbes(apiBase, token, timeoutMs);
         limits = await getLimits(apiBase, token, timeoutMs);
     } catch (error) {
         return {
@@ -594,11 +689,21 @@ export async function runLteGlobalpingGate({
             globalping2of3Links: beforeGlobalpingLinks,
             globalping3of3Links: [],
             finalPublishedLinks: beforeGlobalpingLinks,
-            diagnostic: { ...empty, skippedReason: `Globalping discovery/limits failed: ${error?.message || String(error)}` },
+            diagnostic: { ...empty, skippedReason: `Globalping limits failed: ${error?.message || String(error)}` },
         };
     }
+    try {
+        probes = await getProbes(apiBase, token, timeoutMs);
+    } catch (error) {
+        probeDiscoveryError = error?.message || String(error);
+    }
 
-    const cityRows = chooseCities(probes, normalizedCityLimit, Boolean(requireEyeball));
+    const cityRows = chooseLteGateCities(probes, normalizedCityLimit, Boolean(requireEyeball));
+    const selectionMode = cityRows.some(city => city.selectionSource === "fallback-candidate")
+        ? "fallback-candidate-locations-no-complete-live-inventory"
+        : cityRows.every(city => city.requireEyeball)
+            ? "best-live-eyeball-inventory"
+            : "best-live-eyeball-plus-other-live-russian-locations";
     if (cityRows.length < normalizedCityLimit) {
         return {
             attemptedEndpoints: 0,
@@ -613,7 +718,7 @@ export async function runLteGlobalpingGate({
             globalping2of3Links: beforeGlobalpingLinks,
             globalping3of3Links: [],
             finalPublishedLinks: beforeGlobalpingLinks,
-            diagnostic: { ...empty, selectedCities: cityRows, cityCount: cityRows.length, limits, skippedReason: `need-${normalizedCityLimit}-Russian eyeball cities, found-${cityRows.length}` },
+            diagnostic: { ...empty, selectedCities: cityRows, cityCount: cityRows.length, limits, selectionMode, probeDiscoveryError: probeDiscoveryError || undefined, skippedReason: `need-${normalizedCityLimit}-Russian locations, found-${cityRows.length}` },
         };
     }
 
@@ -637,7 +742,7 @@ export async function runLteGlobalpingGate({
             globalping2of3Links: beforeGlobalpingLinks,
             globalping3of3Links: [],
             finalPublishedLinks: beforeGlobalpingLinks,
-            diagnostic: { ...empty, selectedCities: cityRows, cityCount: cityRows.length, limits, skippedReason: "Globalping budget unavailable or exhausted" },
+            diagnostic: { ...empty, selectedCities: cityRows, cityCount: cityRows.length, limits, selectionMode, probeDiscoveryError: probeDiscoveryError || undefined, skippedReason: "Globalping budget unavailable or exhausted" },
         };
     }
 
@@ -726,6 +831,8 @@ export async function runLteGlobalpingGate({
             ...empty,
             enabled: true,
             selectedCities: cityRows,
+            selectionMode,
+            probeDiscoveryError: probeDiscoveryError || undefined,
             cityCount: normalizedCityLimit,
             requiredDistinctCities: requiredCities,
             limits,

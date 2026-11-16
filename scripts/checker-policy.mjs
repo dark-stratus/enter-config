@@ -1,11 +1,13 @@
 // Central Russia reachability policy shared by preflight, gate and pool ranking.
 export const CHECKER_POLICY = Object.freeze({
-    algorithmVersion: 41,
+    algorithmVersion: 42,
     primaryNode: "ru1.node.check-host.net",
     defaultNodes: Object.freeze([
         "ru1.node.check-host.net",
         "ru2.node.check-host.net",
+        "ru3.node.check-host.net",
     ]),
+    minimumAvailableNodes: 2,
     defaultQuorum: 2,
 });
 
@@ -16,13 +18,15 @@ export function isCheckHostPositive(result, transport = "tcp") {
 }
 
 export function getPrimaryCheckerEvidence(results, transport = "tcp") {
-    const row = Array.isArray(results)
-        ? results.find(result => result?.node === CHECKER_POLICY.primaryNode)
-        : null;
+    const rows = Array.isArray(results) ? results.filter(row => row && typeof row === "object") : [];
+    // Keep the legacy field name for report compatibility, but choose evidence
+    // from the currently selected live checker set rather than requiring ru1.
+    const row = rows.find(result => isCheckHostPositive(result, transport)) ||
+        rows.find(result => !result.inconclusive) || rows[0] || null;
     const positive = isCheckHostPositive(row, transport);
 
     return {
-        node: CHECKER_POLICY.primaryNode,
+        node: row?.node || null,
         positive,
         status: positive
             ? "positive"
