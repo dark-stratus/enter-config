@@ -1,6 +1,6 @@
 {
-  "remarks": "🇬🇪 Georgia Новый метод⁠‍‌‌‍‌‌​⁠⁠‌‌⁠‍​‌⁠⁠​​​‍​⁠",
-  "location_id": "65160a69-c4cc-4834-af22-e4de4e2f61d4",
+  "remarks": "🇩🇪 Frankfurt #6",
+  "location_id": "7672e212-b1a1-47a7-b1dd-0377029d0c31",
   "log": {
     "loglevel": "warning"
   },
@@ -53,32 +53,44 @@
   ],
   "outbounds": [
     {
+      "tag": "proxy",
       "protocol": "vless",
       "settings": {
         "vnext": [
           {
-            "port": 22231,
+            "port": 443,
             "users": [
               {
                 "id": "dcda0d72-a3ce-44a1-b621-3d67d5a9e1a2",
-                "flow": "xtls-rprx-vision",
-                "level": 0,
+                "flow": "",
                 "encryption": "none"
               }
             ],
-            "address": "dh.mizulina.top"
+            "address": "89.19.213.159"
           }
         ]
       },
       "streamSettings": {
-        "network": "tcp",
+        "network": "xhttp",
         "security": "tls",
         "tlsSettings": {
-          "serverName": "dh.mizulina.top",
+          "alpn": [
+            "h2"
+          ],
+          "serverName": "vc7.mizulina.top",
           "fingerprint": "edge"
+        },
+        "xhttpSettings": {
+          "host": "vc7.mizulina.top",
+          "mode": "auto",
+          "path": "/apiv1/",
+          "headers": {
+            "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.6.1 Mobile/15E148 Safari/604.1"
+          },
+          "scMaxEachPostBytes": 1800000,
+          "scMinPostsIntervalMs": 54
         }
-      },
-      "tag": "proxy"
+      }
     },
     {
       "tag": "direct",
@@ -4477,6 +4489,7 @@
           "109.252.0.0/16",
           "109.254.0.0/16",
           "111.88.78.0/24",
+          "111.88.80.0/21",
           "111.88.96.0/19",
           "111.88.128.0/21",
           "111.88.144.0/20",
@@ -5902,6 +5915,7 @@
           "185.117.156.0/22",
           "185.117.232.0/22",
           "185.117.244.0/22",
+          "185.118.62.0/24",
           "185.118.64.0/22",
           "185.118.126.0/24",
           "185.118.164.0/22",
@@ -7727,6 +7741,7 @@
           "194.165.50.0/24",
           "194.165.57.0/24",
           "194.165.61.0/24",
+          "194.169.50.0/24",
           "194.169.56.0/22",
           "194.169.192.0/24",
           "194.169.247.0/24",
