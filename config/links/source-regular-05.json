@@ -740,11 +740,22 @@
       {
         "tag": "COUNTRY",
         "selector": [
-          "us"
+          "us",
+          "us-hy"
         ],
         "strategy": {
-          "type": "roundRobin"
-        }
+          "type": "leastLoad",
+          "settings": {
+            "maxRTT": "1800ms",
+            "expected": 1,
+            "baselines": [
+              "90ms",
+              "180ms",
+              "350ms"
+            ]
+          }
+        },
+        "fallbackTag": "us"
       }
     ],
     "domainMatcher": "hybrid",
@@ -780,9 +791,58 @@
   "outbounds": [
     {
       "tag": "us",
+      "protocol": "vless",
+      "settings": {
+        "vnext": [
+          {
+            "address": "us1.orbitacorp.dev",
+            "port": 443,
+            "users": [
+              {
+                "id": "e75ad2eb-6c1f-45ce-8023-f5f10875df66",
+                "encryption": "none",
+                "flow": ""
+              }
+            ]
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "xhttp",
+        "xhttpSettings": {
+          "mode": "stream-up",
+          "host": "us1.orbitacorp.dev",
+          "path": "/workspace/d20144e6ef0fd2bf",
+          "extra": {
+            "cMaxReuseTimes": "64-128",
+            "maxConcurrency": "16-32",
+            "hKeepAlivePeriod": 25,
+            "hMaxRequestTimes": "800-1200",
+            "hMaxReusableSecs": "600-900"
+          }
+        },
+        "security": "reality",
+        "realitySettings": {
+          "serverName": "us1.orbitacorp.dev",
+          "publicKey": "UJB9nkPRNsX_JccjT4pDAKsJPHdgaydJokgUQeRyUVg",
+          "shortId": "7231ee99997b6ab3",
+          "fingerprint": "firefox"
+        },
+        "sockopt": {
+          "tcpUserTimeout": 90000,
+          "tcpKeepAliveIdle": 60,
+          "tcpKeepAliveInterval": 15
+        }
+      },
+      "mux": {
+        "enabled": false
+      }
+    },
+    {
+      "tag": "us-hy",
       "protocol": "hysteria",
       "settings": {
-        "address": "23.95.79.132",
+        "address": "23.95.79.49",
         "port": 443,
         "version": 2
       },
@@ -794,7 +854,7 @@
         },
         "security": "tls",
         "tlsSettings": {
-          "serverName": "edge-16104859765f.eu-cdn539.com",
+          "serverName": "us1.orbitacorp.dev",
           "enableSessionResumption": false,
           "fingerprint": "chrome",
           "alpn": [
@@ -817,5 +877,14 @@
       "protocol": "blackhole"
     }
   ],
+  "observatory": {
+    "probeUrl": "https://www.gstatic.com/generate_204",
+    "probeInterval": "10s",
+    "subjectSelector": [
+      "us",
+      "us-hy"
+    ],
+    "enableConcurrency": true
+  },
   "remarks": "🇺🇸 США"
 }
