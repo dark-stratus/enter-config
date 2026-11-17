@@ -1,27 +1,27 @@
 # VPN source report
 
-Последнее обновление: 2026-11-17T15:05:38.355Z
+Последнее обновление: 2026-11-17T23:22:53.229Z
 
 Статистика **по каждому источнику отдельно**: **взяли → живы → в итоговом пуле**.
 
-🧠 Из памяти предыдущего пула сохранено: **136** серверов.
+🧠 Из памяти предыдущего пула сохранено: **79** серверов.
 
 ## Источники
 
 | Секрет | Источник | Слот | Взяли | Живы | В итоговом пуле | Состояние |
 |---|---|---:|---:|---:|---:|---|
-| **SOURCE_URL16_2** | keylineservices.top/G1231Mb_UJlDqkyCubrtWdMcuc-YcvWO | 2 | 7 | 5 | 5 | ✅ |
-| **SOURCE_URL9_4** | keylineservices.top/hq6Fk_tyij5kg2Xhb67t8kCrfrigjug1 | 4 | 13 | 8 | 7 | ✅ |
-| **SOURCE_URL5_6** | keylineservices.top/C7xwkp_3uLj0mcXO1b6D6BBojSvCOvpH | 6 | 16 | 5 | 3 | ✅ |
-| **SOURCE_URL_9** | zieng2/wl — vless_universal.txt | 9 | 110 | 2 | 2 | ✅ |
-| **SOURCE_URL_10** | igareck/vpn-configs-for-russia — WHITE-CIDR-RU-all.txt | 10 | 125 | 62 | 62 | ✅ |
-| **SOURCE_URL_11** | igareck/vpn-configs-for-russia — WHITE-SNI-RU-all.txt | 11 | 0 | 0 | 0 | ⚠️ |
+| **SOURCE_URL16_2** | keylineservices.top/G1231Mb_UJlDqkyCubrtWdMcuc-YcvWO | 2 | 7 | 5 | 3 | ✅ |
+| **SOURCE_URL9_4** | keylineservices.top/hq6Fk_tyij5kg2Xhb67t8kCrfrigjug1 | 4 | 13 | 9 | 8 | ✅ |
+| **SOURCE_URL5_6** | keylineservices.top/C7xwkp_3uLj0mcXO1b6D6BBojSvCOvpH | 6 | 16 | 6 | 6 | ✅ |
+| **SOURCE_URL_9** | zieng2/wl — vless_universal.txt | 9 | 120 | 14 | 14 | ✅ |
+| **SOURCE_URL_10** | igareck/vpn-configs-for-russia — WHITE-CIDR-RU-all.txt | 10 | 172 | 132 | 132 | ✅ |
+| **SOURCE_URL_11** | igareck/vpn-configs-for-russia — WHITE-SNI-RU-all.txt | 11 | 1 | 1 | 1 | ✅ |
 
 ## 🇷🇺 Russia Gate
 
 **Режим:** Check-Host 2/3.
 **Предупреждение:** Accepted candidates passed Check-Host quorum 2/3.
-Проверено кандидатов: **263**; прошли: **183**; отброшены: **80**; pending: **0**.
+Проверено кандидатов: **317**; прошли: **259**; отброшены: **58**; pending: **0**.
 
 | Russian checker | Проверок | Reachable | Inconclusive | Timeout | 429 | Другие ошибки |
 |---|---:|---:|---:|---:|---:|---:|
