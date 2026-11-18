@@ -1,33 +1,31 @@
 # VPN source report
 
-Последнее обновление: 2026-11-18T04:58:02.000Z
+Последнее обновление: 2026-11-18T13:51:07.269Z
 
 Статистика **по каждому источнику отдельно**: **взяли → живы → в итоговом пуле**.
 
-🧠 Из памяти предыдущего пула сохранено: **164** серверов.
+🧠 Из памяти предыдущего пула сохранено: **208** серверов.
 
 ## Источники
 
 | Секрет | Источник | Слот | Взяли | Живы | В итоговом пуле | Состояние |
 |---|---|---:|---:|---:|---:|---|
-| **SOURCE_URL16_2** | keylineservices.top/G1231Mb_UJlDqkyCubrtWdMcuc-YcvWO | 2 | 7 | 5 | 4 | ✅ |
-| **SOURCE_URL9_4** | keylineservices.top/hq6Fk_tyij5kg2Xhb67t8kCrfrigjug1 | 4 | 13 | 10 | 8 | ✅ |
-| **SOURCE_URL5_6** | keylineservices.top/C7xwkp_3uLj0mcXO1b6D6BBojSvCOvpH | 6 | 18 | 9 | 7 | ✅ |
-| **SOURCE_URL_9** | zieng2/wl — vless_universal.txt | 9 | 145 | 29 | 29 | ✅ |
-| **SOURCE_URL_10** | igareck/vpn-configs-for-russia — WHITE-CIDR-RU-all.txt | 10 | 207 | 160 | 160 | ✅ |
+| **SOURCE_URL16_2** | keylineservices.top/G1231Mb_UJlDqkyCubrtWdMcuc-YcvWO | 2 | 7 | 4 | 4 | ✅ |
+| **SOURCE_URL9_4** | keylineservices.top/hq6Fk_tyij5kg2Xhb67t8kCrfrigjug1 | 4 | 13 | 7 | 7 | ✅ |
+| **SOURCE_URL5_6** | keylineservices.top/C7xwkp_3uLj0mcXO1b6D6BBojSvCOvpH | 6 | 16 | 1 | 1 | ✅ |
+| **SOURCE_URL_9** | zieng2/wl — vless_universal.txt | 9 | 114 | 10 | 10 | ✅ |
+| **SOURCE_URL_10** | igareck/vpn-configs-for-russia — WHITE-CIDR-RU-all.txt | 10 | 129 | 89 | 89 | ✅ |
 | **SOURCE_URL_11** | igareck/vpn-configs-for-russia — WHITE-SNI-RU-all.txt | 11 | 0 | 0 | 0 | ⚠️ |
 
 ## 🇷🇺 Russia Gate
 
-**Режим:** Check-Host 2/3.
-**Предупреждение:** Accepted candidates passed Check-Host quorum 2/3.
-Проверено кандидатов: **363**; прошли: **301**; отброшены: **62**; pending: **0**.
+**Режим:** Globalping 2/3.
+**Предупреждение:** ⚠️ Fewer than two Check-Host nodes passed preflight; Globalping 2/3 fallback across three dynamic Russian locations was applied.
+Проверено кандидатов: **298**; прошли: **188**; отброшены: **110**; pending: **0**.
 
 | Russian checker | Проверок | Reachable | Inconclusive | Timeout | 429 | Другие ошибки |
 |---|---:|---:|---:|---:|---:|---:|
-| ru1.node.check-host.net | 0 | 0 | 0 | 0 | 0 | 0 |
-| ru2.node.check-host.net | 0 | 0 | 0 | 0 | 0 | 0 |
-| ru3.node.check-host.net | 0 | 0 | 0 | 0 | 0 | 0 |
+| — | 0 | 0 | 0 | 0 | 0 | 0 |
 
 ## Правила слотов
 
