@@ -17,13 +17,6 @@
     "rules": [
       {
         "type": "field",
-        "inboundTag": [
-          "entry-at-tcp"
-        ],
-        "balancerTag": "LOCAL_BACKUP"
-      },
-      {
-        "type": "field",
         "domain": [
           "domain:platega.io"
         ],
@@ -654,33 +647,6 @@
           "bittorrent"
         ],
         "outboundTag": "direct"
-      },
-      {
-        "type": "field",
-        "network": "tcp,udp",
-        "balancerTag": "AT_FAILOVER"
-      }
-    ],
-    "balancers": [
-      {
-        "tag": "AT_FAILOVER",
-        "selector": [
-          "local-backup-at-tcp"
-        ],
-        "strategy": {
-          "type": "roundRobin"
-        },
-        "fallbackTag": "at-hy"
-      },
-      {
-        "tag": "LOCAL_BACKUP",
-        "selector": [
-          "local-backup-at-tcp"
-        ],
-        "strategy": {
-          "type": "roundRobin"
-        },
-        "fallbackTag": "block"
       }
     ],
     "domainMatcher": "hybrid",
@@ -727,71 +693,50 @@
   ],
   "outbounds": [
     {
-      "tag": "at-hy",
-      "protocol": "hysteria",
-      "settings": {
-        "address": "185.104.63.174",
-        "port": 443,
-        "version": 2
-      },
-      "streamSettings": {
-        "network": "hysteria",
-        "hysteriaSettings": {
-          "version": 2,
-          "auth": "e75ad2eb-6c1f-45ce-8023-f5f10875df66"
-        },
-        "security": "tls",
-        "tlsSettings": {
-          "serverName": "edge-628b71df4fcb.eu-cdn391.com",
-          "enableSessionResumption": false,
-          "fingerprint": "chrome",
-          "alpn": [
-            "h3"
-          ]
-        },
-        "finalmask": {
-          "obfs": {
-            "type": "salamander",
-            "password": "yzrsHRu3dsu2G9zJeEjPxBAI"
-          },
-          "quicParams": {
-            "debug": false,
-            "congestion": "bbr"
-          }
-        }
-      }
-    },
-    {
-      "tag": "local-backup-at-tcp",
+      "tag": "proxy",
       "protocol": "vless",
       "settings": {
         "vnext": [
           {
-            "address": "185.104.63.174",
+            "address": "it1.orbitacorp.dev",
             "port": 443,
             "users": [
               {
                 "id": "e75ad2eb-6c1f-45ce-8023-f5f10875df66",
                 "encryption": "none",
-                "flow": "xtls-rprx-vision"
+                "flow": ""
               }
             ]
           }
         ]
       },
       "streamSettings": {
-        "network": "tcp",
-        "tcpSettings": {},
+        "network": "xhttp",
+        "xhttpSettings": {
+          "mode": "packet-up",
+          "host": "it1.orbitacorp.dev",
+          "path": "/workspace/8ef0ad59ada58f49",
+          "extra": {
+            "xmux": {
+              "cMaxReuseTimes": "64-128",
+              "maxConcurrency": "16-32",
+              "hKeepAlivePeriod": 25,
+              "hMaxRequestTimes": "800-1200",
+              "hMaxReusableSecs": "1800-3600"
+            }
+          }
+        },
         "security": "reality",
         "realitySettings": {
-          "serverName": "edge-628b71df4fcb.eu-cdn391.com",
-          "publicKey": "EUwBNgLdB2ML5BJ_O_Izdd9jtcOrqlse4DX47wvDLwg",
-          "shortId": "104f458f34b0939f",
+          "serverName": "it1.orbitacorp.dev",
+          "publicKey": "o6Qje0hjJA39_KPtVu6dB8dAjTH6fP1YBNcrrdxzHGc",
+          "shortId": "59cbaf172f358eae",
           "fingerprint": "firefox"
+        },
+        "sockopt": {
+          "tcpKeepAliveIdle": 60,
+          "tcpKeepAliveInterval": 30
         }
-      },
-      "mux": {
-        "enabled": false
       }
     },
     {
@@ -801,23 +746,7 @@
     {
       "tag": "block",
       "protocol": "blackhole"
-    },
-    {
-      "tag": "at-tcp",
-      "protocol": "loopback",
-      "settings": {
-        "inboundTag": "entry-at-tcp"
-      }
     }
   ],
-  "observatory": {
-    "probeUrl": "https://www.gstatic.com/generate_204",
-    "probeInterval": "10s",
-    "subjectSelector": [
-      "at-hy",
-      "local-backup-at-tcp"
-    ],
-    "enableConcurrency": true
-  },
-  "remarks": "🇦🇹 Австрия"
+  "remarks": "🇮🇹 Италия"
 }
