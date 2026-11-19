@@ -1,15 +1,20 @@
 {
   "dns": {
+    "tag": "dns_q",
     "servers": [
-      "1.1.1.1",
-      "1.0.0.1"
+      "https://8.8.8.8/dns-query",
+      "https://1.1.1.1/dns-query",
+      "tcp://9.9.9.9:53"
     ],
-    "queryStrategy": "UseIP"
+    "queryStrategy": "UseIPv4"
+  },
+  "log": {
+    "loglevel": "warning"
   },
   "policy": {
     "levels": {
       "0": {
-        "connIdle": 1800
+        "connIdle": 300
       }
     }
   },
@@ -24,233 +29,76 @@
       },
       {
         "type": "field",
-        "domain": [
-          "regexp:\\.ru$",
-          "regexp:\\.su$",
-          "regexp:\\.xn--p1ai$",
-          "domain:mangalib.me",
-          "domain:animego.me",
-          "domain:tilda.cc",
-          "domain:kinescope.io",
-          "domain:kinescopecdn.net",
-          "domain:redheadsound.studio",
-          "domain:vtbglobalperspectives.com",
-          "domain:vtb-direct.com",
-          "domain:sber.world",
-          "domain:sber.ws",
-          "domain:sbercoin.com",
-          "domain:pvubank.com",
-          "domain:alefbank.com",
-          "domain:korona.com",
-          "domain:autobahn.db.com",
-          "domain:mizuhogroup.com",
-          "domain:ubs.com",
-          "domain:ru.ccb.com",
-          "domain:bank131.com",
-          "domain:emias.info",
-          "domain:psk",
-          "domain:1cfresh.com",
-          "domain:1internet.tv",
-          "domain:2gis.ae",
-          "domain:2gis.am",
-          "domain:2gis.az",
-          "domain:2gis.by",
-          "domain:2gis.com",
-          "domain:2gis.com.cy",
-          "domain:2gis.cz",
-          "domain:2gis.ge",
-          "domain:2gis.kg",
-          "domain:2gis.kz",
-          "domain:2gis.tj",
-          "domain:2gis.ua",
-          "domain:2gis.uz",
-          "domain:4meeting.me",
-          "domain:5post.market",
-          "domain:alfa-bank.com",
-          "domain:alfa-finance.com",
-          "domain:alfa-fx.com",
-          "domain:alfa-pc.com",
-          "domain:alfa-usa.com",
-          "domain:alfabank.com",
-          "domain:alfafinance.biz",
-          "domain:alfafuture.com",
-          "domain:alfafx.com",
-          "domain:alfaprivate.com",
-          "domain:alformacap.com",
-          "domain:alformacapital.com",
-          "domain:avito.st",
-          "domain:banka-ui.dev",
-          "domain:beta-bank.com",
-          "domain:bronevik.com",
-          "domain:chizhik.club",
-          "domain:clstorage.net",
-          "domain:dbo-dengi.online",
-          "domain:donationalerts.com",
-          "domain:edadeal.io",
-          "domain:fix-price.com",
-          "domain:gazprombank.tech",
-          "domain:investalfabank.com",
-          "domain:jivochat.com",
-          "domain:jivosite.com",
-          "domain:kaspersky.com",
-          "domain:kinopoisk-ru.clstorage.net",
-          "domain:lead-pro2023.online",
-          "domain:lenta.com",
-          "domain:lmru.tech",
-          "domain:megamarket.tech",
-          "domain:memealerts.com",
-          "domain:miya-news.online",
-          "domain:moex.com",
-          "domain:mradx.net",
-          "domain:mvk.com",
-          "domain:mycdn.me",
-          "domain:naydex.net",
-          "domain:netmonet.co",
-          "domain:okko.sport",
-          "domain:okko.tv",
-          "domain:okolo.app",
-          "domain:ozonusercontent.com",
-          "domain:rostaxi.org",
-          "domain:russiacalling.com",
-          "domain:sistema-capital.com",
-          "domain:static-storage.net",
-          "domain:svoy.academy",
-          "domain:tamtam.chat",
-          "domain:taxsee.com",
-          "domain:tbank-online.com",
-          "domain:timeweb.cloud",
-          "domain:timeweb.com",
-          "domain:tips.tips",
-          "domain:tochka-tech.com",
-          "domain:tochka.com",
-          "domain:trbcdn.net",
-          "domain:tsx.x5static.net",
-          "domain:turbopages.org",
-          "domain:userapi.com",
-          "domain:vk-apps.com",
-          "domain:vk-cdn.me",
-          "domain:vk-cdn.net",
-          "domain:vk-portal.net",
-          "domain:vk.cc",
-          "domain:vk.com",
-          "domain:vk.company",
-          "domain:vk.design",
-          "domain:vk.link",
-          "domain:vk.me",
-          "domain:vk.team",
-          "domain:vkcache.com",
-          "domain:vkgo.app",
-          "domain:vklive.app",
-          "domain:vkmessenger.app",
-          "domain:vkmessenger.com",
-          "domain:vkuser.net",
-          "domain:vkuseraudio.com",
-          "domain:vkuseraudio.net",
-          "domain:vkuserlive.net",
-          "domain:vkuservideo.com",
-          "domain:vkuservideo.net",
-          "domain:vtb-russia.com",
-          "domain:vtb.bank.in",
-          "domain:vtb.com",
-          "domain:vtb.digital",
-          "domain:vtb.promo",
-          "domain:vtb24.com",
-          "domain:vtbcareer.com",
-          "domain:vtbindia.com",
-          "domain:vtbkep.site",
-          "domain:vtbpartners.com",
-          "domain:vtbrussia.com",
-          "domain:webvisor.com",
-          "domain:webvisor.org",
-          "domain:whoosh.bike",
-          "domain:x5.tech",
-          "domain:xn--90aifd0aza.site",
-          "domain:yads.tech",
-          "domain:yandex",
-          "domain:yandex-bank.net",
-          "domain:yandex-images.clstorage.net",
-          "domain:yandex.aero",
-          "domain:yandex.az",
-          "domain:yandex.by",
-          "domain:yandex.cloud",
-          "domain:yandex.co.il",
-          "domain:yandex.com",
-          "domain:yandex.com.am",
-          "domain:yandex.com.ge",
-          "domain:yandex.com.tr",
-          "domain:yandex.com.ua",
-          "domain:yandex.de",
-          "domain:yandex.ee",
-          "domain:yandex.eu",
-          "domain:yandex.fi",
-          "domain:yandex.fr",
-          "domain:yandex.jobs",
-          "domain:yandex.kg",
-          "domain:yandex.kz",
-          "domain:yandex.lt",
-          "domain:yandex.lv",
-          "domain:yandex.md",
-          "domain:yandex.net",
-          "domain:yandex.org",
-          "domain:yandex.pl",
-          "domain:yandex.st",
-          "domain:yandex.sx",
-          "domain:yandex.tj",
-          "domain:yandex.tm",
-          "domain:yandex.tr",
-          "domain:yandex.ua",
-          "domain:yandex.uz",
-          "domain:yandexadexchange.net",
-          "domain:yandexcloud.net",
-          "domain:yandexcom.net",
-          "domain:yandexmetrica.com",
-          "domain:yandexwebcache.net",
-          "domain:yandexwebcache.org",
-          "domain:yastat.net",
-          "domain:yastatic.net",
-          "domain:youla.io",
-          "domain:zentotem.net",
-          "domain:medtrum.eu",
-          "domain:anytimeru.com",
-          "domain:rsscenter.cloud",
-          "domain:terratraf.io",
-          "domain:t-tech.team",
-          "domain:gravityfield.ai",
-          "domain:diginetica.net",
-          "domain:appsflyer.com",
-          "domain:onelink.me",
-          "domain:branch.io",
-          "domain:adjust.com",
-          "domain:retailrocket.net",
-          "domain:flocktory.com",
-          "domain:mindbox.cloud",
-          "domain:wbstatic.net",
-          "domain:sberbank.com",
-          "domain:ivi.tv",
-          "domain:habr.com",
-          "domain:habrastorage.org",
-          "domain:championat.com",
-          "domain:livejournal.com",
-          "domain:livejournal.net",
-          "domain:1tv.com",
-          "domain:ozon.com",
-          "domain:tass.com",
-          "domain:premier.one",
-          "domain:more.tv",
-          "domain:yclients.com",
-          "domain:ngenix.net",
-          "domain:vgtrk.com",
-          "domain:sberauto.com",
-          "domain:getcourse.io",
-          "domain:rbc.group",
-          "domain:dodopizza.com",
-          "domain:wildberries.by",
-          "domain:moscow",
-          "domain:ru",
-          "domain:su",
-          "domain:xn--p1ai"
+        "inboundTag": [
+          "dns_q"
         ],
-        "outboundTag": "direct"
+        "balancerTag": "COUNTRY"
+      },
+      {
+        "ip": [
+          "::/0"
+        ],
+        "type": "field",
+        "outboundTag": "block"
+      },
+      {
+        "type": "field",
+        "protocol": [
+          "bittorrent"
+        ],
+        "outboundTag": "block"
+      },
+      {
+        "port": "443",
+        "type": "field",
+        "network": "udp",
+        "outboundTag": "block"
+      },
+      {
+        "type": "field",
+        "domain": [
+          "doubleclick.net",
+          "googlesyndication.com",
+          "google-analytics.com",
+          "mc.yandex.ru",
+          "an.yandex.ru",
+          "adfox.ru",
+          "criteo.com",
+          "taboola.com",
+          "outbrain.com",
+          "adriver.ru"
+        ],
+        "outboundTag": "block"
+      },
+      {
+        "type": "field",
+        "domain": [
+          "tiktok.com",
+          "tiktokv.com",
+          "tiktokcdn.com",
+          "byteoversea.com",
+          "musical.ly"
+        ],
+        "balancerTag": "COUNTRY"
+      },
+      {
+        "type": "field",
+        "domain": [
+          "domain:gemini.google.com",
+          "domain:generativelanguage.googleapis.com",
+          "domain:aistudio.google.com",
+          "domain:makersuite.google.com",
+          "domain:alkalimakersuite-pa.clients6.google.com",
+          "domain:bard.google.com",
+          "domain:spotify.com",
+          "domain:scdn.co",
+          "regexp:-pa\\.googleapis\\.com$",
+          "domain:clients6.google.com",
+          "domain:proactivebackend-pa.googleapis.com",
+          "domain:geller-pa.googleapis.com",
+          "domain:assistant.google.com"
+        ],
+        "balancerTag": "COUNTRY"
       },
       {
         "ip": [
@@ -628,6 +476,243 @@
       {
         "type": "field",
         "domain": [
+          "regexp:\\.ru$",
+          "regexp:\\.su$",
+          "regexp:\\.xn--p1ai$",
+          "domain:ipify.org",
+          "domain:checkip.amazonaws.com",
+          "domain:ifconfig.me",
+          "domain:ipapi.is",
+          "domain:iplocate.io",
+          "domain:ip.sb",
+          "domain:mangalib.me",
+          "domain:animego.me",
+          "domain:showip.net",
+          "domain:tilda.cc",
+          "domain:kinescope.io",
+          "domain:kinescopecdn.net",
+          "domain:redheadsound.studio",
+          "domain:vtbglobalperspectives.com",
+          "domain:vtb-direct.com",
+          "domain:sber.world",
+          "domain:sber.ws",
+          "domain:sbercoin.com",
+          "domain:pvubank.com",
+          "domain:alefbank.com",
+          "domain:korona.com",
+          "domain:autobahn.db.com",
+          "domain:mizuhogroup.com",
+          "domain:ubs.com",
+          "domain:ru.ccb.com",
+          "domain:bank131.com",
+          "domain:emias.info",
+          "domain:psk",
+          "domain:1cfresh.com",
+          "domain:1internet.tv",
+          "domain:2gis.ae",
+          "domain:2gis.am",
+          "domain:2gis.az",
+          "domain:2gis.by",
+          "domain:2gis.com",
+          "domain:2gis.com.cy",
+          "domain:2gis.cz",
+          "domain:2gis.ge",
+          "domain:2gis.kg",
+          "domain:2gis.kz",
+          "domain:2gis.tj",
+          "domain:2gis.ua",
+          "domain:2gis.uz",
+          "domain:4meeting.me",
+          "domain:5post.market",
+          "domain:alfa-bank.com",
+          "domain:alfa-finance.com",
+          "domain:alfa-fx.com",
+          "domain:alfa-pc.com",
+          "domain:alfa-usa.com",
+          "domain:alfabank.com",
+          "domain:alfafinance.biz",
+          "domain:alfafuture.com",
+          "domain:alfafx.com",
+          "domain:alfaprivate.com",
+          "domain:alformacap.com",
+          "domain:alformacapital.com",
+          "domain:avito.st",
+          "domain:banka-ui.dev",
+          "domain:beta-bank.com",
+          "domain:bronevik.com",
+          "domain:chizhik.club",
+          "domain:clstorage.net",
+          "domain:dbo-dengi.online",
+          "domain:donationalerts.com",
+          "domain:edadeal.io",
+          "domain:fix-price.com",
+          "domain:gazprombank.tech",
+          "domain:investalfabank.com",
+          "domain:jivochat.com",
+          "domain:jivosite.com",
+          "domain:kaspersky.com",
+          "domain:kinopoisk-ru.clstorage.net",
+          "domain:lead-pro2023.online",
+          "domain:lenta.com",
+          "domain:lmru.tech",
+          "domain:megamarket.tech",
+          "domain:memealerts.com",
+          "domain:miya-news.online",
+          "domain:moex.com",
+          "domain:mradx.net",
+          "domain:mvk.com",
+          "domain:mycdn.me",
+          "domain:naydex.net",
+          "domain:netmonet.co",
+          "domain:okko.sport",
+          "domain:okko.tv",
+          "domain:okolo.app",
+          "domain:ozonusercontent.com",
+          "domain:rostaxi.org",
+          "domain:russiacalling.com",
+          "domain:sistema-capital.com",
+          "domain:static-storage.net",
+          "domain:svoy.academy",
+          "domain:tamtam.chat",
+          "domain:taxsee.com",
+          "domain:tbank-online.com",
+          "domain:timeweb.cloud",
+          "domain:timeweb.com",
+          "domain:tips.tips",
+          "domain:tochka-tech.com",
+          "domain:tochka.com",
+          "domain:trbcdn.net",
+          "domain:tsx.x5static.net",
+          "domain:turbopages.org",
+          "domain:userapi.com",
+          "domain:vk-apps.com",
+          "domain:vk-cdn.me",
+          "domain:vk-cdn.net",
+          "domain:vk-portal.net",
+          "domain:vk.cc",
+          "domain:vk.com",
+          "domain:vk.company",
+          "domain:vk.design",
+          "domain:vk.link",
+          "domain:vk.me",
+          "domain:vk.team",
+          "domain:vkcache.com",
+          "domain:vkgo.app",
+          "domain:vklive.app",
+          "domain:vkmessenger.app",
+          "domain:vkmessenger.com",
+          "domain:vkuser.net",
+          "domain:vkuseraudio.com",
+          "domain:vkuseraudio.net",
+          "domain:vkuserlive.net",
+          "domain:vkuservideo.com",
+          "domain:vkuservideo.net",
+          "domain:vtb-russia.com",
+          "domain:vtb.bank.in",
+          "domain:vtb.com",
+          "domain:vtb.digital",
+          "domain:vtb.promo",
+          "domain:vtb24.com",
+          "domain:vtbcareer.com",
+          "domain:vtbindia.com",
+          "domain:vtbkep.site",
+          "domain:vtbpartners.com",
+          "domain:vtbrussia.com",
+          "domain:webvisor.com",
+          "domain:webvisor.org",
+          "domain:whoosh.bike",
+          "domain:x5.tech",
+          "domain:xn--90aifd0aza.site",
+          "domain:yads.tech",
+          "domain:yandex",
+          "domain:yandex-bank.net",
+          "domain:yandex-images.clstorage.net",
+          "domain:yandex.aero",
+          "domain:yandex.az",
+          "domain:yandex.by",
+          "domain:yandex.cloud",
+          "domain:yandex.co.il",
+          "domain:yandex.com",
+          "domain:yandex.com.am",
+          "domain:yandex.com.ge",
+          "domain:yandex.com.tr",
+          "domain:yandex.com.ua",
+          "domain:yandex.de",
+          "domain:yandex.ee",
+          "domain:yandex.eu",
+          "domain:yandex.fi",
+          "domain:yandex.fr",
+          "domain:yandex.jobs",
+          "domain:yandex.kg",
+          "domain:yandex.kz",
+          "domain:yandex.lt",
+          "domain:yandex.lv",
+          "domain:yandex.md",
+          "domain:yandex.net",
+          "domain:yandex.org",
+          "domain:yandex.pl",
+          "domain:yandex.st",
+          "domain:yandex.sx",
+          "domain:yandex.tj",
+          "domain:yandex.tm",
+          "domain:yandex.tr",
+          "domain:yandex.ua",
+          "domain:yandex.uz",
+          "domain:yandexadexchange.net",
+          "domain:yandexcloud.net",
+          "domain:yandexcom.net",
+          "domain:yandexmetrica.com",
+          "domain:yandexwebcache.net",
+          "domain:yandexwebcache.org",
+          "domain:yastat.net",
+          "domain:yastatic.net",
+          "domain:youla.io",
+          "domain:zentotem.net",
+          "domain:medtrum.eu",
+          "domain:anytimeru.com",
+          "domain:rsscenter.cloud",
+          "domain:terratraf.io",
+          "domain:t-tech.team",
+          "domain:gravityfield.ai",
+          "domain:diginetica.net",
+          "domain:appsflyer.com",
+          "domain:onelink.me",
+          "domain:branch.io",
+          "domain:adjust.com",
+          "domain:retailrocket.net",
+          "domain:flocktory.com",
+          "domain:mindbox.cloud",
+          "domain:wbstatic.net",
+          "domain:sberbank.com",
+          "domain:ivi.tv",
+          "domain:habr.com",
+          "domain:habrastorage.org",
+          "domain:championat.com",
+          "domain:livejournal.com",
+          "domain:livejournal.net",
+          "domain:1tv.com",
+          "domain:ozon.com",
+          "domain:tass.com",
+          "domain:premier.one",
+          "domain:more.tv",
+          "domain:yclients.com",
+          "domain:ngenix.net",
+          "domain:vgtrk.com",
+          "domain:sberauto.com",
+          "domain:getcourse.io",
+          "domain:rbc.group",
+          "domain:dodopizza.com",
+          "domain:wildberries.by",
+          "domain:moscow",
+          "domain:ru",
+          "domain:su",
+          "domain:xn--p1ai"
+        ],
+        "outboundTag": "direct"
+      },
+      {
+        "type": "field",
+        "domain": [
           "domain:gmail.com",
           "domain:googlemail.com",
           "domain:mail.google.com",
@@ -643,27 +728,33 @@
       },
       {
         "type": "field",
-        "protocol": [
-          "bittorrent"
-        ],
-        "outboundTag": "direct"
-      },
-      {
-        "type": "field",
         "network": "tcp,udp",
-        "balancerTag": "PRIMARY"
+        "inboundTag": [
+          "socks",
+          "http"
+        ],
+        "balancerTag": "COUNTRY"
       }
     ],
     "balancers": [
       {
-        "tag": "PRIMARY",
+        "tag": "COUNTRY",
         "selector": [
-          "proxy"
+          "us"
         ],
         "strategy": {
-          "type": "roundRobin"
+          "type": "leastLoad",
+          "settings": {
+            "maxRTT": "1800ms",
+            "expected": 1,
+            "baselines": [
+              "90ms",
+              "180ms",
+              "350ms"
+            ]
+          }
         },
-        "fallbackTag": "block"
+        "fallbackTag": "us"
       }
     ],
     "domainMatcher": "hybrid",
@@ -693,53 +784,94 @@
       "tag": "http",
       "port": 10809,
       "listen": "127.0.0.1",
-      "protocol": "http",
-      "settings": {
-        "allowTransparent": false
-      },
-      "sniffing": {
-        "enabled": true,
-        "routeOnly": false,
-        "destOverride": [
-          "http",
-          "tls",
-          "quic"
-        ]
-      }
+      "protocol": "http"
     }
   ],
   "outbounds": [
     {
-      "tag": "proxy",
+      "tag": "us",
       "protocol": "vless",
       "settings": {
         "vnext": [
           {
-            "address": "edge-65b966822a22.eu-cdn539.com",
+            "address": "sea.orbitacorp.dev",
             "port": 443,
             "users": [
               {
                 "id": "e75ad2eb-6c1f-45ce-8023-f5f10875df66",
                 "encryption": "none",
-                "flow": "xtls-rprx-vision"
+                "flow": ""
               }
             ]
           }
         ]
       },
       "streamSettings": {
-        "network": "tcp",
-        "tcpSettings": {},
+        "network": "xhttp",
+        "xhttpSettings": {
+          "mode": "packet-up",
+          "host": "sea.orbitacorp.dev",
+          "path": "/workspace/0c5a2dcd634ca0c0",
+          "extra": {
+            "xmux": {
+              "cMaxReuseTimes": "64-128",
+              "maxConcurrency": "16-32",
+              "hKeepAlivePeriod": 25,
+              "hMaxRequestTimes": "800-1200",
+              "hMaxReusableSecs": "1800-3600"
+            }
+          }
+        },
         "security": "reality",
         "realitySettings": {
-          "serverName": "edge-65b966822a22.eu-cdn539.com",
-          "publicKey": "Ay5gpLSAYy2H985o9mLgF3X8lC7MZFNn7CMTMGU4xmI",
-          "shortId": "8f1cdcdf9f3cee11",
+          "serverName": "sea.orbitacorp.dev",
+          "publicKey": "5Q-OU0tnKqhNQ1srG2zOFWPL51nVdsB5RlolVKkv-E8",
+          "shortId": "5ec9271d2664a75e",
           "fingerprint": "firefox"
+        },
+        "sockopt": {
+          "tcpKeepAliveIdle": 60,
+          "tcpKeepAliveInterval": 30
         }
+      }
+    },
+    {
+      "tag": "us-hy",
+      "protocol": "hysteria",
+      "settings": {
+        "address": "sea.orbitacorp.dev",
+        "port": 443,
+        "version": 2
       },
-      "mux": {
-        "enabled": false
+      "streamSettings": {
+        "network": "hysteria",
+        "hysteriaSettings": {
+          "version": 2,
+          "auth": "e75ad2eb-6c1f-45ce-8023-f5f10875df66"
+        },
+        "security": "tls",
+        "tlsSettings": {
+          "serverName": "sea.orbitacorp.dev",
+          "enableSessionResumption": false,
+          "fingerprint": "chrome",
+          "alpn": [
+            "h3"
+          ]
+        },
+        "finalmask": {
+          "udp": [
+            {
+              "type": "salamander",
+              "settings": {
+                "password": "rjJ5ufcTgMBRlDy4twE1CzEZb6TFJKJS"
+              }
+            }
+          ],
+          "quicParams": {
+            "debug": false,
+            "congestion": "bbr"
+          }
+        }
       }
     },
     {
@@ -755,9 +887,21 @@
     "probeUrl": "https://www.gstatic.com/generate_204",
     "probeInterval": "10s",
     "subjectSelector": [
-      "proxy"
+      "us",
+      "us-hy"
     ],
     "enableConcurrency": true
   },
-  "remarks": "🇳🇱 Нидерланды"
+  "burstObservatory": {
+    "pingConfig": {
+      "timeout": "6s",
+      "interval": "20s",
+      "sampling": 2,
+      "destination": "https://www.gstatic.com/generate_204"
+    },
+    "subjectSelector": [
+      "us"
+    ]
+  },
+  "remarks": "🇺🇸 США"
 }
