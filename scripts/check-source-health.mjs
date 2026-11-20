@@ -7,7 +7,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { spawn } from "node:child_process";
 import { parseLink, buildOutbound } from "./link-runtime.mjs";
-import { runLteGlobalpingGate, runGlobalpingStrictFallback } from "./lte-globalping-gate.mjs";
+import { runGlobalpingStrictFallback } from "./lte-globalping-gate.mjs";
 import {
     FEATURED_COUNTRIES,
     FALLBACK_ONLY_COUNTRIES,
@@ -280,6 +280,8 @@ const CHECK_HOST_RESULT_MIN_INTERVAL_MS = Math.max(
 );
 
 
+// Globalping is used only as a conditional Russia Gate fallback. Whitelist
+// candidates never trigger a second measurement after exact-link Xray checks.
 const GLOBALPING_API_BASE =
     process.env.HEALTHCHECK_GLOBALPING_API_BASE ||
     "https://api.globalping.io/v1";
@@ -288,18 +290,16 @@ const GLOBALPING_TOKEN = String(
     process.env.GLOBALPING_API_TOKEN ||
     ""
 ).trim();
-const GLOBALPING_LTE_ENABLED = !/^(0|false|no)$/i.test(
-    String(process.env.HEALTHCHECK_GLOBALPING_LTE_ENABLED || "1")
+const GLOBALPING_RUSSIA_RESERVE_TESTS = Math.max(
+    0,
+    Number(process.env.HEALTHCHECK_GLOBALPING_RUSSIA_RESERVE_TESTS) || 20
 );
-const GLOBALPING_LTE_CITY_LIMIT = Math.max(3, Math.min(6, Number(process.env.HEALTHCHECK_GLOBALPING_LTE_CITY_LIMIT) || 3));
-const GLOBALPING_LTE_MIN_DISTINCT_CITIES = Math.max(2, Math.min(GLOBALPING_LTE_CITY_LIMIT, Number(process.env.HEALTHCHECK_GLOBALPING_LTE_MIN_DISTINCT_CITIES) || 2));
-const GLOBALPING_LTE_REQUIRE_EYEBALL = !/^(0|false|no)$/i.test(
-    String(process.env.HEALTHCHECK_GLOBALPING_LTE_REQUIRE_EYEBALL || "1")
+const GLOBALPING_TIMEOUT_MS = Math.max(
+    10000,
+    Number(process.env.HEALTHCHECK_GLOBALPING_TIMEOUT_MS) || 30000
 );
-const GLOBALPING_LTE_RESERVE_TESTS = Math.max(0, Number(process.env.HEALTHCHECK_GLOBALPING_RESERVE_TESTS) || 10);
-const GLOBALPING_LTE_TIMEOUT_MS = Math.max(10000, Number(process.env.HEALTHCHECK_GLOBALPING_TIMEOUT_MS) || 30000);
-const GLOBALPING_LTE_POLL_MS = Math.max(500, Number(process.env.HEALTHCHECK_GLOBALPING_POLL_MS) || 700);
-const GLOBALPING_LTE_MTR_TIMEOUT_SECONDS = Math.max(5, Math.min(20, Number(process.env.HEALTHCHECK_GLOBALPING_MTR_TIMEOUT_SECONDS) || 12));
+const GLOBALPING_POLL_MS = Math.max(500, Number(process.env.HEALTHCHECK_GLOBALPING_POLL_MS) || 700);
+const GLOBALPING_MTR_TIMEOUT_SECONDS = Math.max(5, Math.min(20, Number(process.env.HEALTHCHECK_GLOBALPING_MTR_TIMEOUT_SECONDS) || 12));
 
 const RUSSIA_GATE_STATE_MAX_AGE_MS = Math.max(5 * 60 * 1000, Number(process.env.HEALTHCHECK_RUSSIA_GATE_STATE_MAX_AGE_MS) || 6 * 60 * 60 * 1000);
 const RUSSIA_GATE_USE_CACHE =
@@ -1901,9 +1901,9 @@ function selectUpdateVpnPool(healthResults, history, limit = 10) {
         }
 
         // LTE no longer runs UPDATE service/Yandex/connection checks. Its
-        // publication gate is Russia Gate + exact-link Xray + (for TCP)
-        // Globalping. Therefore a successful LTE health result is sufficient
-        // here; historical stability remains the main ranking signal.
+        // publication gate is Russia Gate + exact-link Xray. Therefore a
+        // successful LTE health result is sufficient here; historical
+        // stability remains the main ranking signal.
         return result?.ok === true;
     });
 
@@ -4857,9 +4857,9 @@ async function main() {
             MANAGED_WHITE_LIST_RE.test(String(item.id || ""))
         );
 
-        // Russia Gate is shared. It is deliberately the only pre-Xray gate
-        // for LTE; regular servers continue to use their original local TCP
-        // probe plus the full heavy health pipeline below.
+        // Russia Gate is shared. It is the only Russia-reachability gate for
+        // LTE; regular servers continue to use their original local TCP probe
+        // plus the full heavy health pipeline below.
         if (russiaProbe && !russiaProbe.gatePassed && !russiaProbe.gatePending) {
             return {
                 item,
@@ -4871,8 +4871,9 @@ async function main() {
         }
 
         // LTE/whitelist uses only the dedicated LTE pipeline:
-        // Russia Gate -> exact-link Xray validation -> LTE-only Globalping.
-        // Do not run the ordinary HTTPS/Yandex/service/speed/gaming checks.
+        // Russia Gate -> exact-link Xray validation. Do not run a second
+        // Globalping request or the ordinary HTTPS/Yandex/service/speed/gaming
+        // checks after Xray.
         if (isWhiteListCandidate) {
             const lteXray = await runLteXrayValidation(link);
 
@@ -4897,7 +4898,7 @@ async function main() {
                 ok: true,
                 protocol,
                 russiaProbe,
-                stages: `Russia Gate PASS + Xray ${lteXray.verdict === "PASS-XRAY-CLOUDFLARE" ? "PASS (Cloudflare fallback)" : "PASS"} -> Globalping LTE gate`,
+                stages: `Russia Gate PASS + exact-link Xray ${lteXray.verdict === "PASS-XRAY-CLOUDFLARE" ? "PASS (Cloudflare fallback)" : "PASS"}`,
                 quality: null,
                 connection: null,
                 gaming: null,
@@ -5310,11 +5311,12 @@ async function main() {
         const runStrictGlobalpingFallback = async groups => runGlobalpingStrictFallback({
             endpoints: toGlobalpingEndpoints(groups),
             enabled: true,
-            token: process.env.HEALTHCHECK_GLOBALPING_API_TOKEN || "",
-            reserveTests: Number(process.env.HEALTHCHECK_GLOBALPING_RUSSIA_RESERVE_TESTS) || 20,
-            timeoutMs: Number(process.env.HEALTHCHECK_GLOBALPING_TIMEOUT_MS) || 30000,
-            pollMs: GLOBALPING_LTE_POLL_MS,
-            mtrTimeoutSeconds: GLOBALPING_LTE_MTR_TIMEOUT_SECONDS,
+            apiBase: GLOBALPING_API_BASE,
+            token: GLOBALPING_TOKEN,
+            reserveTests: GLOBALPING_RUSSIA_RESERVE_TESTS,
+            timeoutMs: GLOBALPING_TIMEOUT_MS,
+            pollMs: GLOBALPING_POLL_MS,
+            mtrTimeoutSeconds: GLOBALPING_MTR_TIMEOUT_SECONDS,
         });
 
         let coordinator;
@@ -5657,7 +5659,7 @@ async function main() {
 
     const regularEligibleCount = healthEligibleItems.filter(item => !MANAGED_WHITE_LIST_RE.test(String(item?.id || ""))).length;
     const lteEligibleCount = healthEligibleItems.length - regularEligibleCount;
-    console.log(`HEALTH AFTER RUSSIA GATE: ${healthEligibleItems.length}/${checked} candidates continue; regular=${regularEligibleCount} -> Heavy, LTE=${lteEligibleCount} -> LTE Xray/Globalping`);
+    console.log(`HEALTH AFTER RUSSIA GATE: ${healthEligibleItems.length}/${checked} candidates continue; regular=${regularEligibleCount} -> Heavy, LTE=${lteEligibleCount} -> exact-link Xray`);
 
     cursor = 0;
     managedItems.splice(0, managedItems.length, ...healthEligibleItems);
@@ -5665,39 +5667,6 @@ async function main() {
 
     const workerCount = Math.min(HEALTH_CONCURRENCY, managedItems.length || 1);
     await Promise.all(Array.from({ length: workerCount }, () => worker()));
-
-    // LTE-only Globalping gate. It runs after the dedicated LTE Xray stage,
-    // uses three non-Moscow/non-Saint-Petersburg Russian eyeball cities, and
-    // accepts a minimum of 2/3. 3/3 is recorded as a stronger diagnostic tier.
-    const lteGlobalping = await runLteGlobalpingGate({
-        healthResults,
-        enabled: GLOBALPING_LTE_ENABLED,
-        apiBase: GLOBALPING_API_BASE,
-        token: GLOBALPING_TOKEN,
-        cityLimit: GLOBALPING_LTE_CITY_LIMIT,
-        minDistinctCities: GLOBALPING_LTE_MIN_DISTINCT_CITIES,
-        requireEyeball: GLOBALPING_LTE_REQUIRE_EYEBALL,
-        reserveTests: GLOBALPING_LTE_RESERVE_TESTS,
-        timeoutMs: GLOBALPING_LTE_TIMEOUT_MS,
-        pollMs: GLOBALPING_LTE_POLL_MS,
-        mtrTimeoutSeconds: GLOBALPING_LTE_MTR_TIMEOUT_SECONDS,
-    });
-
-    for (const result of healthResults) {
-        const gp = lteGlobalping.endpointByLinkFingerprint?.[String(result.linkFingerprint || "")];
-        if (gp) result.globalping = gp;
-    }
-
-    if (lteGlobalping.excludedLinkFingerprints?.size) {
-        for (const result of healthResults) {
-            if (!result.whiteList || !result.ok) continue;
-            const fp = String(result.linkFingerprint || "");
-            if (!lteGlobalping.excludedLinkFingerprints.has(fp)) continue;
-            const gp = lteGlobalping.endpointByLinkFingerprint?.[fp];
-            result.ok = false;
-            result.reason = `Globalping Russia gate failed: ${Number(gp?.validReachedCities || 0)}/${lteGlobalping.cityCount} selected Russian cities reached the endpoint`;
-        }
-    }
 
     passed = healthResults.filter(result => result.ok).length;
     failed = healthResults.filter(result => !result.ok).length;
@@ -6134,32 +6103,6 @@ async function main() {
         report = JSON.parse(await fs.readFile(reportFile, "utf8"));
     } catch {}
 
-    await fs.writeFile(
-        path.join(ROOT, "lte-russia-globalping-diagnostic.json"),
-        `${JSON.stringify(lteGlobalping.diagnostic, null, 2)}\n`,
-        "utf8"
-    );
-    await fs.writeFile(
-        path.join(ROOT, "lte-russia-before-globalping.txt"),
-        `${lteGlobalping.beforeGlobalpingLinks.join("\n")}${lteGlobalping.beforeGlobalpingLinks.length ? "\n" : ""}`,
-        "utf8"
-    );
-    await fs.writeFile(
-        path.join(ROOT, "lte-russia-globalping-2of3.txt"),
-        `${lteGlobalping.globalping2of3Links.join("\n")}${lteGlobalping.globalping2of3Links.length ? "\n" : ""}`,
-        "utf8"
-    );
-    await fs.writeFile(
-        path.join(ROOT, "lte-russia-globalping-3of3.txt"),
-        `${lteGlobalping.globalping3of3Links.join("\n")}${lteGlobalping.globalping3of3Links.length ? "\n" : ""}`,
-        "utf8"
-    );
-    await fs.writeFile(
-        path.join(ROOT, "lte-russia-globalping-final.txt"),
-        `${lteGlobalping.finalPublishedLinks.join("\n")}${lteGlobalping.finalPublishedLinks.length ? "\n" : ""}`,
-        "utf8"
-    );
-
     report.healthCheck = {
         generatedAt: new Date().toISOString(),
         checked,
@@ -6193,24 +6136,14 @@ async function main() {
             checkHostCreateMinIntervalMs: CHECK_HOST_CREATE_MIN_INTERVAL_MS,
             checkHostResultMinIntervalMs: CHECK_HOST_RESULT_MIN_INTERVAL_MS,
             checkHostConcurrency: CHECK_HOST_CONCURRENCY,
-            globalpingTokenConfigured: Boolean(GLOBALPING_TOKEN),
             globalpingDiagnosticOnly: false,
-            globalpingLteEnabled: GLOBALPING_LTE_ENABLED,
-            globalpingLteCityLimit: GLOBALPING_LTE_CITY_LIMIT,
-            globalpingLteMinDistinctCities: GLOBALPING_LTE_MIN_DISTINCT_CITIES,
-            globalpingLteBudgetMode: "dynamic-from-live-budget",
-            globalpingLteReserveTests: GLOBALPING_LTE_RESERVE_TESTS,
             lteXrayAttempts: LTE_XRAY_ATTEMPTS,
             lteXrayTargets: LTE_XRAY_TARGET_URLS,
             lteXraySpeedFallback: LTE_XRAY_SPEED_FALLBACK_URL,
-            globalpingLteAttemptedEndpoints: lteGlobalping.attemptedEndpoints,
-            globalpingLtePassed2of3: lteGlobalping.passed2of3Endpoints,
-            globalpingLtePassed3of3: lteGlobalping.passed3of3Endpoints,
-            globalpingLteFailOpen: lteGlobalping.failOpen,
             russiaGatePassed,
             russiaGateFailures,
             russiaGatePending,
-            policy: "Russia Gate is shared by regular and LTE candidates. It selects the operational subset of ru1/ru2/ru3 by canary evidence and requires two positive Check-Host responses (2/2 or 2/3). If fewer than two Check-Host nodes are operational, Globalping checks three dynamically selected live Russian locations and requires 2/3 positive responses. Regular servers then follow the existing local TCP + Xray + HTTPS diagnostics + independent multi-provider speed + gaming pipeline. LTE/whitelist servers skip those regular checks and use only exact-link Xray validation (with a bounded Cloudflare download fallback) followed by the LTE-only Globalping gate for TCP protocols. The LTE-only Globalping gate accepts 2/3 selected Russian eyeball cities and is fail-open only when the Globalping service itself is unavailable. Globalping is never used for regular servers and does not certify Hysteria/QUIC UDP handshakes."
+            policy: "Russia Gate is shared by regular and LTE/whitelist candidates. It selects the operational subset of ru1/ru2/ru3 by canary evidence and requires two positive Check-Host responses (2/2 or 2/3). Only when Check-Host infrastructure or an endpoint result is unavailable/inconclusive does the Russia Gate use Globalping as a 2/3 fallback across three dynamically selected live Russian locations. After Russia Gate, LTE/whitelist candidates undergo exact-link Xray validation (with a bounded Cloudflare download fallback) and no additional Globalping pass. Regular servers continue through the existing local TCP + Xray + HTTPS diagnostics + independent multi-provider speed + gaming pipeline."
         },
         gamingCriteria: {
             minKbps:
@@ -6490,7 +6423,7 @@ async function main() {
             `- Before health-check: ${report.totalBeforeHealthCheck ?? "?"}`,
             `- Health-check: **${passed} passed / ${failed} failed**`,
             `- Regular: local TCP (TCP only) + Xray + measured connection-latency gate + independent speed providers + Gaming metrics`,
-            `- LTE: Russia Gate + exact-link Xray (${LTE_XRAY_ATTEMPTS} attempt(s); Cloudflare fallback) + LTE-only Globalping (TCP protocols)`,
+            `- LTE: Russia Gate + exact-link Xray (${LTE_XRAY_ATTEMPTS} attempt(s); Cloudflare fallback); no post-Xray Globalping pass`,
             `- Independent speed providers for regular servers: ${INDEPENDENT_SPEED_PROVIDERS.map(provider => provider.label).join(", ")}`,
             `- Regular speed rule: ${INDEPENDENT_SPEED_PROVIDER_MIN_PASSES}/${INDEPENDENT_SPEED_PROVIDERS.length} providers + median >= ${INDEPENDENT_SPEED_MIN_MEDIAN_KBPS} KB/s`,
             `- Synthetic HTTPS targets are diagnostics only; measured connection latency and independent speed are hard eligibility gates`,
