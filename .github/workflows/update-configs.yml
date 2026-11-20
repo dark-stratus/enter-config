@@ -550,6 +550,8 @@ jobs:
           HEALTHCHECK_GLOBALPING_API_TOKEN: ${{ secrets.GLOBALPING_API_TOKEN }}
           HEALTHCHECK_GLOBALPING_RUSSIA_RESERVE_TESTS: 20
           HEALTHCHECK_GLOBALPING_TIMEOUT_MS: 30000
+          HEALTHCHECK_GLOBALPING_POLL_MS: 700
+          HEALTHCHECK_GLOBALPING_MTR_TIMEOUT_SECONDS: 12
           HEALTH_CANDIDATES_FILE: ${{ github.workspace }}/config/source-health-candidates.json
         run: |
           set -euo pipefail
@@ -709,7 +711,6 @@ jobs:
           HEALTHCHECK_GAMING_BACKUP_MIN_QUALITY_PASSES: 1
           HEALTHCHECK_MAX_MEDIAN_CONNECTION_MS: 3000
           HEALTHCHECK_MAX_SINGLE_CONNECTION_MS: 5000
-          HEALTHCHECK_GLOBALPING_API_TOKEN: ${{ secrets.GLOBALPING_API_TOKEN }}
           HEALTHCHECK_LTE_XRAY_ATTEMPTS: 2
           HEALTHCHECK_LTE_XRAY_START_TIMEOUT_MS: 12000
           HEALTHCHECK_LTE_XRAY_RETRY_DELAY_MS: 1200
@@ -720,14 +721,6 @@ jobs:
           HEALTHCHECK_LTE_XRAY_SPEED_TIMEOUT_MS: 9000
           HEALTHCHECK_LTE_XRAY_SPEED_MIN_BYTES: 262144
           HEALTHCHECK_LTE_XRAY_SPEED_MIN_KBPS: 1024
-          HEALTHCHECK_GLOBALPING_LTE_ENABLED: 1
-          HEALTHCHECK_GLOBALPING_LTE_CITY_LIMIT: 3
-          HEALTHCHECK_GLOBALPING_LTE_MIN_DISTINCT_CITIES: 2
-          HEALTHCHECK_GLOBALPING_LTE_REQUIRE_EYEBALL: 1
-          HEALTHCHECK_GLOBALPING_RESERVE_TESTS: 10
-          HEALTHCHECK_GLOBALPING_TIMEOUT_MS: 30000
-          HEALTHCHECK_GLOBALPING_POLL_MS: 700
-          HEALTHCHECK_GLOBALPING_MTR_TIMEOUT_SECONDS: 12
           HEALTHCHECK_TARGET_URLS: >-
             https://www.gstatic.com/generate_204,
             https://www.google.com/generate_204,
@@ -736,26 +729,6 @@ jobs:
             https://ya.ru/,
             https://yandex.ru/
         run: node scripts/check-source-health.mjs
-
-      - name: Upload LTE Globalping diagnostics
-        id: upload_lte_globalping_diagnostics
-        if: ${{ always() && hashFiles('lte-russia-globalping-diagnostic.json') != '' }}
-        continue-on-error: true
-        uses: actions/upload-artifact@v7.0.2
-        with:
-          name: lte-globalping-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
-          path: |
-            lte-russia-globalping-diagnostic.json
-            lte-russia-before-globalping.txt
-            lte-russia-globalping-2of3.txt
-            lte-russia-globalping-3of3.txt
-            lte-russia-globalping-final.txt
-          if-no-files-found: warn
-          retention-days: 7
-
-      - name: Warn if LTE Globalping diagnostics could not be uploaded
-        if: ${{ always() && steps.upload_lte_globalping_diagnostics.outcome == 'failure' }}
-        run: echo "::warning::LTE Globalping diagnostics were not uploaded; VPN config health processing continues."
 
       - name: Verify UPDATE VPN pool
         if: ${{ steps.health.outcome == 'success' }}
@@ -777,16 +750,6 @@ jobs:
           }
           console.log(`UPDATE VPN pool verified: ${servers.length} LTE server(s); ${passedLTE} LTE health pass(es).`);
           NODE
-
-      - name: Remove LTE Globalping diagnostics
-        if: always()
-        run: |
-          rm -f -- \
-            lte-russia-globalping-diagnostic.json \
-            lte-russia-before-globalping.txt \
-            lte-russia-globalping-2of3.txt \
-            lte-russia-globalping-3of3.txt \
-            lte-russia-globalping-final.txt
 
       - name: Remove intermediate Russia gate artifact
         if: always()
