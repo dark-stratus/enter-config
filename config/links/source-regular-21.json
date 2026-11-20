@@ -1,6 +1,6 @@
 {
-  "remarks": "🇩🇪 Germany Новый метод",
-  "location_id": "c91fac2d-f311-4eac-a46e-e8e019490d56",
+  "remarks": "🇩🇪 Frankfurt #6",
+  "location_id": "7672e212-b1a1-47a7-b1dd-0377029d0c31",
   "log": {
     "loglevel": "warning"
   },
@@ -53,32 +53,44 @@
   ],
   "outbounds": [
     {
+      "tag": "proxy",
       "protocol": "vless",
       "settings": {
         "vnext": [
           {
-            "port": 22231,
+            "port": 443,
             "users": [
               {
                 "id": "dcda0d72-a3ce-44a1-b621-3d67d5a9e1a2",
-                "flow": "xtls-rprx-vision",
-                "level": 0,
+                "flow": "",
                 "encryption": "none"
               }
             ],
-            "address": "dh2.mizulina.top"
+            "address": "89.19.213.159"
           }
         ]
       },
       "streamSettings": {
-        "network": "tcp",
+        "network": "xhttp",
         "security": "tls",
         "tlsSettings": {
-          "serverName": "Dh2.MiZuLiNa.tOP",
+          "alpn": [
+            "h2"
+          ],
+          "serverName": "vc7.mizulina.top",
           "fingerprint": "edge"
+        },
+        "xhttpSettings": {
+          "host": "vc7.mizulina.top",
+          "mode": "auto",
+          "path": "/apiv1/",
+          "headers": {
+            "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.6.1 Mobile/15E148 Safari/604.1"
+          },
+          "scMaxEachPostBytes": 1800000,
+          "scMinPostsIntervalMs": 54
         }
-      },
-      "tag": "proxy"
+      }
     },
     {
       "tag": "direct",
