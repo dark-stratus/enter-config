@@ -1,27 +1,27 @@
 # VPN source report
 
-Последнее обновление: 2026-11-20T10:43:09.133Z
+Последнее обновление: 2026-11-20T19:05:52.084Z
 
 Статистика **по каждому источнику отдельно**: **взяли → живы → в итоговом пуле**.
 
-🧠 Из памяти предыдущего пула сохранено: **83** серверов.
+🧠 Из памяти предыдущего пула сохранено: **45** серверов.
 
 ## Источники
 
 | Секрет | Источник | Слот | Взяли | Живы | В итоговом пуле | Состояние |
 |---|---|---:|---:|---:|---:|---|
 | **SOURCE_URL16_2** | keylineservices.top/G1231Mb_UJlDqkyCubrtWdMcuc-YcvWO | 2 | 8 | 5 | 4 | ✅ |
-| **SOURCE_URL9_4** | keylineservices.top/hq6Fk_tyij5kg2Xhb67t8kCrfrigjug1 | 4 | 13 | 8 | 7 | ✅ |
+| **SOURCE_URL9_4** | keylineservices.top/hq6Fk_tyij5kg2Xhb67t8kCrfrigjug1 | 4 | 13 | 9 | 8 | ✅ |
 | **SOURCE_URL5_6** | keylineservices.top/C7xwkp_3uLj0mcXO1b6D6BBojSvCOvpH | 6 | 13 | 0 | 0 | ⚠️ |
-| **SOURCE_URL_9** | zieng2/wl — vless_universal.txt | 9 | 121 | 8 | 8 | ✅ |
-| **SOURCE_URL_10** | igareck/vpn-configs-for-russia — WHITE-CIDR-RU-all.txt | 10 | 65 | 26 | 26 | ✅ |
+| **SOURCE_URL_9** | zieng2/wl — vless_universal.txt | 9 | 113 | 16 | 16 | ✅ |
+| **SOURCE_URL_10** | igareck/vpn-configs-for-russia — WHITE-CIDR-RU-all.txt | 10 | 106 | 38 | 38 | ✅ |
 | **SOURCE_URL_11** | igareck/vpn-configs-for-russia — WHITE-SNI-RU-all.txt | 11 | 0 | 0 | 0 | ⚠️ |
 
 ## 🇷🇺 Russia Gate
 
 **Режим:** Check-Host 2/3.
 **Предупреждение:** Accepted candidates passed Check-Host quorum 2/3.
-Проверено кандидатов: **217**; прошли: **180**; отброшены: **37**; pending: **0**.
+Проверено кандидатов: **253**; прошли: **216**; отброшены: **37**; pending: **0**.
 
 | Russian checker | Проверок | Reachable | Inconclusive | Timeout | 429 | Другие ошибки |
 |---|---:|---:|---:|---:|---:|---:|
