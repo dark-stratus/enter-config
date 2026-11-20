@@ -647,11 +647,6 @@
           "bittorrent"
         ],
         "outboundTag": "direct"
-      },
-      {
-        "type": "field",
-        "network": "tcp,udp",
-        "outboundTag": "proxy"
       }
     ],
     "domainMatcher": "hybrid",
@@ -703,48 +698,45 @@
       "settings": {
         "vnext": [
           {
-            "address": "edge-3jfvvcuue.donotasite.fyi",
+            "address": "it1.orbitacorp.dev",
             "port": 443,
             "users": [
               {
                 "id": "e75ad2eb-6c1f-45ce-8023-f5f10875df66",
                 "encryption": "none",
-                "flow": "xtls-rprx-vision"
+                "flow": ""
               }
             ]
           }
         ]
       },
       "streamSettings": {
-        "network": "tcp",
-        "tcpSettings": {},
+        "network": "xhttp",
+        "xhttpSettings": {
+          "mode": "packet-up",
+          "host": "it1.orbitacorp.dev",
+          "path": "/workspace/8ef0ad59ada58f49",
+          "extra": {
+            "xmux": {
+              "cMaxReuseTimes": "64-128",
+              "maxConcurrency": "16-32",
+              "hKeepAlivePeriod": 25,
+              "hMaxRequestTimes": "800-1200",
+              "hMaxReusableSecs": "1800-3600"
+            }
+          }
+        },
         "security": "reality",
         "realitySettings": {
-          "serverName": "edge-3jfvvcuue.donotasite.fyi",
-          "publicKey": "cTHWxPgxWCY2aGTyJTLMOc9JVHdulknmGUqiolKPLgM",
-          "shortId": "dd908a76dbe472d4",
+          "serverName": "it1.orbitacorp.dev",
+          "publicKey": "o6Qje0hjJA39_KPtVu6dB8dAjTH6fP1YBNcrrdxzHGc",
+          "shortId": "59cbaf172f358eae",
           "fingerprint": "firefox"
         },
         "sockopt": {
-          "tcpUserTimeout": 90000,
           "tcpKeepAliveIdle": 60,
-          "tcpKeepAliveInterval": 15
-        },
-        "finalmask": {
-          "tcp": [
-            {
-              "type": "fragment",
-              "settings": {
-                "delay": "0",
-                "length": "10-30",
-                "packets": "tlshello"
-              }
-            }
-          ]
+          "tcpKeepAliveInterval": 30
         }
-      },
-      "mux": {
-        "enabled": false
       }
     },
     {
@@ -756,5 +748,5 @@
       "protocol": "blackhole"
     }
   ],
-  "remarks": "🇫🇷 Франция"
+  "remarks": "🇮🇹 Италия"
 }
