@@ -65,7 +65,7 @@
           "domain:bytedance.com",
           "domain:musical.ly"
         ],
-        "outboundTag": "proxy"
+        "balancerTag": "geo"
       },
       {
         "type": "field",
@@ -80,7 +80,7 @@
           "domain:anthropic.com",
           "domain:claude.ai"
         ],
-        "outboundTag": "proxy"
+        "balancerTag": "geo"
       },
       {
         "type": "field",
@@ -122,6 +122,43 @@
           "domain:novikombank.ru"
         ],
         "outboundTag": "direct"
+      },
+      {
+        "type": "field",
+        "network": "tcp,udp",
+        "inboundTag": [
+          "socks"
+        ],
+        "balancerTag": "geo"
+      }
+    ],
+    "balancers": [
+      {
+        "tag": "geo",
+        "selector": [
+          "proxy"
+        ],
+        "strategy": {
+          "type": "leastLoad",
+          "settings": {
+            "costs": [
+              {
+                "match": "^proxy-br",
+                "value": 3,
+                "regexp": true
+              }
+            ],
+            "maxRTT": "1500ms",
+            "expected": 1,
+            "baselines": [
+              "300ms",
+              "700ms",
+              "1500ms"
+            ],
+            "tolerance": 0.3
+          }
+        },
+        "fallbackTag": "proxy-br"
       }
     ],
     "domainMatcher": "hybrid",
@@ -180,6 +217,36 @@
       }
     },
     {
+      "tag": "proxy-br",
+      "protocol": "vless",
+      "settings": {
+        "vnext": [
+          {
+            "address": "213.171.12.40",
+            "port": 8444,
+            "users": [
+              {
+                "id": "735cde6c-e6f3-44f8-9f49-5ba2c3f2c1e1",
+                "encryption": "none",
+                "flow": "xtls-rprx-vision"
+              }
+            ]
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "tcp",
+        "tcpSettings": {},
+        "security": "reality",
+        "realitySettings": {
+          "serverName": "fi1.xxxqqq.net",
+          "publicKey": "FuKGULeQ9xZMJN8hWz6J_49tDJKT9HA-nsAXOOVRmyM",
+          "shortId": "ff867ed245c73f43",
+          "fingerprint": "chrome"
+        }
+      }
+    },
+    {
       "tag": "direct",
       "protocol": "freedom"
     },
@@ -188,5 +255,17 @@
       "protocol": "blackhole"
     }
   ],
+  "burstObservatory": {
+    "pingConfig": {
+      "timeout": "5s",
+      "interval": "30s",
+      "sampling": 2,
+      "destination": "http://www.gstatic.com/generate_204",
+      "connectivity": ""
+    },
+    "subjectSelector": [
+      "proxy"
+    ]
+  },
   "remarks": "🇪🇺LTE - Белые списки 2 (Билайн, МегаФон)"
 }
