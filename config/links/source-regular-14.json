@@ -1,6 +1,6 @@
 {
-  "remarks": "🇵🇱 Poland #2",
-  "location_id": "8d6e99a4-5d76-4e3e-a246-b321eccdac40",
+  "remarks": "🇵🇱 Poland #1",
+  "location_id": "558b2c16-d6e0-4912-acc1-cd01c7bdba24",
   "log": {
     "loglevel": "warning"
   },
@@ -53,32 +53,39 @@
   ],
   "outbounds": [
     {
+      "tag": "proxy",
       "protocol": "vless",
       "settings": {
         "vnext": [
           {
-            "port": 22231,
+            "port": 443,
             "users": [
               {
                 "id": "dcda0d72-a3ce-44a1-b621-3d67d5a9e1a2",
-                "flow": "xtls-rprx-vision",
-                "level": 0,
+                "flow": "",
                 "encryption": "none"
               }
             ],
-            "address": "31.56.188.113"
+            "address": "31.56.188.110"
           }
         ]
       },
       "streamSettings": {
-        "network": "tcp",
+        "network": "xhttp",
         "security": "tls",
         "tlsSettings": {
-          "serverName": "vc22.mizulina.top",
+          "alpn": [
+            "h2"
+          ],
+          "serverName": "vc21.mizulina.top",
           "fingerprint": "edge"
+        },
+        "xhttpSettings": {
+          "host": "vc21.mizulina.top",
+          "mode": "packet-up",
+          "path": "/apiv1/"
         }
-      },
-      "tag": "proxy"
+      }
     },
     {
       "tag": "direct",
