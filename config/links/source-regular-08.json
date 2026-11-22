@@ -188,43 +188,12 @@
   "outbounds": [
     {
       "tag": "proxy",
-      "protocol": "hysteria",
-      "settings": {
-        "address": "5.180.145.41",
-        "port": 443,
-        "version": 2
-      },
-      "streamSettings": {
-        "network": "hysteria",
-        "hysteriaSettings": {
-          "version": 2,
-          "auth": "735cde6c-e6f3-44f8-9f49-5ba2c3f2c1e1"
-        },
-        "security": "tls",
-        "tlsSettings": {
-          "serverName": "fr1.xxxqqq.net",
-          "enableSessionResumption": false,
-          "fingerprint": "chrome",
-          "alpn": [
-            "h3"
-          ]
-        },
-        "finalmask": {
-          "quicParams": {
-            "debug": false,
-            "congestion": "bbr"
-          }
-        }
-      }
-    },
-    {
-      "tag": "proxy-br",
       "protocol": "vless",
       "settings": {
         "vnext": [
           {
-            "address": "213.171.12.40",
-            "port": 8442,
+            "address": "177.202.76.33",
+            "port": 443,
             "users": [
               {
                 "id": "735cde6c-e6f3-44f8-9f49-5ba2c3f2c1e1",
@@ -240,9 +209,39 @@
         "tcpSettings": {},
         "security": "reality",
         "realitySettings": {
-          "serverName": "unpkg.com",
-          "publicKey": "2uJraXq1i04PvwiXc44NFTRJ7D2jOvgC9Cp04_rNomg",
-          "shortId": "45346d0c25561a56",
+          "serverName": "www.icloud.com",
+          "publicKey": "-YpJ_Xav7sUkd77sEZjg58Pn6dnNpj5himuUS-OFDh4",
+          "shortId": "fd44fcf1c3afa0af",
+          "fingerprint": "edge"
+        }
+      }
+    },
+    {
+      "tag": "proxy-br",
+      "protocol": "vless",
+      "settings": {
+        "vnext": [
+          {
+            "address": "213.171.12.40",
+            "port": 8441,
+            "users": [
+              {
+                "id": "735cde6c-e6f3-44f8-9f49-5ba2c3f2c1e1",
+                "encryption": "none",
+                "flow": "xtls-rprx-vision"
+              }
+            ]
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "tcp",
+        "tcpSettings": {},
+        "security": "reality",
+        "realitySettings": {
+          "serverName": "www.icloud.com",
+          "publicKey": "-YpJ_Xav7sUkd77sEZjg58Pn6dnNpj5himuUS-OFDh4",
+          "shortId": "fd44fcf1c3afa0af",
           "fingerprint": "chrome"
         }
       }
@@ -268,5 +267,5 @@
       "proxy"
     ]
   },
-  "remarks": "🇫🇷 Франция"
+  "remarks": "🇵🇱 Польша"
 }
